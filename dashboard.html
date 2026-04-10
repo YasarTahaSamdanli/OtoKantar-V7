@@ -1,0 +1,901 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OtoKantar V7 — Canlı İzleme</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@400;500;700&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0d0f12;
+    --surface: #161a20;
+    --surface2: #1e242d;
+    --border: rgba(255,255,255,0.07);
+    --border-bright: rgba(255,255,255,0.14);
+    --accent: #00e5a0;
+    --accent-dim: rgba(0,229,160,0.12);
+    --accent-glow: rgba(0,229,160,0.06);
+    --warn: #f5a623;
+    --warn-dim: rgba(245,166,35,0.12);
+    --danger: #ff4757;
+    --danger-dim: rgba(255,71,87,0.12);
+    --text: #e8edf3;
+    --text-muted: #6b7585;
+    --text-dim: #3a4250;
+    --mono: 'JetBrains Mono', monospace;
+    --sans: 'Syne', sans-serif;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.6;
+    min-height: 100vh;
+  }
+
+  /* HEADER */
+  header {
+    padding: 1.25rem 2rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 100;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .logo-icon {
+    width: 32px;
+    height: 32px;
+    background: var(--accent-dim);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .logo-icon svg { width: 16px; height: 16px; }
+
+  .logo h1 {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .logo span {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--mono);
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+  }
+
+  .status-pill {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+    background: var(--accent-dim);
+    border: 1px solid rgba(0,229,160,0.2);
+    padding: 4px 10px;
+    border-radius: 20px;
+  }
+
+  .pulse {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.7); }
+  }
+
+  .saat {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  /* ANA GRID */
+  main {
+    padding: 2rem;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    grid-template-rows: auto auto auto;
+    gap: 1rem;
+  }
+
+  /* KADEMELİ GİRİŞ ANİMASYONU */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem;
+    animation: fadeUp 0.4s ease both;
+  }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .card:nth-child(1) { animation-delay: 0.05s; }
+  .card:nth-child(2) { animation-delay: 0.10s; }
+  .card:nth-child(3) { animation-delay: 0.15s; }
+  .card:nth-child(4) { animation-delay: 0.20s; }
+  .card:nth-child(5) { animation-delay: 0.25s; grid-column: span 2; }
+  .card:nth-child(6) { animation-delay: 0.30s; grid-column: span 2; }
+  .card:nth-child(7) { animation-delay: 0.35s; grid-column: span 4; }
+
+  /* METRİK KART */
+  .metric-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    margin-bottom: 0.5rem;
+  }
+
+  .metric-value {
+    font-family: var(--mono);
+    font-size: 32px;
+    font-weight: 600;
+    line-height: 1;
+    color: var(--text);
+  }
+
+  .metric-value.accent { color: var(--accent); }
+  .metric-value.warn   { color: var(--warn); }
+
+  .metric-sub {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 6px;
+    font-family: var(--mono);
+  }
+
+  /* SAAT ÇUBUĞU (son kayıttan itibaren geçen süre) */
+  .since-bar {
+    margin-top: 10px;
+    height: 3px;
+    background: var(--border-bright);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .since-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    width: 0%;
+    transition: width 1s linear;
+  }
+
+  /* CANLI PLAKA GÖSTERGESİ */
+  .plaka-display {
+    grid-column: span 2;
+  }
+
+  .plaka-display .card-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    margin-bottom: 1rem;
+  }
+
+  .plaka-big {
+    font-family: var(--mono);
+    font-size: 42px;
+    font-weight: 600;
+    letter-spacing: 0.15em;
+    color: var(--accent);
+    text-align: center;
+    padding: 1.5rem;
+    background: var(--accent-glow);
+    border: 1px solid rgba(0,229,160,0.15);
+    border-radius: 8px;
+    min-height: 100px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .plaka-big::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent 0%, rgba(0,229,160,0.03) 50%, transparent 100%);
+    animation: shimmer 3s ease-in-out infinite;
+  }
+
+  @keyframes shimmer {
+    0%, 100% { transform: translateX(-100%); }
+    50% { transform: translateX(100%); }
+  }
+
+  .plaka-big.yeni {
+    animation: flash 0.6s ease;
+  }
+
+  @keyframes flash {
+    0%   { background: rgba(0,229,160,0.3); border-color: var(--accent); }
+    100% { background: var(--accent-glow); border-color: rgba(0,229,160,0.15); }
+  }
+
+  .plaka-bos {
+    color: var(--text-dim);
+    font-size: 18px;
+    letter-spacing: 0.2em;
+    font-family: var(--mono);
+  }
+
+  /* DOĞRULAMA GÖSTERGESI */
+  .verify-track {
+    display: flex;
+    gap: 6px;
+    margin-top: 14px;
+    align-items: center;
+  }
+
+  .verify-dot {
+    flex: 1;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border-bright);
+    transition: background 0.3s ease;
+  }
+
+  .verify-dot.aktif { background: var(--accent); }
+  .verify-dot.bekleniyor { background: var(--warn); animation: blink 0.8s ease-in-out infinite; }
+
+  @keyframes blink { 50% { opacity: 0.4; } }
+
+  .verify-label {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 6px;
+    text-align: center;
+  }
+
+  /* SON KAYITLAR TABLOSU */
+  .tablo-kart {
+    grid-column: span 4;
+  }
+
+  .kart-baslik {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .kart-baslik .badge {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 2px 8px;
+    font-size: 10px;
+    font-family: var(--mono);
+    color: var(--text-muted);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  thead th {
+    text-align: left;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-dim);
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border);
+    font-weight: 500;
+  }
+
+  tbody tr {
+    border-bottom: 1px solid var(--border);
+    transition: background 0.2s;
+  }
+
+  tbody tr:hover { background: var(--surface2); }
+  tbody tr:last-child { border-bottom: none; }
+
+  tbody td {
+    padding: 10px 12px;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+
+  .td-plaka {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: 0.06em;
+  }
+
+  .td-zaman { color: var(--text-muted); }
+
+  .badge-tip {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+  }
+
+  .badge-giris {
+    background: var(--accent-dim);
+    color: var(--accent);
+    border: 1px solid rgba(0,229,160,0.2);
+  }
+
+  .badge-cikis {
+    background: var(--warn-dim);
+    color: var(--warn);
+    border: 1px solid rgba(245,166,35,0.2);
+  }
+
+  .guven-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .guven-track {
+    width: 60px;
+    height: 3px;
+    background: var(--border-bright);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .guven-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: var(--accent);
+  }
+
+  .guven-fill.orta { background: var(--warn); }
+  .guven-fill.dusuk { background: var(--danger); }
+
+  .guven-pct {
+    font-size: 11px;
+    color: var(--text-muted);
+    min-width: 32px;
+  }
+
+  /* SAATLIK GRAFİK */
+  .grafik-kart { grid-column: span 2; }
+
+  .grafik-alan {
+    height: 120px;
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    margin-top: 1rem;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+  }
+
+  .grafik-sutun {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    height: 100%;
+    justify-content: flex-end;
+  }
+
+  .sutun-deger {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text-muted);
+  }
+
+  .sutun-bar {
+    width: 100%;
+    background: var(--accent-dim);
+    border-radius: 3px 3px 0 0;
+    border-top: 1px solid rgba(0,229,160,0.3);
+    min-height: 2px;
+    transition: height 0.5s ease;
+  }
+
+  .sutun-bar.aktif-saat {
+    background: rgba(0,229,160,0.25);
+    border-color: var(--accent);
+  }
+
+  .sutun-etiket {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text-dim);
+    margin-top: 4px;
+  }
+
+  /* DÜĞMELER */
+  .btn-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 1rem;
+  }
+
+  .btn {
+    flex: 1;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-bright);
+    background: transparent;
+    color: var(--text-muted);
+    font-family: var(--sans);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+  }
+
+  .btn:hover {
+    background: var(--surface2);
+    color: var(--text);
+    border-color: var(--border-bright);
+  }
+
+  .btn.primary {
+    background: var(--accent-dim);
+    border-color: rgba(0,229,160,0.3);
+    color: var(--accent);
+  }
+
+  .btn.primary:hover {
+    background: rgba(0,229,160,0.2);
+  }
+
+  /* SİSTEM LOG */
+  .log-kart { grid-column: span 2; }
+
+  .log-alan {
+    height: 180px;
+    overflow-y: auto;
+    margin-top: 0.75rem;
+    padding: 8px;
+    background: var(--bg);
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .log-alan::-webkit-scrollbar { width: 4px; }
+  .log-alan::-webkit-scrollbar-track { background: transparent; }
+  .log-alan::-webkit-scrollbar-thumb { background: var(--border-bright); border-radius: 2px; }
+
+  .log-satir {
+    font-family: var(--mono);
+    font-size: 11px;
+    display: flex;
+    gap: 8px;
+    line-height: 1.5;
+    animation: fadeIn 0.3s ease;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  .log-zaman { color: var(--text-dim); min-width: 55px; }
+  .log-seviye { min-width: 40px; }
+  .log-seviye.info  { color: var(--accent); }
+  .log-seviye.warn  { color: var(--warn); }
+  .log-seviye.error { color: var(--danger); }
+  .log-mesaj { color: var(--text-muted); flex: 1; }
+
+  /* RESPONSIVE */
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr 1fr; padding: 1rem; }
+    .card:nth-child(5),
+    .card:nth-child(6),
+    .card:nth-child(7) { grid-column: span 2; }
+    .tablo-kart { grid-column: span 2; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <div class="logo-icon">
+      <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="1" y="5" width="14" height="7" rx="1.5" stroke="#00e5a0" stroke-width="1.2"/>
+        <circle cx="4" cy="11.5" r="1.5" fill="#00e5a0"/>
+        <circle cx="12" cy="11.5" r="1.5" fill="#00e5a0"/>
+        <path d="M4 5V3.5A1.5 1.5 0 0 1 5.5 2h5A1.5 1.5 0 0 1 12 3.5V5" stroke="#00e5a0" stroke-width="1.2"/>
+        <path d="M6 6h4M6 8.5h4" stroke="#00e5a0" stroke-width="1" stroke-linecap="round" opacity="0.6"/>
+      </svg>
+    </div>
+    <div>
+      <h1>OtoKantar</h1>
+      <span>v7.0 — plaka tanıma sistemi</span>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="status-pill">
+      <div class="pulse"></div>
+      <span>CANLI</span>
+    </div>
+    <div class="saat" id="header-saat">--:--:--</div>
+  </div>
+</header>
+
+<main>
+
+  <!-- METRİK 1 -->
+  <div class="card">
+    <div class="metric-label">Bugün Giriş</div>
+    <div class="metric-value accent" id="metric-giris">0</div>
+    <div class="metric-sub">toplam araç</div>
+  </div>
+
+  <!-- METRİK 2 -->
+  <div class="card">
+    <div class="metric-label">Son Saatte</div>
+    <div class="metric-value" id="metric-son-saat">0</div>
+    <div class="metric-sub">geçen araç</div>
+  </div>
+
+  <!-- METRİK 3 -->
+  <div class="card">
+    <div class="metric-label">Ortalama Güven</div>
+    <div class="metric-value warn" id="metric-guven">—</div>
+    <div class="metric-sub">% OCR skoru</div>
+  </div>
+
+  <!-- METRİK 4: Son kayıttan beri -->
+  <div class="card">
+    <div class="metric-label">Son Kayıttan</div>
+    <div class="metric-value" id="metric-beri">—</div>
+    <div class="metric-sub" id="metric-beri-sub">saniye önce</div>
+    <div class="since-bar">
+      <div class="since-fill" id="since-fill"></div>
+    </div>
+  </div>
+
+  <!-- CANLI PLAKA -->
+  <div class="card" style="grid-column: span 2;">
+    <div class="card-title" style="font-size:11px; text-transform:uppercase; letter-spacing:0.1em; color:var(--text-muted); margin-bottom:1rem;">
+      Aktif Tespit
+    </div>
+    <div class="plaka-big" id="plaka-big">
+      <span class="plaka-bos">BEKLENIYOR</span>
+    </div>
+    <div class="verify-track" id="verify-track">
+      <div class="verify-dot" id="vd-1"></div>
+      <div class="verify-dot" id="vd-2"></div>
+      <div class="verify-dot" id="vd-3"></div>
+      <div class="verify-dot" id="vd-4"></div>
+    </div>
+    <div class="verify-label" id="verify-label">doğrulama bekleniyor</div>
+    <div class="btn-row">
+      <button class="btn" id="btn-manuel">Manuel Giriş</button>
+      <button class="btn primary" id="btn-sim">Simülasyon Başlat</button>
+    </div>
+  </div>
+
+  <!-- SİSTEM LOGU -->
+  <div class="card log-kart">
+    <div class="kart-baslik">
+      <span>Sistem Logu</span>
+      <span class="badge" id="log-sayac">0 satır</span>
+    </div>
+    <div class="log-alan" id="log-alan"></div>
+  </div>
+
+  <!-- SAATLİK GRAFİK -->
+  <div class="card grafik-kart">
+    <div class="kart-baslik">
+      <span>Saatlik Yoğunluk</span>
+      <span class="badge">Son 12 saat</span>
+    </div>
+    <div class="grafik-alan" id="grafik-alan"></div>
+  </div>
+
+  <!-- LOG GRAFİĞİ -->
+  <div class="card log-kart">
+    <div class="kart-baslik">
+      <span>Sistem Bilgisi</span>
+    </div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:0.5rem;">
+      <div>
+        <div style="font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px;">Model</div>
+        <div style="font-family:var(--mono); font-size:12px; color:var(--text-muted);">YOLOv8 + EasyOCR</div>
+      </div>
+      <div>
+        <div style="font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px;">Donanım</div>
+        <div style="font-family:var(--mono); font-size:12px; color:var(--text-muted);" id="hw-bilgi">CPU</div>
+      </div>
+      <div>
+        <div style="font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px;">Eşik</div>
+        <div style="font-family:var(--mono); font-size:12px; color:var(--accent);">4 / BEKLEME 12s</div>
+      </div>
+      <div>
+        <div style="font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px;">CSV</div>
+        <div style="font-family:var(--mono); font-size:12px; color:var(--text-muted);">kantar_raporu.csv</div>
+      </div>
+      <div>
+        <div style="font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px;">OCR Kare Atlama</div>
+        <div style="font-family:var(--mono); font-size:12px; color:var(--text-muted);">Her 3. kare</div>
+      </div>
+      <div>
+        <div style="font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.1em; margin-bottom:4px;">Regex</div>
+        <div style="font-family:var(--mono); font-size:12px; color:var(--text-muted);">01–81 [A-Z]{1,3}[0-9]{2,4}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SON KAYITLAR TABLOSU -->
+  <div class="card tablo-kart">
+    <div class="kart-baslik">
+      <span>Son Kayıtlar</span>
+      <span class="badge" id="tablo-badge">0 kayıt</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Plaka</th>
+          <th>Tarih</th>
+          <th>Saat</th>
+          <th>Tip</th>
+          <th>Güven</th>
+        </tr>
+      </thead>
+      <tbody id="tablo-govde">
+        <tr>
+          <td colspan="5" style="color:var(--text-dim); font-family:var(--mono); font-size:12px; padding:20px 12px;">
+            Henüz kayıt yok — sistem bekleniyor...
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+</main>
+
+<script>
+const DEMO_PLAKALAR = [
+  "06ABC1234","34XY567","35DE890","06TK4521","16BCD789",
+  "34ABC123","41KLM99","07ZZZ1111","01AA987","55MN432"
+];
+
+let kayitlar = [];
+let aktifPlaka = null;
+let aktifSayac = 0;
+const ESIK = 4;
+let simBasladi = false;
+let simInterval = null;
+let logSayac = 0;
+let sonKayitZaman = null;
+let saatlikData = new Array(12).fill(0);
+
+function simdiStr() {
+  return new Date().toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+}
+
+function simdiTarih() {
+  return new Date().toLocaleDateString('tr-TR');
+}
+
+function log(seviye, mesaj) {
+  logSayac++;
+  const alan = document.getElementById('log-alan');
+  const satir = document.createElement('div');
+  satir.className = 'log-satir';
+  satir.innerHTML = `
+    <span class="log-zaman">${simdiStr()}</span>
+    <span class="log-seviye ${seviye}">${seviye.toUpperCase()}</span>
+    <span class="log-mesaj">${mesaj}</span>
+  `;
+  alan.appendChild(satir);
+  alan.scrollTop = alan.scrollHeight;
+  document.getElementById('log-sayac').textContent = logSayac + ' satır';
+}
+
+function plakaGoster(plaka, sayac) {
+  const el = document.getElementById('plaka-big');
+  el.innerHTML = plaka;
+  el.classList.remove('yeni');
+  void el.offsetWidth;
+  if (sayac >= ESIK) el.classList.add('yeni');
+
+  for (let i = 1; i <= 4; i++) {
+    const dot = document.getElementById('vd-' + i);
+    dot.className = 'verify-dot';
+    if (i <= sayac && sayac < ESIK) dot.classList.add('bekleniyor');
+    else if (i <= sayac) dot.classList.add('aktif');
+  }
+
+  document.getElementById('verify-label').textContent =
+    sayac >= ESIK
+      ? '✓ doğrulandı — kayıt yapıldı'
+      : `doğrulanıyor: ${sayac} / ${ESIK}`;
+}
+
+function kayitEkle(plaka, guven = 0.85) {
+  const kayit = {
+    plaka,
+    tarih: simdiTarih(),
+    saat: simdiStr(),
+    tip: 'GİRİŞ',
+    guven: guven,
+  };
+  kayitlar.unshift(kayit);
+  sonKayitZaman = Date.now();
+
+  const saat = new Date().getHours();
+  const idx = 11 - (new Date().getHours() % 12);
+  saatlikData[idx] = (saatlikData[idx] || 0) + 1;
+
+  metrikleriGuncelle();
+  tabloGuncelle();
+  grafikGuncelle();
+  log('info', `KAYIT: ${plaka} — güven %${Math.round(guven*100)}`);
+}
+
+function metrikleriGuncelle() {
+  document.getElementById('metric-giris').textContent = kayitlar.length;
+
+  const birSaatOnce = Date.now() - 3600000;
+  const sonSaat = kayitlar.filter(k => {
+    const t = new Date(k.tarih + ' ' + k.saat);
+    return t.getTime() > birSaatOnce;
+  }).length;
+  document.getElementById('metric-son-saat').textContent = sonSaat || kayitlar.length;
+
+  const ort = kayitlar.length
+    ? Math.round(kayitlar.reduce((s, k) => s + k.guven, 0) / kayitlar.length * 100)
+    : null;
+  document.getElementById('metric-guven').textContent = ort ? ort + '%' : '—';
+}
+
+function tabloGuncelle() {
+  const tbody = document.getElementById('tablo-govde');
+  document.getElementById('tablo-badge').textContent = kayitlar.length + ' kayıt';
+
+  tbody.innerHTML = kayitlar.slice(0,15).map(k => {
+    const pct = Math.round(k.guven * 100);
+    const sinif = pct >= 80 ? '' : pct >= 60 ? 'orta' : 'dusuk';
+    return `<tr>
+      <td class="td-plaka">${k.plaka}</td>
+      <td class="td-zaman">${k.tarih}</td>
+      <td class="td-zaman">${k.saat}</td>
+      <td><span class="badge-tip badge-giris">${k.tip}</span></td>
+      <td>
+        <div class="guven-bar">
+          <div class="guven-track">
+            <div class="guven-fill ${sinif}" style="width:${pct}%"></div>
+          </div>
+          <span class="guven-pct">%${pct}</span>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function grafikGuncelle() {
+  const alan = document.getElementById('grafik-alan');
+  const maks = Math.max(...saatlikData, 1);
+  const simdikiSaat = new Date().getHours();
+
+  alan.innerHTML = saatlikData.map((deger, i) => {
+    const saat = ((simdikiSaat - 11 + i) + 24) % 24;
+    const yukseklik = Math.round((deger / maks) * 90);
+    const aktif = i === 11 ? 'aktif-saat' : '';
+    return `<div class="grafik-sutun">
+      <span class="sutun-deger">${deger || ''}</span>
+      <div class="sutun-bar ${aktif}" style="height:${yukseklik}px"></div>
+      <span class="sutun-etiket">${String(saat).padStart(2,'0')}</span>
+    </div>`;
+  }).join('');
+}
+
+function simAdimi() {
+  const gelen = DEMO_PLAKALAR[Math.floor(Math.random() * DEMO_PLAKALAR.length)];
+  if (aktifPlaka !== gelen) {
+    aktifPlaka = gelen;
+    aktifSayac = 0;
+    log('warn', `Tespit: ${gelen} — doğrulama başladı`);
+  }
+  aktifSayac++;
+  plakaGoster(aktifPlaka, aktifSayac);
+
+  if (aktifSayac >= ESIK) {
+    const guven = 0.65 + Math.random() * 0.34;
+    kayitEkle(aktifPlaka, guven);
+    aktifSayac = 0;
+    aktifPlaka = null;
+    setTimeout(() => {
+      document.getElementById('plaka-big').innerHTML = '<span class="plaka-bos">BEKLENIYOR</span>';
+      document.getElementById('verify-label').textContent = 'doğrulama bekleniyor';
+      for (let i = 1; i <= 4; i++) document.getElementById('vd-' + i).className = 'verify-dot';
+    }, 2000);
+  }
+}
+
+document.getElementById('btn-sim').addEventListener('click', () => {
+  if (!simBasladi) {
+    simBasladi = true;
+    document.getElementById('btn-sim').textContent = 'Durdur';
+    document.getElementById('btn-sim').classList.add('primary');
+    simInterval = setInterval(simAdimi, 1200);
+    log('info', 'Simülasyon başlatıldı');
+  } else {
+    simBasladi = false;
+    clearInterval(simInterval);
+    document.getElementById('btn-sim').textContent = 'Simülasyon Başlat';
+    log('warn', 'Simülasyon durduruldu');
+  }
+});
+
+document.getElementById('btn-manuel').addEventListener('click', () => {
+  const p = prompt('Plaka girin (örn: 06ABC1234):');
+  if (p) {
+    const temiz = p.toUpperCase().replace(/[^A-Z0-9]/g,'');
+    kayitEkle(temiz, 1.0);
+    log('info', `Manuel giriş: ${temiz}`);
+  }
+});
+
+setInterval(() => {
+  document.getElementById('header-saat').textContent = simdiStr();
+  if (sonKayitZaman) {
+    const gecen = Math.floor((Date.now() - sonKayitZaman) / 1000);
+    document.getElementById('metric-beri').textContent = gecen;
+    const pct = Math.min(100, (gecen / 60) * 100);
+    document.getElementById('since-fill').style.width = pct + '%';
+  }
+}, 1000);
+
+grafikGuncelle();
+log('info', 'OtoKantar V7 arayüzü yüklendi');
+log('info', 'Kamera bağlantısı bekleniyor...');
+log('warn', 'GPU bulunamadı — CPU modunda çalışılıyor');
+</script>
+</body>
+</html>
