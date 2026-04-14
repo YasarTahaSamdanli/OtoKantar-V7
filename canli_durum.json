@@ -1,19 +1,19 @@
 {
-  "son_guncelleme": "2026-04-10T17:13:47.035963",
+  "son_guncelleme": "2026-04-10T18:59:51.806577",
   "son_kayit": {
-    "plaka": "06RTE28",
+    "plaka": "40AAB050",
     "tarih": "2026-04-10",
-    "saat": "17:13:47",
-    "guven": 0.5542227625846863,
+    "saat": "18:59:51",
+    "guven": 0.8107101530730167,
     "tip": "GIRIS",
     "operator": "AUTO"
   },
   "son_10": [
     {
-      "plaka": "06RTE28",
+      "plaka": "40AAB050",
       "tarih": "2026-04-10",
-      "saat": "17:13:47",
-      "guven": 0.5542227625846863,
+      "saat": "18:59:51",
+      "guven": 0.8107101530730167,
       "tip": "GIRIS",
       "operator": "AUTO"
     }

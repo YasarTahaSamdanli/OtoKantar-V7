@@ -7,6 +7,35 @@ pip install -r requirements.txt
 python otokantar.py
 ```
 
+## Dashboard'u Canli Kullanma
+
+`dashboard.html` dosyasi demo icerir ama asil olarak `canli_durum.json` ve `otokantar.log` dosyalarindan veri okur.
+
+Tarayicida dogrudan `file://` olarak acmak yerine klasoru HTTP ile yayinlayin:
+
+```bash
+cd OtoKantar_V7
+python -m http.server 8080
+```
+
+Sonra tarayicida acin: `http://localhost:8080/dashboard.html`
+
+Bu sirada `python otokantar.py` calisiyor olmali ki panel canli veri gostersin.
+
+### Otomatik Baslatma (Onerilen)
+
+Dashboard acildiginda `Otokantar.py` otomatik acilsin istiyorsan `http.server` yerine su sunucuyu kullan:
+
+```bash
+python dashboard_server.py
+```
+
+Ardindan:
+
+`http://127.0.0.1:8080/dashboard.html`
+
+Bu sunucu, ilk istekte `Otokantar.py` surecini otomatik baslatir.
+
 ## Dosyalar
 
 | Dosya | Açıklama |

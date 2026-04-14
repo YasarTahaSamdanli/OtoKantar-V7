@@ -6,54 +6,54 @@ Mimari  : KameraUretici(thread) → KareKuyrugu → _kare_isle
           → PlakaBuffer → KantarKaydedici(DbWriter thread) → FisYazdirici
 Donanım : Ermet Tartı (RS232/COM) + Epson Yazıcı (win32print / escpos / file)
 
-V11 İyileştirmeleri
--------------------
+V11 İyileştirmeleri (Orijinal)
+-------------------------------
 1. PlakaBuffer (TTL=120sn)
-   Kantar eşiği aşıldığında okunan en yüksek güvenli plakayı buffer'da tutar.
-   Ağırlık stabilize olunca plaka kameradan çıkmış olsa bile kayıt yapılır.
-
 2. Seans Sıfırlama Guard (3sn)
-   Ağırlık eşik altına düştüğünde anında sıfırlanmaz; 3sn kesintisiz eşik
-   altında kalması şartı aranır. Araç kantardan inerken zıplama koruması sağlar.
-
 3. Dinamik ROI & Gece Modu
-   KANTAR_ROI_NORM normalize (0–1) oranları kullanır; kamera çözünürlüğünden
-   bağımsızdır. _gamma_bgr %95 persentil parlaklık kullanır; lokal far yansıması
-   tüm görüntüyü etkilemez. Yüksek parlaklıkta bilateral filter eklenir.
-
 4. DB Retry & Yazıcı İzolasyonu
-   SQLite yazma thread'i exponential backoff (0.5/1.0/2.0sn, 3 deneme) ile
-   geçici "database is locked" hatalarında pes etmez. Yazıcı (win32/escpos)
-   thread başlatma dahil tüm hataları ana thread'den tamamen izole eder;
-   30sn timeout izleme thread'i ile uzun süreli bloklar loglanır.
 
-Diğer Özellikler
-----------------
-- Debounce  : Son 3sn ±20kg'dan az değişen ağırlık "sabit" sayılır.
-- Güven     : 0.6×OCR + 0.4×YOLO ağırlıklı skor.
-- Snapshot  : Başarılı kayıtta captures/ klasörüne görüntü kaydedilir.
-- Sesli     : winsound.Beep (Windows); kara listede farklı ton.
-- SQLite    : WAL modu + wal_autocheckpoint=100 + ayrı DB-writer thread.
-- FastAPI   : /, /api/canli-durum, /canli_kare.jpg, /api/durum, /api/son-kayitlar, /api/kara-liste.
-- Tracker   : IoU öncelikli + centroid yedek çoklu plaka takibi.
+V11 Prodüksiyon Güncellemeleri
+-------------------------------
+[P1] OcrWorker Entegrasyonu   : OCR artık asenkron OcrWorker thread üzerinden çalışır.
+     _kare_isle YOLO + ROI hazırlığı yapıp kuyruğa bırakır; sonuçlar bir sonraki
+     kare başında toplanır. Ana thread hiçbir EasyOCR çağrısında bloklanmaz.
+
+[P2] Dışarıdan Config Okuma   : CONFIG artık config.json'dan yüklenir. Dosya yoksa
+     kod içi varsayılanlar kullanılır. Tuple değerleri (MORPH_KERNEL, vb.) JSON
+     listesinden otomatik dönüştürülür.
+
+[P3] Log & Dosya Rotasyonu    : RotatingFileHandler ile log dosyası en fazla
+     LOG_MAX_BYTES bayta büyür, LOG_BACKUP_COUNT yedek tutulur. Program açılışında
+     ve her 6 saatte bir CAPTURES_RETENTION_DAYS günden eski snapshot'lar silinir.
+
+[P4] Kantar Okuyucu Soyutlama : Strategy pattern — SatirCozumleme ABC sınıfı +
+     ErmetProtokol / TolpaProtokol örnekleri. Yeni marka için tek metod yaz.
+
+[P5] Graceful Shutdown         : uvicorn Server nesnesi programatik olarak başlatılır
+     ve signal_handler üzerinden shutdown() çağrılır. KantarKaydedici.kapat() ile
+     DB yazma işlemleri tamamlanır; port asılı kalmaz.
 """
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STANDART KÜTÜPHANELER
 # ─────────────────────────────────────────────────────────────────────────────
+import abc
 import csv
 import json
 import logging
+import logging.handlers
 import os
 import platform
 import queue
 import re
+import signal
 import sqlite3
 import threading
 import time
 import urllib.request
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -63,7 +63,7 @@ from typing import Optional
 import cv2
 import easyocr
 import numpy as np
-import serial                        # pip install pyserial
+import serial
 import torch
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -96,102 +96,120 @@ except ImportError:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# YAPILANDIRMA
+# [P2] CONFIG: config.json'dan yükle, yoksa kod içi varsayılanlar
 # ─────────────────────────────────────────────────────────────────────────────
-CONFIG = {
-    # ── Kamera ───────────────────────────────────────────────────────────────
-    "KAMERA_INDEX"                  : 0,
-    "KAMERA_YENIDEN_BAGLANTI_DENEMESI": 5,
-    "KAMERA_BEKLEME_SURESI"         : 3.0,
 
-    # ── Tespit ───────────────────────────────────────────────────────────────
-    "YOLO_CONF"                     : 0.25,
-    "MIN_OCR_CONF"                  : 0.35,
-    "PLAKA_MIN_EN"                  : 10,
-    "PLAKA_MIN_BOY"                 : 10,
-    "ASPECT_RATIO_MIN"              : 2.0,
-    "ASPECT_RATIO_MAX"              : 6.5,
-
-    # ── OCR ──────────────────────────────────────────────────────────────────
-    "OCR_GPU"                       : False,
-    "OCR_DILLER"                    : ["tr", "en"],
-    "OCR_IZIN_LISTESI"              : "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
-    "OCR_KARE_ATLAMA"               : 3,
-    "MORPH_KAPAT"                   : True,
-    "MORPH_KERNEL"                  : (3, 3),
-    "ALT_KIRP_ORAN"                 : 0.15,
-    "BOYUTLANDIRMA_KATSAYI"         : 2,
-
-    # ── Gece Modu / Gamma (V11: %95 persentil + bilateral) ───────────────────
-    "GAMMA_PARLAKLIK_ESIK"          : 190.0,   # %95 persentil üstüyse gamma uygula
-    "GAMMA_US"                      : 1.65,
-    "CLAHE_CLIP"                    : 3.0,     # Gündüz:2.0 | Gece:3.0–4.0
-    "CLAHE_GRID"                    : (8, 8),
-    "BILATERAL_ESIK"                : 210,     # %95 persentil bu değeri aşarsa bilateral filter
-    "BILATERAL_D"                   : 7,
-    "BILATERAL_SIGMA_COLOR"         : 50,
-    "BILATERAL_SIGMA_SPACE"         : 50,
-
-    # ── Perspektif ───────────────────────────────────────────────────────────
-    "PERSPEKTIF_CIKTI_EN"           : 520,
-    "PERSPEKTIF_CIKTI_BOY"          : 110,
-    "CANNY_ESIK1"                   : 50,
-    "CANNY_ESIK2"                   : 150,
-    "PERSPEKTIF_MIN_ALAN_ORAN"      : 0.08,
-    "PERSPEKTIF_EPSILON_CARPAN"     : 0.02,
-
-    # ── Doğrulama (oylama) ───────────────────────────────────────────────────
-    "ESIK_DEGERI"                   : 4,
-    "OYLAMA_MIN_TOPLAM_GUVEN"       : 2.5,
-    "BEKLEME_SURESI_SONRA"          : 120.0,   # Kayıt sonrası spam engeli (sn)
-
-    # ── Çıktı ────────────────────────────────────────────────────────────────
-    "CSV_DOSYA"                     : "kantar_raporu.csv",
-    "LOG_DOSYA"                     : "otokantar.log",
-    "JSON_CANLI"                    : "canli_durum.json",
-    "DB_DOSYA"                      : "otokantar.db",
-    "CANLI_KARE_DOSYA"              : "canli_kare.jpg",
-    "CANLI_KARE_ARALIK"             : 5,
-
-    # ── Producer–Consumer kuyruğu ─────────────────────────────────────────────
-    "KARE_KUYRUK_BOYUTU"            : 2,
-    "OCR_WORKER_KUYRUK"             : 4,
-
-    # ── Model ────────────────────────────────────────────────────────────────
-    "PLATE_WEIGHTS_URL"             : (
+_CONFIG_VARSAYILAN = {
+    "KAMERA_INDEX"                       : 0,
+    "KAMERA_YENIDEN_BAGLANTI_DENEMESI"   : 5,
+    "KAMERA_BEKLEME_SURESI"              : 3.0,
+    "YOLO_CONF"                          : 0.25,
+    "MIN_OCR_CONF"                       : 0.35,
+    "PLAKA_MIN_EN"                       : 10,
+    "PLAKA_MIN_BOY"                      : 10,
+    "ASPECT_RATIO_MIN"                   : 2.0,
+    "ASPECT_RATIO_MAX"                   : 6.5,
+    "OCR_GPU"                            : False,
+    "OCR_DILLER"                         : ["tr", "en"],
+    "OCR_IZIN_LISTESI"                   : "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+    "OCR_KARE_ATLAMA"                    : 3,
+    "MORPH_KAPAT"                        : True,
+    "MORPH_KERNEL"                       : (3, 3),
+    "ALT_KIRP_ORAN"                      : 0.15,
+    "BOYUTLANDIRMA_KATSAYI"              : 2,
+    "GAMMA_PARLAKLIK_ESIK"               : 190.0,
+    "GAMMA_US"                           : 1.65,
+    "CLAHE_CLIP"                         : 3.0,
+    "CLAHE_GRID"                         : (8, 8),
+    "BILATERAL_ESIK"                     : 210,
+    "BILATERAL_D"                        : 7,
+    "BILATERAL_SIGMA_COLOR"              : 50,
+    "BILATERAL_SIGMA_SPACE"              : 50,
+    "PERSPEKTIF_CIKTI_EN"                : 520,
+    "PERSPEKTIF_CIKTI_BOY"              : 110,
+    "CANNY_ESIK1"                        : 50,
+    "CANNY_ESIK2"                        : 150,
+    "PERSPEKTIF_MIN_ALAN_ORAN"           : 0.08,
+    "PERSPEKTIF_EPSILON_CARPAN"          : 0.02,
+    "ESIK_DEGERI"                        : 4,
+    "OYLAMA_MIN_TOPLAM_GUVEN"            : 2.5,
+    "BEKLEME_SURESI_SONRA"               : 120.0,
+    "CSV_DOSYA"                          : "kantar_raporu.csv",
+    "LOG_DOSYA"                          : "otokantar.log",
+    "JSON_CANLI"                         : "canli_durum.json",
+    "DB_DOSYA"                           : "otokantar.db",
+    "CANLI_KARE_DOSYA"                   : "canli_kare.jpg",
+    "CANLI_KARE_ARALIK"                  : 5,
+    "KARE_KUYRUK_BOYUTU"                 : 2,
+    "OCR_WORKER_KUYRUK"                  : 4,
+    "PLATE_WEIGHTS_URL"                  : (
         "https://raw.githubusercontent.com/Muhammad-Zeerak-Khan/"
         "Automatic-License-Plate-Recognition-using-YOLOv8/main/"
         "license_plate_detector.pt"
     ),
-    "MODELS_DIR"                    : "models",
-
-    # ── Kara Liste ────────────────────────────────────────────────────────────
-    "KARA_LISTE"                    : ["06ABC123", "34YASAR01"],
-
-    # ── Ermet Tartı RS232 ─────────────────────────────────────────────────────
-    "KANTAR_PORT"                   : "COM1",
-    "KANTAR_BAUD"                   : 9600,
-    "MIN_KILIT_AGIRLIK"             : 2000,     # kg — bu eşiği aşarsa kantar "dolu"
-
-    # ── Kantar ROI — Normalize Oranlar (0.0 – 1.0) (V11: dinamik) ────────────
-    # (sol, üst, sağ, alt) — tam ekran = (0.0, 0.0, 1.0, 1.0)
-    "KANTAR_ROI_NORM"               : (0.0, 0.185, 1.0, 1.0),
-
-    # ── V11: Plaka Buffer ─────────────────────────────────────────────────────
-    "PLAKA_BUFFER_TTL"              : 120.0,   # sn — buffer geçerlilik süresi
-
-    # ── V11: Seans Sıfırlama Guard ────────────────────────────────────────────
-    "SEANS_SIFIR_BEKLEME"           : 3.0,     # sn — bu süre eşik altında kalınca sıfırla
-
-    # ── Yazıcı ───────────────────────────────────────────────────────────────
-    # "win32" | "escpos" | "file"
-    "YAZICI_BACKEND"                : "win32",
-    "YAZICI_ADI"                    : "",
-    "ESCPOS_USB_VENDOR"             : 0x04B8,
-    "ESCPOS_USB_PRODUCT"            : 0x0202,
+    "MODELS_DIR"                         : "models",
+    "KARA_LISTE"                         : ["06ABC123", "34YASAR01"],
+    "KANTAR_PORT"                        : "COM1",
+    "KANTAR_BAUD"                        : 9600,
+    "KANTAR_PROTOKOL"                    : "ermet",   # "ermet" | "tolpa" | özel
+    "MIN_KILIT_AGIRLIK"                  : 2000,
+    "KANTAR_ROI_NORM"                    : (0.0, 0.185, 1.0, 1.0),
+    "PLAKA_BUFFER_TTL"                   : 120.0,
+    "SEANS_SIFIR_BEKLEME"                : 3.0,
+    "YAZICI_BACKEND"                     : "win32",
+    "YAZICI_ADI"                         : "",
+    "ESCPOS_USB_VENDOR"                  : 0x04B8,
+    "ESCPOS_USB_PRODUCT"                 : 0x0202,
+    # [P3] Log rotasyonu
+    "LOG_MAX_BYTES"                      : 5 * 1024 * 1024,   # 5 MB
+    "LOG_BACKUP_COUNT"                   : 7,
+    # [P3] Snapshot temizleme
+    "CAPTURES_RETENTION_DAYS"            : 30,
+    # [P5] FastAPI
+    "FASTAPI_HOST"                       : "0.0.0.0",
+    "FASTAPI_PORT"                       : 8000,
 }
 
-# Türk plaka regex: 01-81 il kodu + 1-3 harf + 2-4 rakam
+# Tuple olarak saklanması gereken anahtarlar (JSON liste → tuple)
+_TUPLE_ANAHTARLAR = {
+    "MORPH_KERNEL", "CLAHE_GRID", "KANTAR_ROI_NORM",
+}
+
+
+def _config_yukle(dosya: str = "config.json") -> dict:
+    """
+    config.json'dan yükler. Dosya yoksa veya parse edilemezse varsayılanlar kullanılır.
+    JSON listelerinden tuple dönüşümü otomatik yapılır.
+    """
+    cfg = dict(_CONFIG_VARSAYILAN)
+    yol = Path(dosya)
+    if yol.is_file():
+        try:
+            with open(yol, encoding="utf-8") as f:
+                dis = json.load(f)
+            # _comment gibi özel anahtarları atla
+            dis = {k: v for k, v in dis.items() if not k.startswith("_")}
+            cfg.update(dis)
+            print(f"[CONFIG] '{dosya}' dosyasından yüklendi.")
+        except Exception as e:
+            print(f"[CONFIG UYARI] '{dosya}' okunamadı ({e}), varsayılanlar kullanılıyor.")
+    else:
+        print(f"[CONFIG] '{dosya}' bulunamadı, varsayılanlar kullanılıyor.")
+
+    # Tuple normalleştirme
+    for anahtar in _TUPLE_ANAHTARLAR:
+        if anahtar in cfg and isinstance(cfg[anahtar], list):
+            cfg[anahtar] = tuple(cfg[anahtar])
+
+    return cfg
+
+
+CONFIG = _config_yukle()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PLAKA REGEX
+# ─────────────────────────────────────────────────────────────────────────────
 PLAKA_REGEX = re.compile(
     r"(0[1-9]|[1-7][0-9]|8[0-1])"
     r"([A-Z]{1,3})"
@@ -203,7 +221,7 @@ _RAKAM_DUZELTME = {"O": "0", "I": "1", "S": "5", "B": "8", "Z": "2"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# LOGGING
+# [P3] LOGGING: RotatingFileHandler ile log rotasyonu
 # ─────────────────────────────────────────────────────────────────────────────
 def _logger_kur(log_dosya: str) -> logging.Logger:
     logger = logging.getLogger("OtoKantar")
@@ -214,18 +232,69 @@ def _logger_kur(log_dosya: str) -> logging.Logger:
         "%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-    fh = logging.FileHandler(log_dosya, encoding="utf-8")
+
+    # Rotating dosya handler — en fazla LOG_MAX_BYTES, LOG_BACKUP_COUNT yedek
+    fh = logging.handlers.RotatingFileHandler(
+        filename    =log_dosya,
+        maxBytes    =int(CONFIG.get("LOG_MAX_BYTES",    5 * 1024 * 1024)),
+        backupCount =int(CONFIG.get("LOG_BACKUP_COUNT", 7)),
+        encoding    ="utf-8",
+    )
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(fmt)
+
     ch = logging.StreamHandler()
     ch.setLevel(logging.INFO)
     ch.setFormatter(fmt)
+
     logger.addHandler(fh)
     logger.addHandler(ch)
     return logger
 
 
 log = _logger_kur(CONFIG["LOG_DOSYA"])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [P3] SNAPSHOT TEMİZLEYİCİ
+# ─────────────────────────────────────────────────────────────────────────────
+def eski_snapshot_temizle(klasor: str = "captures", retention_days: Optional[int] = None) -> int:
+    """
+    captures/ klasöründeki CAPTURES_RETENTION_DAYS günden eski .jpg/.png dosyalarını siler.
+    Silinen dosya sayısını döndürür.
+    """
+    if retention_days is None:
+        retention_days = int(CONFIG.get("CAPTURES_RETENTION_DAYS", 30))
+    klasor_yol = Path(klasor)
+    if not klasor_yol.is_dir():
+        return 0
+    sinir = datetime.now() - timedelta(days=retention_days)
+    silinen = 0
+    for dosya in klasor_yol.glob("*"):
+        if dosya.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
+            continue
+        try:
+            mtime = datetime.fromtimestamp(dosya.stat().st_mtime)
+            if mtime < sinir:
+                dosya.unlink()
+                silinen += 1
+        except Exception as e:
+            log.warning("Snapshot silinemedi (%s): %s", dosya.name, e)
+    if silinen:
+        log.info("[Cleanup] %d eski snapshot silindi (>%d gün).", silinen, retention_days)
+    return silinen
+
+
+def _periyodik_temizlik_baslat(aralik_saat: float = 6.0) -> threading.Thread:
+    """Arka planda her `aralik_saat` saatte bir eski snapshot'ları temizler."""
+    def _dongu():
+        while True:
+            time.sleep(aralik_saat * 3600)
+            eski_snapshot_temizle()
+
+    t = threading.Thread(target=_dongu, name="SnapshotCleaner", daemon=True)
+    t.start()
+    return t
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -265,7 +334,6 @@ class PlakaBuffer:
     """
     V11 — Plaka/Ağırlık ayrışmasını çözen buffer.
     Kantar eşiği aşıldığında okunan en yüksek güvenli plaka burada tutulur.
-    Ağırlık debounce tamamlanınca kamera boş olsa bile bu buffer kullanılır.
     """
     plaka    : str
     guven    : float
@@ -276,7 +344,6 @@ class PlakaBuffer:
         return (time.time() - self.zaman) > ttl
 
     def guncelle_eger_daha_iyi(self, plaka: str, guven: float, yolo_conf: float) -> bool:
-        """Gelen plaka daha yüksek güven skoruna sahipse buffer'ı güncelle."""
         yeni_skor = 0.6 * guven + 0.4 * yolo_conf
         eski_skor = 0.6 * self.guven + 0.4 * self.yolo_conf
         if yeni_skor > eski_skor:
@@ -324,7 +391,6 @@ def _canli_json_dosyadan_oku() -> dict:
 
 @app.get("/")
 def dashboard_sayfa():
-    """Ofis tarayıcısı: http://127.0.0.1:8000/"""
     html_yol = _PROJE_KOKU / "dashboard.html"
     if not html_yol.is_file():
         raise HTTPException(404, "dashboard.html bulunamadı.")
@@ -333,13 +399,10 @@ def dashboard_sayfa():
 
 @app.get("/api/canli-durum")
 def api_canli_durum():
-    """
-    dashboard.html için birleşik durum: son kayıtlar + anlık kantar kg (+ dosya yedeği).
-    """
     veri = _canli_json_dosyadan_oku()
     if sistem_referansi is not None:
         ag, st = sistem_referansi.kantar_okuyucu.veri
-        veri["kantar_kg"] = round(ag, 1)
+        veri["kantar_kg"]    = round(ag, 1)
         veri["kantar_sabit"] = st
         veri["plaka_buffer"] = (
             sistem_referansi._plaka_buffer.plaka
@@ -349,10 +412,10 @@ def api_canli_durum():
         kk = sistem_referansi.kaydedici.son_kayitlar
         if kk:
             veri["son_kayit"] = asdict(kk[-1])
-            veri["son_10"] = [asdict(k) for k in kk[-10:]]
+            veri["son_10"]    = [asdict(k) for k in kk[-10:]]
         veri["son_guncelleme"] = datetime.now().isoformat()
     else:
-        veri.setdefault("kantar_kg", None)
+        veri.setdefault("kantar_kg",    None)
         veri.setdefault("kantar_sabit", None)
         veri.setdefault("plaka_buffer", None)
         veri.setdefault("seans_kilitli", None)
@@ -361,7 +424,6 @@ def api_canli_durum():
 
 @app.get("/canli_kare.jpg")
 def api_canli_kare_dosyasi():
-    """Son OCR/kamera karesi (JPEG); tarayıcıda periyodik yenileme için no-store."""
     yol = _PROJE_KOKU / CONFIG["CANLI_KARE_DOSYA"]
     if not yol.is_file():
         raise HTTPException(404, "Canlı kare henüz yok.")
@@ -374,13 +436,12 @@ def api_canli_kare_dosyasi():
 
 @app.get("/api/log-son")
 def api_log_son():
-    """dashboard.html sistem logu için son satırlar."""
     yol = _PROJE_KOKU / CONFIG["LOG_DOSYA"]
     if not yol.is_file():
         return {"satirlar": []}
     try:
         text = yol.read_text(encoding="utf-8", errors="ignore")
-        tum = [s for s in text.splitlines() if s.strip()]
+        tum  = [s for s in text.splitlines() if s.strip()]
         return {"satirlar": tum[-8:]}
     except Exception:
         return {"satirlar": []}
@@ -391,10 +452,10 @@ def api_durum():
     if sistem_referansi is None:
         return {"hata": "Sistem henüz başlatılmadı"}
     return {
-        "kantar_kg"     : sistem_referansi.kantar_okuyucu.agirlik,
-        "sabit"         : sistem_referansi.kantar_okuyucu.sabit,
-        "seans_kilitli" : sistem_referansi.seans_kilitli_mi,
-        "plaka_buffer"  : (
+        "kantar_kg"    : sistem_referansi.kantar_okuyucu.agirlik,
+        "sabit"        : sistem_referansi.kantar_okuyucu.sabit,
+        "seans_kilitli": sistem_referansi.seans_kilitli_mi,
+        "plaka_buffer" : (
             sistem_referansi._plaka_buffer.plaka
             if sistem_referansi._plaka_buffer else None
         ),
@@ -442,20 +503,110 @@ def api_kara_liste_sil(plaka: str):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# KANTAR OKUYUCU (RS232 / Ermet)
+# [P4] KANTAR PROTOKOLLERİ — Strategy Pattern
+# ─────────────────────────────────────────────────────────────────────────────
+class SatirCozumleme(abc.ABC):
+    """
+    Kantar marka/protokol soyutlaması.
+    Yeni bir kantar eklemek için bu sınıfı miras alıp sadece `cozumle` metodunu yaz.
+    """
+
+    @abc.abstractmethod
+    def cozumle(self, satir: str) -> Optional[float]:
+        """
+        Ham ASCII satırından kg değerini döndürür.
+        Tanınamazsa None döner.
+        """
+        ...
+
+    @property
+    @abc.abstractmethod
+    def ad(self) -> str:
+        """Protokol adı (log satırlarında görünür)."""
+        ...
+
+
+class ErmetProtokol(SatirCozumleme):
+    """
+    Ermet / standart: '  +0002345 kg' veya '2345.0k' formatı.
+    Önek olarak 'ERR' içeren hata satırlarını atar.
+    """
+    _RE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:kg|k)", re.IGNORECASE)
+
+    @property
+    def ad(self) -> str:
+        return "ermet"
+
+    def cozumle(self, satir: str) -> Optional[float]:
+        temiz = satir.strip()
+        if temiz.upper().startswith("ERR"):
+            return None
+        m = self._RE.search(temiz)
+        if m:
+            try:
+                return float(m.group(1))
+            except ValueError:
+                return None
+        return None
+
+
+class TolpaProtokol(SatirCozumleme):
+    """
+    Örnek Tolpa/generic protokol: 'W:2345.0' veya 'WEIGHT=2345' formatı.
+    Gerçek protokolünüze göre bu sınıfı düzenleyin.
+    """
+    _RE = re.compile(r"(?:W(?:EIGHT)?)[=:]\s*(\d+(?:\.\d+)?)", re.IGNORECASE)
+
+    @property
+    def ad(self) -> str:
+        return "tolpa"
+
+    def cozumle(self, satir: str) -> Optional[float]:
+        m = self._RE.search(satir)
+        if m:
+            try:
+                return float(m.group(1))
+            except ValueError:
+                return None
+        return None
+
+
+# Protokol kayıt defteri — yeni marka için buraya ekle
+_PROTOKOL_FABRIKASI: dict[str, type[SatirCozumleme]] = {
+    "ermet" : ErmetProtokol,
+    "tolpa" : TolpaProtokol,
+}
+
+
+def protokol_olustur(ad: str) -> SatirCozumleme:
+    """
+    CONFIG["KANTAR_PROTOKOL"] değerine göre uygun protokol nesnesini döndürür.
+    Bilinmeyen isimler için ErmetProtokol kullanılır.
+    """
+    sinif = _PROTOKOL_FABRIKASI.get(ad.lower(), ErmetProtokol)
+    nesne = sinif()
+    log.info("Kantar protokolü seçildi: %s (%s)", nesne.ad, sinif.__name__)
+    return nesne
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# KANTAR OKUYUCU (RS232 / Ermet — strateji ile)
 # ─────────────────────────────────────────────────────────────────────────────
 class KantarOkuyucu(threading.Thread):
     """
     Ermet tartıyı RS232 üzerinden sürekli dinleyen daemon thread.
     Debounce: son 3sn ±20kg'dan az değişen ağırlık "sabit" sayılır.
-    Port açılamazsa çökmez; YENIDEN_BAGLANTI_BEKLEME sn sonra tekrar dener.
+    [P4]: Satır çözümleme mantığı SatirCozumleme strategy'e taşındı.
     """
     YENIDEN_BAGLANTI_BEKLEME = 5.0
     DEBOUNCE_SURE            = 3.0
     DEBOUNCE_TOLERANS        = 20.0
 
-    def __init__(self):
+    def __init__(self, protokol: Optional[SatirCozumleme] = None):
         super().__init__(name="KantarOkuyucu", daemon=True)
+        self._protokol           = protokol or protokol_olustur(
+            CONFIG.get("KANTAR_PROTOKOL", "ermet")
+        )
         self.guncel_agirlik  : float = 0.0
         self.agirlik_sabit_mi: bool  = False
         self._kilit          = threading.Lock()
@@ -463,20 +614,9 @@ class KantarOkuyucu(threading.Thread):
         self._debounce_ref   : float = 0.0
         self._debounce_bas   : float = 0.0
 
-    @staticmethod
-    def _satiri_cozumle(satir: str) -> Optional[float]:
-        """
-        Ham ASCII satırından "sayı + kg/k" desenini çıkarır.
-        'ERR 1234' gibi hata kodları kilo olarak yorumlanmaz.
-        Örnek: '  +0002345 kg' → 2345.0
-        """
-        m = re.search(r"(\d+(?:\.\d+)?)\s*(?:kg|k)", satir.lower())
-        if m:
-            try:
-                return float(m.group(1))
-            except ValueError:
-                return None
-        return None
+    def _satiri_cozumle(self, satir: str) -> Optional[float]:
+        """Delege: seçili protokol strategy'sine yönlendir."""
+        return self._protokol.cozumle(satir)
 
     def _debounce_guncelle(self, yeni: float) -> None:
         simdi = time.time()
@@ -492,8 +632,8 @@ class KantarOkuyucu(threading.Thread):
 
     def run(self):
         log.info(
-            "KantarOkuyucu başlatıldı → port=%s baud=%s debounce=%.0fsn/±%.0fkg",
-            CONFIG["KANTAR_PORT"], CONFIG["KANTAR_BAUD"],
+            "KantarOkuyucu başlatıldı → port=%s baud=%s protokol=%s debounce=%.0fsn/±%.0fkg",
+            CONFIG["KANTAR_PORT"], CONFIG["KANTAR_BAUD"], self._protokol.ad,
             self.DEBOUNCE_SURE, self.DEBOUNCE_TOLERANS,
         )
         while not self._dur.is_set():
@@ -562,7 +702,6 @@ class KantarOkuyucu(threading.Thread):
 
     @property
     def veri(self) -> tuple:
-        """Thread-safe atomik çift okuma: (agirlik, sabit)"""
         with self._kilit:
             return (self.guncel_agirlik, self.agirlik_sabit_mi)
 
@@ -571,10 +710,6 @@ class KantarOkuyucu(threading.Thread):
 # FİŞ YAZICI — Çok-Backend (win32print / escpos / file)
 # ─────────────────────────────────────────────────────────────────────────────
 class FisYazdirici:
-    """
-    V11: Yazıcı izolasyonu — tüm backend'ler ayrı daemon thread'de çalışır.
-    win32print için 30sn timeout izleme thread'i; ana döngü asla bloklanmaz.
-    """
     FIS_DOSYA = "kantar_fisi.txt"
     GENISLIK  = 42
 
@@ -598,14 +733,12 @@ class FisYazdirici:
         try:
             icerik = self._fis_metin_olustur(kayit)
             self._dosyaya_yaz(icerik)
-
             if backend == "win32":
                 self._win32_gonder_async(kayit)
             elif backend == "escpos":
                 self._escpos_gonder_async(kayit)
             else:
                 log.info("Yazıcı backend=file; fiş '%s' dosyasına kaydedildi.", self.FIS_DOSYA)
-
         except PermissionError as e:
             log.error("Fiş dosyası yazılamadı — izin hatası: %s", e)
         except OSError as e:
@@ -673,10 +806,6 @@ class FisYazdirici:
         )
 
     def _win32_gonder_async(self, kayit: PlakaKayit) -> None:
-        """
-        V11: Daemon thread + 30sn timeout izleme.
-        Thread başlatma hatası dahil tüm istisnalar çağıran thread'e sızmaz.
-        """
         ham_veri   = self._escpos_ham_olustur(kayit)
         yazici_adi = str(CONFIG.get("YAZICI_ADI", "")).strip()
 
@@ -705,7 +834,7 @@ class FisYazdirici:
         try:
             t = threading.Thread(target=_gonder, name="FisGonderici-win32", daemon=True)
             t.start()
-            # 30sn timeout izleyici — ana thread'i bloklamaz
+
             def _izle():
                 t.join(30)
                 if t.is_alive():
@@ -740,9 +869,9 @@ class PlakaTespitci:
     _PLAKA_ETIKETLERI = {"plate", "license_plate", "licence_plate", "plaka", "number_plate"}
 
     def __init__(self, weights_url: str, models_dir: str, conf: float, gpu: bool):
-        self.conf = conf
-        weights_path = self._model_indir(weights_url, models_dir)
-        self.model   = YOLO(weights_path)
+        self.conf        = conf
+        weights_path     = self._model_indir(weights_url, models_dir)
+        self.model       = YOLO(weights_path)
         if gpu and torch.cuda.is_available():
             self.model.to("cuda")
             log.info("YOLO → CUDA")
@@ -760,10 +889,6 @@ class PlakaTespitci:
         return str(path)
 
     def plakalari_bul(self, bgr) -> list:
-        """
-        Dönüş: [(x1, y1, x2, y2, conf), ...] conf azalan sırada.
-        En-boy oranı filtresi uygulanır.
-        """
         sonuclar = self.model(bgr, verbose=False)[0]
         if sonuclar.boxes is None or len(sonuclar.boxes) == 0:
             return []
@@ -800,12 +925,10 @@ class PlakaCozucu:
         self.reader   = easyocr.Reader(diller, gpu=gpu)
         self.min_conf = min_conf
         self._clahe   = cv2.createCLAHE(
-            clipLimit    =CONFIG["CLAHE_CLIP"],
-            tileGridSize =CONFIG["CLAHE_GRID"],
+            clipLimit   =CONFIG["CLAHE_CLIP"],
+            tileGridSize=CONFIG["CLAHE_GRID"],
         )
         log.info("EasyOCR hazır.")
-
-    # ── Ön işleme ─────────────────────────────────────────────────────────────
 
     @staticmethod
     def _sirala_dort_kose(pts: np.ndarray) -> np.ndarray:
@@ -820,11 +943,6 @@ class PlakaCozucu:
         ], dtype=np.float32)
 
     def _gamma_bgr(self, bgr: np.ndarray) -> np.ndarray:
-        """
-        V11: %95 persentil parlaklık kullanır.
-        Lokal far yansıması (küçük parlak bölge) ortalamayı yanıltmaz;
-        görüntünün %95'i belirtilen eşiğin üstündeyse gamma uygulanır.
-        """
         gri = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
         p95 = float(np.percentile(gri, 95))
         if p95 <= float(CONFIG["GAMMA_PARLAKLIK_ESIK"]):
@@ -887,10 +1005,6 @@ class PlakaCozucu:
         return cv2.warpPerspective(bgr, M, (out_w, out_h), flags=cv2.INTER_CUBIC)
 
     def _roi_hazirla(self, bgr) -> Optional[np.ndarray]:
-        """
-        V11: Gece far yansıması için bilateral filter eklendi.
-        %95 persentil parlaklık CONFIG["BILATERAL_ESIK"]'i aşarsa uygulanır.
-        """
         if bgr is None or bgr.size == 0:
             return None
 
@@ -911,18 +1025,17 @@ class PlakaCozucu:
         bgr = self._perspektif_duzelt(bgr)
         gri = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
 
-        # V11: Yüksek parlaklıkta bilateral filter (kenarları korur, lekeleri yumuşatır)
         p95_ici = float(np.percentile(gri, 95))
         if p95_ici > int(CONFIG.get("BILATERAL_ESIK", 210)):
             gri = cv2.bilateralFilter(
                 gri,
-                d          =int(CONFIG.get("BILATERAL_D", 7)),
-                sigmaColor =float(CONFIG.get("BILATERAL_SIGMA_COLOR", 50)),
-                sigmaSpace =float(CONFIG.get("BILATERAL_SIGMA_SPACE", 50)),
+                d         =int(CONFIG.get("BILATERAL_D", 7)),
+                sigmaColor=float(CONFIG.get("BILATERAL_SIGMA_COLOR", 50)),
+                sigmaSpace=float(CONFIG.get("BILATERAL_SIGMA_SPACE", 50)),
             )
 
-        gri = self._clahe.apply(gri)
-        blur = cv2.GaussianBlur(gri, (3, 3), 0)
+        gri   = self._clahe.apply(gri)
+        blur  = cv2.GaussianBlur(gri, (3, 3), 0)
         _, binary = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
         if CONFIG["MORPH_KAPAT"]:
@@ -930,8 +1043,6 @@ class PlakaCozucu:
             binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, k, iterations=1)
 
         return binary
-
-    # ── OCR ───────────────────────────────────────────────────────────────────
 
     def _ocr_oku(self, binary: np.ndarray) -> tuple:
         sonuclar = self.reader.readtext(
@@ -990,22 +1101,26 @@ class PlakaCozucu:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# MODÜL 3: OCR WORKER THREAD
+# [P1] MODÜL 3: OCR WORKER THREAD — Tam entegrasyon
 # ─────────────────────────────────────────────────────────────────────────────
 class OcrWorker(threading.Thread):
     """
     EasyOCR'ı ana döngüden ayıran asenkron worker.
-    Ana döngü YOLO'yu çalıştırır, ROI'yi kuyruğa bırakır, bir sonraki kareye geçer.
-    OCR sonucu hazır olunca çıkış kuyruğundan okunur; hiçbir kare bloklanmaz.
+    [P1] _kare_isle artık senkron PlakaCozucu.coz() çağırmaz:
+       - gorevi_gonder()  → roi + meta kuyruğa bırakılır
+       - sonuclari_topla() → bir sonraki kare başında tamamlanan sonuçlar alınır
+    Ana thread hiçbir zaman EasyOCR'ı beklemez; YOLO throughput'u korunur.
     """
+
     def __init__(self, cozucu: PlakaCozucu, kuyruk_boyutu: int = 4):
         super().__init__(name="OcrWorker", daemon=True)
-        self._cozucu        = cozucu
-        self._giris_kuyrugu : queue.Queue = queue.Queue(maxsize=kuyruk_boyutu)
-        self._cikis_kuyrugu : queue.Queue = queue.Queue(maxsize=kuyruk_boyutu * 2)
-        self._dur           = threading.Event()
+        self._cozucu         = cozucu
+        self._giris_kuyrugu  : queue.Queue = queue.Queue(maxsize=kuyruk_boyutu)
+        self._cikis_kuyrugu  : queue.Queue = queue.Queue(maxsize=kuyruk_boyutu * 2)
+        self._dur            = threading.Event()
 
     def gorevi_gonder(self, gorev: OcrGorevi) -> bool:
+        """Non-blocking: kuyruk doluysa False döner (kare atlanır)."""
         try:
             self._giris_kuyrugu.put_nowait(gorev)
             return True
@@ -1013,6 +1128,7 @@ class OcrWorker(threading.Thread):
             return False
 
     def sonuclari_topla(self) -> list:
+        """Tamamlanan tüm OCR sonuçlarını non-blocking toplar."""
         sonuclar = []
         while True:
             try:
@@ -1024,7 +1140,7 @@ class OcrWorker(threading.Thread):
     def durdur(self) -> None:
         self._dur.set()
         try:
-            self._giris_kuyrugu.put_nowait(None)
+            self._giris_kuyrugu.put_nowait(None)    # Worker'ı uyandır
         except queue.Full:
             pass
 
@@ -1039,7 +1155,9 @@ class OcrWorker(threading.Thread):
                 break
             try:
                 sonuc = self._cozucu.coz(gorev.roi_bgr)
-                self._cikis_kuyrugu.put((gorev.arac_id, sonuc, gorev.yolo_conf, gorev.bbox))
+                self._cikis_kuyrugu.put(
+                    (gorev.arac_id, sonuc, gorev.yolo_conf, gorev.bbox)
+                )
             except Exception as e:
                 log.error("OcrWorker işleme hatası (%s): %s", type(e).__name__, e)
         log.info("OcrWorker durduruldu.")
@@ -1056,12 +1174,12 @@ class CentroidTracker:
         iou_esik       : float = 0.2,
         gorunmezlik_max: float = 2.0,
     ):
-        self.max_distance       = float(max_distance)
-        self.max_age_s          = float(max_age_s)
-        self.iou_esik           = float(iou_esik)
-        self._purge_after_s     = min(float(max_age_s), float(gorunmezlik_max))
-        self._next_id           = 1
-        self._tracks            : dict = {}
+        self.max_distance   = float(max_distance)
+        self.max_age_s      = float(max_age_s)
+        self.iou_esik       = float(iou_esik)
+        self._purge_after_s = min(float(max_age_s), float(gorunmezlik_max))
+        self._next_id       = 1
+        self._tracks        : dict = {}
 
     @staticmethod
     def _centroid(bbox: tuple) -> tuple:
@@ -1139,10 +1257,10 @@ class CentroidTracker:
 # ─────────────────────────────────────────────────────────────────────────────
 class DogrulamaMotoru:
     def __init__(self, esik: int, min_toplam_guven: float, kayit_sonrasi_bekleme: float):
-        self.esik              = int(esik)
-        self.min_toplam_guven  = float(min_toplam_guven)
-        self.bekleme           = float(kayit_sonrasi_bekleme)
-        self._durum            : dict = {}
+        self.esik             = int(esik)
+        self.min_toplam_guven = float(min_toplam_guven)
+        self.bekleme          = float(kayit_sonrasi_bekleme)
+        self._durum           : dict = {}
 
     def isle(self, arac_id: int, plaka: str, guven: float) -> tuple:
         su_an = time.time()
@@ -1183,7 +1301,10 @@ class DogrulamaMotoru:
 
     def temizle_eski(self, yasam_suresi: float = 30.0):
         su_an = time.time()
-        for aid in [aid for aid, d in self._durum.items() if su_an - d.son_gorulme > yasam_suresi]:
+        for aid in [
+            aid for aid, d in self._durum.items()
+            if su_an - d.son_gorulme > yasam_suresi
+        ]:
             del self._durum[aid]
 
     def sifirla(self) -> None:
@@ -1195,9 +1316,8 @@ class DogrulamaMotoru:
 # ─────────────────────────────────────────────────────────────────────────────
 class KantarKaydedici:
     """
-    V11: DB Writer thread'i exponential backoff retry ile güçlendirildi.
-    Geçici 'database is locked' hatalarında 0.5/1.0/2.0sn bekleme ile 3 deneme.
-    Tüm denemeler başarısız olursa kayıt loglanır ve atlanır; sistem durmaz.
+    V11: DB Writer thread'i exponential backoff retry.
+    [P1] ile değişiklik yok — kaydedici zaten thread-safe.
     """
     _RETRY_GECIKME = [0.5, 1.0, 2.0]
 
@@ -1208,17 +1328,17 @@ class KantarKaydedici:
         db_dosya     : str,
         fis_yazdirici: Optional[FisYazdirici] = None,
     ):
-        self.csv_dosya      = csv_dosya
-        self.json_dosya     = json_dosya
-        self.db_dosya       = db_dosya
-        self.fis_yazdirici  = fis_yazdirici
-        self.son_kayitlar   : list = []
-        self._kilit         = threading.Lock()
-        self._csv_aktif     = True
+        self.csv_dosya     = csv_dosya
+        self.json_dosya    = json_dosya
+        self.db_dosya      = db_dosya
+        self.fis_yazdirici = fis_yazdirici
+        self.son_kayitlar  : list = []
+        self._kilit        = threading.Lock()
+        self._csv_aktif    = True
 
-        self._db_kuyrugu    : queue.Queue = queue.Queue()
-        self._db_dur        = threading.Event()
-        self._db_thread     = threading.Thread(
+        self._db_kuyrugu   : queue.Queue = queue.Queue()
+        self._db_dur       = threading.Event()
+        self._db_thread    = threading.Thread(
             target=self._db_writer_loop,
             name  ="DbWriter",
             daemon=True,
@@ -1258,11 +1378,6 @@ class KantarKaydedici:
             con.close()
 
     def _db_writer_loop(self) -> None:
-        """
-        V11: Exponential backoff retry.
-        sqlite3.OperationalError → 3 deneme × artan bekleme.
-        sqlite3.IntegrityError   → kasıtlı atlama (PRIMARY KEY çakışması).
-        """
         def _yaz(con: sqlite3.Connection, kayit: PlakaKayit) -> None:
             cur = con.cursor()
             cur.execute(
@@ -1332,9 +1447,21 @@ class KantarKaydedici:
             log.debug("DbWriter bağlantısı kapatıldı.")
 
     def kapat(self) -> None:
+        """
+        [P5] Graceful shutdown: DB kuyruğu boşalana kadar bekle, sonra thread'i durdur.
+        """
+        log.info("KantarKaydedici: kuyruk boşaltılıyor...")
+        # Kuyruktaki öğelerin işlenmesini bekle (en fazla 10sn)
+        bitis = time.time() + 10.0
+        while not self._db_kuyrugu.empty() and time.time() < bitis:
+            time.sleep(0.1)
         self._db_dur.set()
-        self._db_kuyrugu.put(None)
-        self._db_thread.join(timeout=5.0)
+        self._db_kuyrugu.put(None)    # Worker'ı uyandır
+        self._db_thread.join(timeout=8.0)
+        if self._db_thread.is_alive():
+            log.warning("DbWriter thread 8sn içinde sonlanmadı — zorla bırakılıyor.")
+        else:
+            log.info("DbWriter thread temiz kapandı.")
 
     def _csv_baslik_yaz(self):
         dosya_var = Path(self.csv_dosya).exists()
@@ -1380,7 +1507,6 @@ class KantarKaydedici:
             if self.fis_yazdirici is not None:
                 self.fis_yazdirici.yazdir(kayit)
 
-    # Geriye uyumluluk
     def kaydet(self, kayit: PlakaKayit):
         self.gecis_kaydet(kayit)
 
@@ -1403,13 +1529,13 @@ class EkranCizici:
     @staticmethod
     def plaka_kutusu(
         kare, bbox, plaka, sayac, esik,
-        arac_id     : Optional[int] = None,
-        kara_liste  : bool = False,
-        renk        = (255, 0, 255),
-        kalin       : int = 2,
-        oy_lider    : str = "",
-        oy_lider_toplam: float = 0.0,
-        oy_min_guven: float = 0.0,
+        arac_id           : Optional[int] = None,
+        kara_liste        : bool = False,
+        renk              = (255, 0, 255),
+        kalin             : int = 2,
+        oy_lider          : str = "",
+        oy_lider_toplam   : float = 0.0,
+        oy_min_guven      : float = 0.0,
     ):
         x1, y1, x2, y2 = bbox
         if kara_liste:
@@ -1446,12 +1572,16 @@ class EkranCizici:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# ANA SİSTEM: OtoKantar V11
+# ANA SİSTEM: OtoKantar V11 — Prodüksiyon
 # ─────────────────────────────────────────────────────────────────────────────
 class OtoKantar:
     def __init__(self):
         log.info("=" * 60)
-        log.info("OtoKantar V11 başlatılıyor...")
+        log.info("OtoKantar V11 (Prodüksiyon) başlatılıyor...")
+
+        # [P3] Program açılışında eski snapshot'ları temizle
+        eski_snapshot_temizle()
+        _periyodik_temizlik_baslat(aralik_saat=6.0)
 
         self.tespitci = PlakaTespitci(
             weights_url=CONFIG["PLATE_WEIGHTS_URL"],
@@ -1464,9 +1594,16 @@ class OtoKantar:
             gpu     =CONFIG["OCR_GPU"],
             min_conf=CONFIG["MIN_OCR_CONF"],
         )
+
+        # [P1] OcrWorker — asenkron OCR kuyruğu
+        self.ocr_worker = OcrWorker(
+            cozucu      =self.cozucu,
+            kuyruk_boyutu=int(CONFIG.get("OCR_WORKER_KUYRUK", 4)),
+        )
+
         self.dogrulama = DogrulamaMotoru(
-            esik               =CONFIG["ESIK_DEGERI"],
-            min_toplam_guven   =CONFIG["OYLAMA_MIN_TOPLAM_GUVEN"],
+            esik                =CONFIG["ESIK_DEGERI"],
+            min_toplam_guven    =CONFIG["OYLAMA_MIN_TOPLAM_GUVEN"],
             kayit_sonrasi_bekleme=CONFIG["BEKLEME_SURESI_SONRA"],
         )
         self.kantar_okuyucu = KantarOkuyucu()
@@ -1484,22 +1621,10 @@ class OtoKantar:
         )
         self.plaka_hafizasi: dict = {}
 
-        # ── V11: PlakaBuffer ──────────────────────────────────────────────────
-        # Kantar eşiği aşıldığında okunan en yüksek güvenli plaka burada tutulur.
-        # Ağırlık sabitlenince kamera boş olsa bile bu buffer kullanılarak kayıt yapılır.
-        self._plaka_buffer: Optional[PlakaBuffer] = None
-
-        # ── Seans Kilidi ──────────────────────────────────────────────────────
-        self._kantar_seans_kilitli: bool = False
-
-        # ── V11: Seans Sıfırlama Guard ────────────────────────────────────────
-        # Ağırlık eşik altına düştüğünde bu zaman damgası set edilir.
-        # CONFIG["SEANS_SIFIR_BEKLEME"] sn kesintisiz altında kalmazsa sıfırlanmaz.
-        self._seans_sifir_baslangic: Optional[float] = None
-
-        # ── V11: Dinamik ROI ─────────────────────────────────────────────────
-        # KANTAR_ROI_NORM normalize → piksel koordinatı (ilk karede hesaplanır, önbelleklenir)
-        self._kantar_roi_piksel: Optional[tuple] = None
+        self._plaka_buffer          : Optional[PlakaBuffer] = None
+        self._kantar_seans_kilitli  : bool  = False
+        self._seans_sifir_baslangic : Optional[float] = None
+        self._kantar_roi_piksel     : Optional[tuple] = None
 
         self._kare_sayaci         = 0
         self._fps_onceki          = time.time()
@@ -1510,25 +1635,102 @@ class OtoKantar:
         self._canli_kare_sayac    = 0
         self._son_plaka_listesi   : list = []
 
+        # [P5] Graceful shutdown koordinasyonu
+        self._uvicorn_server : Optional[uvicorn.Server] = None
+        self._cikis_istendi  = threading.Event()
+
     @property
     def seans_kilitli_mi(self) -> bool:
         return self._kantar_seans_kilitli
 
-    # ── V11: Dinamik ROI hesaplama ────────────────────────────────────────────
+    # ── [P5] Signal handler ───────────────────────────────────────────────────
+
+    def _signal_handler(self, signum, frame) -> None:
+        log.info("Signal %s alındı — graceful shutdown başlıyor...", signum)
+        self._cikis_istendi.set()
+
+    # ── [P5] uvicorn programatik başlatma ─────────────────────────────────────
+
+    def _fastapi_baslat(self) -> None:
+        """
+        uvicorn.Server nesnesini programatik başlatır.
+        Kapatma sırasında self._uvicorn_server.should_exit = True ile
+        port serbest bırakılır; daemon değil, join edilebilir thread.
+        """
+        uconf = uvicorn.Config(
+            app   =app,
+            host  =str(CONFIG.get("FASTAPI_HOST", "0.0.0.0")),
+            port  =int(CONFIG.get("FASTAPI_PORT", 8000)),
+            log_level="warning",
+        )
+        self._uvicorn_server = uvicorn.Server(uconf)
+
+        def _calistir():
+            try:
+                self._uvicorn_server.run()
+            except Exception as e:
+                log.error("FastAPI sunucu hatası: %s", e)
+
+        t = threading.Thread(target=_calistir, name="FastAPIServer", daemon=False)
+        t.start()
+        log.info(
+            "FastAPI sunucusu başlatıldı → http://%s:%s",
+            CONFIG.get("FASTAPI_HOST", "0.0.0.0"),
+            CONFIG.get("FASTAPI_PORT", 8000),
+        )
+        return t
+
+    # ── [P5] Temiz kapanış ────────────────────────────────────────────────────
+
+    def _kapat(
+        self,
+        dur_event        : threading.Event,
+        uretici_thread   : threading.Thread,
+        fastapi_thread   : threading.Thread,
+    ) -> None:
+        log.info("Kapatma süreci başladı...")
+
+        # 1. Kamera üreticisini durdur
+        dur_event.set()
+        uretici_thread.join(timeout=5.0)
+        if uretici_thread.is_alive():
+            log.warning("Kamera üreticisi 5sn içinde sonlanmadı.")
+
+        # 2. [P1] OcrWorker'ı durdur
+        self.ocr_worker.durdur()
+        self.ocr_worker.join(timeout=5.0)
+        if self.ocr_worker.is_alive():
+            log.warning("OcrWorker 5sn içinde sonlanmadı.")
+
+        # 3. Kantar okuyucuyu durdur
+        self.kantar_okuyucu.durdur()
+        self.kantar_okuyucu.join(timeout=3.0)
+
+        # 4. [P5] DB yazma işlemlerini güvenle bitir
+        self.kaydedici.kapat()
+
+        # 5. [P5] uvicorn'u programatik kapat (port serbest)
+        if self._uvicorn_server is not None:
+            log.info("uvicorn kapatılıyor...")
+            self._uvicorn_server.should_exit = True
+            fastapi_thread.join(timeout=5.0)
+            if fastapi_thread.is_alive():
+                log.warning("FastAPI thread 5sn içinde sonlanmadı.")
+            else:
+                log.info("FastAPI thread temiz kapandı.")
+
+        cv2.destroyAllWindows()
+        log.info("OtoKantar V11 temiz kapandı.")
+
+    # ── Dinamik ROI ───────────────────────────────────────────────────────────
 
     def _roi_piksel_guncelle(self, kare_h: int, kare_w: int) -> tuple:
-        """
-        KANTAR_ROI_NORM (0.0–1.0) → mevcut çözünürlükte piksel koordinatı.
-        Sonuç önbelleklenir; kamera çözünürlüğü değişirse seans sıfırında temizlenir.
-        """
         if self._kantar_roi_piksel is not None:
             return self._kantar_roi_piksel
         l, t, r, b = CONFIG["KANTAR_ROI_NORM"]
         roi = (
-            int(l * kare_w),
-            int(t * kare_h),
-            int(r * kare_w),
-            int(b * kare_h),
+            int(l * kare_w), int(t * kare_h),
+            int(r * kare_w), int(b * kare_h),
         )
         self._kantar_roi_piksel = roi
         log.info(
@@ -1537,14 +1739,13 @@ class OtoKantar:
         )
         return roi
 
-    # ── V11: Seans sıfırlama (Guard ile) ─────────────────────────────────────
+    # ── Seans sıfırlama ───────────────────────────────────────────────────────
 
     def _seans_temizle(self) -> None:
-        """Guard süresi tamamlandığında çağrılır. Tüm hafızaları sıfırlar."""
         self._kantar_seans_kilitli  = False
         self._seans_sifir_baslangic = None
-        self._plaka_buffer          = None    # Buffer sıfırla
-        self._kantar_roi_piksel     = None    # ROI önbelleği temizle (çözünürlük değişebilir)
+        self._plaka_buffer          = None
+        self._kantar_roi_piksel     = None
         self.plaka_hafizasi.clear()
         self.dogrulama.sifirla()
         self.tracker.sifirla()
@@ -1621,7 +1822,114 @@ class OtoKantar:
         except Exception as e:
             log.warning("Canlı kare yazılamadı: %s", e)
 
-    # ── ANA KARE İŞLEYİCİ ─────────────────────────────────────────────────────
+    # ── [P1] OCR SONUÇLARINI İŞLE ────────────────────────────────────────────
+
+    def _ocr_sonuclarini_isle(
+        self,
+        kare         : np.ndarray,
+        guncel_kg    : float,
+        agirlik_sabit: bool,
+        kare_w       : int,
+    ) -> None:
+        """
+        [P1] OcrWorker'dan toplanan sonuçları işler.
+        Bu metod _kare_isle'den çağrılır; EasyOCR bu thread'de çalışmaz.
+        """
+        sonuclar = self.ocr_worker.sonuclari_topla()
+        for (arac_id, sonuc, yolo_conf, bbox) in sonuclar:
+            if not sonuc.gecerli or sonuc.plaka is None:
+                continue
+
+            plaka               = sonuc.plaka
+            kara_listede_okunan = plaka in CONFIG.get("KARA_LISTE", [])
+            if kara_listede_okunan:
+                log.warning("ALARM: KARA LİSTEDEKİ ARAÇ TESPİT EDİLDİ! (%s)", plaka)
+
+            kaydet, final_plaka, kazan_toplam, kazan_n = self.dogrulama.isle(
+                arac_id, plaka, float(sonuc.guven or 0.0)
+            )
+
+            if not kaydet:
+                lider, oku_n, lider_oy, esik_c, min_g = self.dogrulama.durum_ozeti(arac_id)
+                self.cizici.plaka_kutusu(
+                    kare, bbox, plaka, oku_n, esik_c,
+                    arac_id=arac_id, kara_liste=kara_listede_okunan,
+                    oy_lider=lider, oy_lider_toplam=lider_oy, oy_min_guven=min_g,
+                )
+                continue
+
+            if final_plaka is None:
+                continue
+
+            kara_listede_final = final_plaka in CONFIG.get("KARA_LISTE", [])
+            ort_ocr            = float(kazan_toplam) / max(1, int(kazan_n))
+            final_conf         = 0.6 * ort_ocr + 0.4 * float(yolo_conf)
+            simdi_dt           = datetime.now()
+            bugun_tarih        = simdi_dt.strftime("%Y-%m-%d")
+            ix1, iy1, ix2, iy2 = bbox
+
+            # V11: PlakaBuffer güncelle
+            kantar_dolu = guncel_kg >= float(CONFIG["MIN_KILIT_AGIRLIK"])
+            if kantar_dolu:
+                if self._plaka_buffer is None:
+                    self._plaka_buffer = PlakaBuffer(
+                        plaka    =final_plaka,
+                        guven    =ort_ocr,
+                        yolo_conf=float(yolo_conf),
+                    )
+                    log.debug("PlakaBuffer oluşturuldu: %s (güven=%.2f)", final_plaka, final_conf)
+                else:
+                    guncellendi = self._plaka_buffer.guncelle_eger_daha_iyi(
+                        final_plaka, ort_ocr, float(yolo_conf)
+                    )
+                    if guncellendi:
+                        log.debug("PlakaBuffer güncellendi: %s (yeni güven=%.2f)", final_plaka, final_conf)
+
+            # Ağırlık sabit ve seans açık → doğrudan kayıt
+            if agirlik_sabit and not self._kantar_seans_kilitli:
+                kayit = PlakaKayit(
+                    plaka   =final_plaka,
+                    tarih   =bugun_tarih,
+                    saat    =simdi_dt.strftime("%H:%M:%S"),
+                    guven   =final_conf,
+                    agirlik =guncel_kg,
+                    tip     =("KARA LİSTE" if kara_listede_final else "GIRIS"),
+                )
+                self.kaydedici.gecis_kaydet(kayit)
+                self.plaka_hafizasi[arac_id] = final_plaka
+                self._kantar_seans_kilitli   = True
+                self._plaka_buffer           = None
+                self.cizici.basarili_kayit(kare, bbox, final_plaka)
+                log.info("DOĞRUDAN KAYIT: plaka=%s ağırlık=%.1fkg güven=%.2f",
+                         final_plaka, guncel_kg, final_conf)
+
+                # Snapshot
+                try:
+                    Path("captures").mkdir(exist_ok=True)
+                    snap = f"captures/{final_plaka}_{bugun_tarih}_{simdi_dt.strftime('%H-%M-%S')}.jpg"
+                    cv2.imwrite(snap, kare)
+                    log.info("Snapshot: %s", snap)
+                except Exception as e:
+                    log.warning("Snapshot yazılamadı: %s", e)
+
+                if _WINSOUND_OK:
+                    try:
+                        winsound.Beep(
+                            500 if kara_listede_final else 1000,
+                            1000 if kara_listede_final else 300,
+                        )
+                    except Exception:
+                        pass
+
+            elif not agirlik_sabit and kantar_dolu:
+                cv2.putText(
+                    kare,
+                    f"PLAKA HAZIR ({final_plaka}) — AĞIRLIK SABİTLENİYOR...",
+                    (ix1, max(18, iy1 - 38)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.72, (0, 200, 255), 2,
+                )
+
+    # ── ANA KARE İŞLEYİCİ ────────────────────────────────────────────────────
 
     def _kare_isle(self, kare: np.ndarray):
         self._kare_sayaci += 1
@@ -1630,32 +1938,25 @@ class OtoKantar:
         kare_h, kare_w = kare.shape[:2]
         simdi          = time.time()
 
-        # ── V11 Değişiklik 3: Dinamik ROI ─────────────────────────────────────
         roi_x1, roi_y1, roi_x2, roi_y2 = self._roi_piksel_guncelle(kare_h, kare_w)
 
-        # ── Kantar atomik okuma ────────────────────────────────────────────────
         guncel_kg, agirlik_sabit = self.kantar_okuyucu.veri
         esik_kg     = float(CONFIG["MIN_KILIT_AGIRLIK"])
         kantar_dolu = guncel_kg >= esik_kg
 
-        # ── V11 Değişiklik 2: Seans Sıfırlama Guard ───────────────────────────
-        # Ağırlık eşik altına düştüğünde sayacı başlat;
-        # CONFIG["SEANS_SIFIR_BEKLEME"] sn kesintisiz altında kalmazsa sıfırlanmaz.
+        # ── Seans Sıfırlama Guard ─────────────────────────────────────────────
         if not kantar_dolu and self._kantar_seans_kilitli:
             if self._seans_sifir_baslangic is None:
-                # İlk kez eşik altına düştü — guard başlat
                 self._seans_sifir_baslangic = simdi
                 log.debug(
                     "Seans sıfır guard başladı — %.1fsn beklenecek (%.0fkg < %.0fkg)",
                     CONFIG["SEANS_SIFIR_BEKLEME"], guncel_kg, esik_kg,
                 )
             else:
-                # Guard devam ediyor — süre doldu mu?
                 gecen = simdi - self._seans_sifir_baslangic
                 if gecen >= float(CONFIG["SEANS_SIFIR_BEKLEME"]):
                     self._seans_temizle()
                 else:
-                    # Henüz bekleme bitmedi — ekranda göster
                     kalan = float(CONFIG["SEANS_SIFIR_BEKLEME"]) - gecen
                     cv2.putText(
                         kare,
@@ -1664,88 +1965,66 @@ class OtoKantar:
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 200, 255), 1,
                     )
         elif kantar_dolu and self._seans_sifir_baslangic is not None:
-            # Ağırlık tekrar yükseldi — guard'ı iptal et (zıplama koruması devreye girdi)
-            log.debug(
-                "Seans sıfır guard iptal — ağırlık tekrar eşiğin üstüne çıktı (%.0fkg)",
-                guncel_kg,
-            )
+            log.debug("Seans sıfır guard iptal — ağırlık tekrar eşiğin üstüne çıktı (%.0fkg)", guncel_kg)
             self._seans_sifir_baslangic = None
 
-        # ── V11 Değişiklik 1: PlakaBuffer güncelleme ──────────────────────────
-        # Kantar eşiği altındaysa buffer'ı sıfırla veya TTL kontrolü yap
-        if not kantar_dolu:
-            if self._plaka_buffer is not None:
-                if self._plaka_buffer.suresi_doldu_mu(float(CONFIG["PLAKA_BUFFER_TTL"])):
-                    log.debug("PlakaBuffer TTL doldu, temizlendi.")
-                    self._plaka_buffer = None
+        # ── PlakaBuffer TTL ────────────────────────────────────────────────────
+        if not kantar_dolu and self._plaka_buffer is not None:
+            if self._plaka_buffer.suresi_doldu_mu(float(CONFIG["PLAKA_BUFFER_TTL"])):
+                log.debug("PlakaBuffer TTL doldu, temizlendi.")
+                self._plaka_buffer = None
 
         # ── Ekran: kantar durumu ───────────────────────────────────────────────
         if not kantar_dolu and self.tracker.is_empty():
             self._aktif_bbox = None
-            cv2.putText(
-                kare,
-                f"DURUM: KANTAR BOŞ ({guncel_kg:.0f} kg)",
-                (10, 58),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2,
-            )
+            cv2.putText(kare, f"DURUM: KANTAR BOŞ ({guncel_kg:.0f} kg)",
+                        (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
+            # [P1] Bekleyen OCR sonuçlarını yine de topla (kuyruk temizliği)
+            self.ocr_worker.sonuclari_topla()
             return
 
         if kantar_dolu:
             if agirlik_sabit:
-                cv2.putText(
-                    kare,
-                    f"KANTARDA ARAÇ VAR: {guncel_kg:.0f} kg  [SABİT]",
-                    (10, 58),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 165, 255), 2,
-                )
+                cv2.putText(kare, f"KANTARDA ARAÇ VAR: {guncel_kg:.0f} kg  [SABİT]",
+                            (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 165, 255), 2)
             else:
-                cv2.putText(
-                    kare,
-                    f"AĞIRLIK BEKLENİYOR... {guncel_kg:.0f} kg",
-                    (10, 58),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 200, 255), 2,
-                )
+                cv2.putText(kare, f"AĞIRLIK BEKLENİYOR... {guncel_kg:.0f} kg",
+                            (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 200, 255), 2)
 
-            # V11: PlakaBuffer doluysa ve ağırlık sabitlenmişse — kayıt zamanı
+            # Buffer'dan kayıt (ağırlık sabitlendi, kamera boşalmış olabilir)
             if (
                 agirlik_sabit
                 and self._plaka_buffer is not None
                 and not self._kantar_seans_kilitli
                 and not self._plaka_buffer.suresi_doldu_mu(float(CONFIG["PLAKA_BUFFER_TTL"]))
             ):
-                buf          = self._plaka_buffer
-                bugun_tarih  = datetime.now().strftime("%Y-%m-%d")
-                bugun_saat   = datetime.now().strftime("%H:%M:%S")
-                final_conf   = 0.6 * buf.guven + 0.4 * buf.yolo_conf
+                buf         = self._plaka_buffer
+                simdi_dt    = datetime.now()
+                final_conf  = 0.6 * buf.guven + 0.4 * buf.yolo_conf
                 kara_listede = buf.plaka in CONFIG.get("KARA_LISTE", [])
 
                 kayit = PlakaKayit(
                     plaka   =buf.plaka,
-                    tarih   =bugun_tarih,
-                    saat    =bugun_saat,
+                    tarih   =simdi_dt.strftime("%Y-%m-%d"),
+                    saat    =simdi_dt.strftime("%H:%M:%S"),
                     guven   =final_conf,
                     agirlik =guncel_kg,
                     tip     =("KARA LİSTE" if kara_listede else "GIRIS"),
                 )
                 self.kaydedici.gecis_kaydet(kayit)
                 self._kantar_seans_kilitli = True
-                self._plaka_buffer         = None   # Kullanıldı, temizle
+                self._plaka_buffer         = None
 
-                log.info(
-                    "BUFFER'DAN KAYIT: plaka=%s ağırlık=%.1fkg güven=%.2f",
-                    buf.plaka, guncel_kg, final_conf,
-                )
+                log.info("BUFFER'DAN KAYIT: plaka=%s ağırlık=%.1fkg güven=%.2f",
+                         buf.plaka, guncel_kg, final_conf)
 
-                # Snapshot
                 try:
                     Path("captures").mkdir(exist_ok=True)
-                    snap = f"captures/{buf.plaka}_{bugun_tarih}_{bugun_saat.replace(':', '-')}.jpg"
+                    snap = f"captures/{buf.plaka}_{simdi_dt.strftime('%Y-%m-%d_%H-%M-%S')}.jpg"
                     cv2.imwrite(snap, kare)
-                    log.info("Snapshot (buffer): %s", snap)
                 except Exception as e:
                     log.warning("Snapshot yazılamadı: %s", e)
 
-                # Sesli uyarı
                 if _WINSOUND_OK:
                     try:
                         winsound.Beep(500 if kara_listede else 1000, 1000 if kara_listede else 300)
@@ -1754,13 +2033,14 @@ class OtoKantar:
 
         # Seans kilitliyse yalnızca ekran güncelle
         if self._kantar_seans_kilitli:
-            cv2.putText(
-                kare,
-                "SEANS KİLİTLİ — ARAÇ ÇIKIŞI BEKLENİYOR",
-                (10, 82),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.60, (0, 80, 255), 2,
-            )
+            cv2.putText(kare, "SEANS KİLİTLİ — ARAÇ ÇIKIŞI BEKLENİYOR",
+                        (10, 82), cv2.FONT_HERSHEY_SIMPLEX, 0.60, (0, 80, 255), 2)
+            # [P1] OCR sonuçlarını temizle (eski buffer'lar birikmesin)
+            self.ocr_worker.sonuclari_topla()
             return
+
+        # ── [P1] Tamamlanan OCR sonuçlarını işle ──────────────────────────────
+        self._ocr_sonuclarini_isle(kare, guncel_kg, agirlik_sabit, kare_w)
 
         # ── YOLO (çift karelerde çalışır) ─────────────────────────────────────
         if self._kare_sayaci % 2 == 0:
@@ -1776,9 +2056,9 @@ class OtoKantar:
         for silinen_id in self.tracker.purge_expired():
             self.plaka_hafizasi.pop(silinen_id, None)
 
-        self._aktif_bbox         = None
-        ocr_calis                = self._kare_sayaci % CONFIG["OCR_KARE_ATLAMA"] == 0
-        binary_debug_son         = None
+        self._aktif_bbox = None
+        # [P1] OCR_KARE_ATLAMA ile sadece belirli karelerde OCR kuyruğuna ekle
+        ocr_calis = self._kare_sayaci % CONFIG["OCR_KARE_ATLAMA"] == 0
 
         for x1, y1, x2, y2, yolo_conf in plaka_listesi:
             ix1 = max(0, int(x1)); iy1 = max(0, int(y1))
@@ -1786,7 +2066,6 @@ class OtoKantar:
             if ix2 <= ix1 or iy2 <= iy1:
                 continue
 
-            # ── V11 Değişiklik 3: Dinamik ROI filtresi ────────────────────────
             cx = (ix1 + ix2) / 2.0
             cy = (iy1 + iy2) / 2.0
             if not (roi_x1 <= cx <= roi_x2 and roi_y1 <= cy <= roi_y2):
@@ -1807,8 +2086,7 @@ class OtoKantar:
                     log.warning("ALARM: KARA LİSTEDEKİ ARAÇ TESPİT EDİLDİ!")
                 self.cizici.basarili_kayit(kare, bbox, plaka_cached)
                 cv2.putText(
-                    kare,
-                    f"ID:{arac_id} - {plaka_cached}",
+                    kare, f"ID:{arac_id} - {plaka_cached}",
                     (ix1, max(18, iy1 - 38)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8,
                     (0, 0, 255) if kara_listede else (0, 255, 0), 2,
@@ -1818,117 +2096,24 @@ class OtoKantar:
             if not ocr_calis:
                 continue
 
+            # [P1] Senkron coz() YOK — ROI hazırlanıp asenkron kuyruğa gönderilir
             w_roi = ix2 - ix1
             pad   = int(w_roi * 0.10)
             roi   = kare[iy1:iy2, max(0, ix1 - pad):min(kare_w, ix2 + pad)]
-
-            bd = self.cozucu.roi_hazirla_debug(roi)
-            if bd is not None:
-                binary_debug_son = bd
-
-            sonuc = self.cozucu.coz(roi)
-
-            if not sonuc.gecerli or sonuc.plaka is None:
+            if roi.size == 0:
                 continue
 
-            plaka               = sonuc.plaka
-            kara_listede_okunan = plaka in CONFIG.get("KARA_LISTE", [])
-            if kara_listede_okunan:
-                log.warning("ALARM: KARA LİSTEDEKİ ARAÇ TESPİT EDİLDİ! (%s)", plaka)
-
-            kaydet, final_plaka, kazan_toplam, kazan_n = self.dogrulama.isle(
-                arac_id, plaka, float(sonuc.guven or 0.0)
-            )
-
-            if not kaydet:
-                lider, oku_n, lider_oy, esik_c, min_g = self.dogrulama.durum_ozeti(arac_id)
-                self.cizici.plaka_kutusu(
-                    kare, bbox, plaka, oku_n, esik_c,
-                    arac_id=arac_id, kara_liste=kara_listede_okunan,
-                    oy_lider=lider, oy_lider_toplam=lider_oy, oy_min_guven=min_g,
+            gonderildi = self.ocr_worker.gorevi_gonder(
+                OcrGorevi(
+                    roi_bgr  =roi.copy(),
+                    arac_id  =arac_id,
+                    yolo_conf=float(yolo_conf),
+                    bbox     =bbox,
                 )
-
-            if kaydet and final_plaka is not None:
-                kara_listede_final = final_plaka in CONFIG.get("KARA_LISTE", [])
-                ort_ocr            = float(kazan_toplam) / max(1, int(kazan_n))
-                final_conf         = 0.6 * ort_ocr + 0.4 * float(yolo_conf)
-                simdi_dt           = datetime.now()
-                bugun_tarih        = simdi_dt.strftime("%Y-%m-%d")
-
-                # ── V11 Değişiklik 1: PlakaBuffer güncelle ────────────────────
-                # Kantar dolu ve ağırlık henüz sabit değilse buffer'a yaz
-                if kantar_dolu:
-                    if self._plaka_buffer is None:
-                        self._plaka_buffer = PlakaBuffer(
-                            plaka    =final_plaka,
-                            guven    =ort_ocr,
-                            yolo_conf=float(yolo_conf),
-                        )
-                        log.debug(
-                            "PlakaBuffer oluşturuldu: %s (güven=%.2f)",
-                            final_plaka, final_conf,
-                        )
-                    else:
-                        guncellendi = self._plaka_buffer.guncelle_eger_daha_iyi(
-                            final_plaka, ort_ocr, float(yolo_conf)
-                        )
-                        if guncellendi:
-                            log.debug(
-                                "PlakaBuffer güncellendi: %s (yeni güven=%.2f)",
-                                final_plaka, final_conf,
-                            )
-
-                # Ağırlık sabit ve seans açıksa — doğrudan kayıt (buffer bypass)
-                if agirlik_sabit and not self._kantar_seans_kilitli:
-                    kayit = PlakaKayit(
-                        plaka   =final_plaka,
-                        tarih   =bugun_tarih,
-                        saat    =simdi_dt.strftime("%H:%M:%S"),
-                        guven   =final_conf,
-                        agirlik =guncel_kg,
-                        tip     =("KARA LİSTE" if kara_listede_final else "GIRIS"),
-                    )
-                    self.kaydedici.gecis_kaydet(kayit)
-                    self.plaka_hafizasi[arac_id] = final_plaka
-                    self._kantar_seans_kilitli   = True
-                    self._plaka_buffer           = None   # Kayıt yapıldı, buffer'a gerek yok
-                    self.cizici.basarili_kayit(kare, bbox, final_plaka)
-                    log.info(
-                        "DOĞRUDAN KAYIT: plaka=%s ağırlık=%.1fkg güven=%.2f",
-                        final_plaka, guncel_kg, final_conf,
-                    )
-
-                    # Snapshot
-                    try:
-                        Path("captures").mkdir(exist_ok=True)
-                        saat_dosya = simdi_dt.strftime("%H-%M-%S")
-                        snap = f"captures/{final_plaka}_{bugun_tarih}_{saat_dosya}.jpg"
-                        cv2.imwrite(snap, kare)
-                        log.info("Snapshot: %s", snap)
-                    except Exception as e:
-                        log.warning("Snapshot yazılamadı: %s", e)
-
-                    # Sesli uyarı
-                    if _WINSOUND_OK:
-                        try:
-                            winsound.Beep(
-                                500 if kara_listede_final else 1000,
-                                1000 if kara_listede_final else 300,
-                            )
-                        except Exception:
-                            pass
-
-                elif not agirlik_sabit and kantar_dolu:
-                    # Plaka okundu ama ağırlık henüz sabit değil — ekranda göster
-                    cv2.putText(
-                        kare,
-                        f"PLAKA HAZIR ({final_plaka}) — AĞIRLIK SABİTLENİYOR...",
-                        (ix1, max(18, iy1 - 38)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.72, (0, 200, 255), 2,
-                    )
-
-        if binary_debug_son is not None:
-            cv2.imshow("OCR Debug", binary_debug_son)
+            )
+            if not gonderildi:
+                log.debug("OCR kuyruğu dolu — kare %d için araç %d atlandı.",
+                          self._kare_sayaci, arac_id)
 
         # Bellek temizliği (her 300 karede bir)
         if self._kare_sayaci % 300 == 0:
@@ -1940,17 +2125,20 @@ class OtoKantar:
         global sistem_referansi
         sistem_referansi = self
 
-        # FastAPI — daemon thread
-        threading.Thread(
-            target=lambda: uvicorn.run(app, host="0.0.0.0", port=8000),
-            name  ="FastAPIServer",
-            daemon=True,
-        ).start()
-        log.info("FastAPI sunucusu başlatıldı → http://0.0.0.0:8000")
+        # [P5] OS signal handler
+        signal.signal(signal.SIGINT,  self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
 
-        # Kantar okuyucu — daemon thread
+        # [P5] FastAPI — programatik Server nesnesi
+        fastapi_thread = self._fastapi_baslat()
+
+        # Kantar okuyucu
         self.kantar_okuyucu.start()
         log.info("KantarOkuyucu başlatıldı.")
+
+        # [P1] OcrWorker
+        self.ocr_worker.start()
+        log.info("OcrWorker başlatıldı.")
 
         kare_kuyrugu : queue.Queue = queue.Queue(
             maxsize=max(1, int(CONFIG.get("KARE_KUYRUK_BOYUTU", 2)))
@@ -1964,17 +2152,18 @@ class OtoKantar:
         )
         uretici.start()
         log.info(
-            "Producer–Consumer aktif (kuyruk boyutu=%d). Çıkmak için 'q'.",
+            "Producer–Consumer aktif (kuyruk boyutu=%d). Çıkmak için 'q' veya Ctrl+C.",
             kare_kuyrugu.maxsize,
         )
 
         try:
-            while True:
+            while not self._cikis_istendi.is_set():
+                # Kare al
                 try:
                     kare = kare_kuyrugu.get(timeout=0.25)
                 except queue.Empty:
                     if cv2.waitKey(1) & 0xFF == ord("q"):
-                        log.info("Kullanıcı çıkış yaptı.")
+                        log.info("Kullanıcı 'q' ile çıkış yaptı.")
                         break
                     continue
 
@@ -1989,26 +2178,13 @@ class OtoKantar:
                 cv2.imshow("OtoKantar V11", kare)
 
                 if cv2.waitKey(1) & 0xFF == ord("q"):
-                    log.info("Kullanıcı çıkış yaptı.")
+                    log.info("Kullanıcı 'q' ile çıkış yaptı.")
                     break
 
         except KeyboardInterrupt:
-            log.info("Ctrl+C ile durduruldu.")
+            log.info("Ctrl+C (KeyboardInterrupt) — graceful shutdown tetiklendi.")
         finally:
-            dur.set()
-            self.kantar_okuyucu.durdur()
-            self.kaydedici.kapat()
-            uretici.join(timeout=5.0)
-            if uretici.is_alive():
-                log.warning("Üretici thread 5sn içinde sonlanmadı.")
-            # Kuyruktaki kareleri temizle
-            while True:
-                try:
-                    kare_kuyrugu.get_nowait()
-                except queue.Empty:
-                    break
-            cv2.destroyAllWindows()
-            log.info("OtoKantar V11 kapatıldı.")
+            self._kapat(dur, uretici, fastapi_thread)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

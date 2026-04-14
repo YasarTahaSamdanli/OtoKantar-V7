@@ -1,0 +1,80 @@
+{
+    "_comment": "OtoKantar V11 — Dışarıdan yönetilen yapılandırma dosyası",
+  
+    "KAMERA_INDEX": 0,
+    "KAMERA_YENIDEN_BAGLANTI_DENEMESI": 5,
+    "KAMERA_BEKLEME_SURESI": 3.0,
+  
+    "YOLO_CONF": 0.25,
+    "MIN_OCR_CONF": 0.35,
+    "PLAKA_MIN_EN": 10,
+    "PLAKA_MIN_BOY": 10,
+    "ASPECT_RATIO_MIN": 2.0,
+    "ASPECT_RATIO_MAX": 6.5,
+  
+    "OCR_GPU": false,
+    "OCR_DILLER": ["tr", "en"],
+    "OCR_IZIN_LISTESI": "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
+    "OCR_KARE_ATLAMA": 3,
+    "MORPH_KAPAT": true,
+    "MORPH_KERNEL": [3, 3],
+    "ALT_KIRP_ORAN": 0.15,
+    "BOYUTLANDIRMA_KATSAYI": 2,
+  
+    "GAMMA_PARLAKLIK_ESIK": 190.0,
+    "GAMMA_US": 1.65,
+    "CLAHE_CLIP": 3.0,
+    "CLAHE_GRID": [8, 8],
+    "BILATERAL_ESIK": 210,
+    "BILATERAL_D": 7,
+    "BILATERAL_SIGMA_COLOR": 50,
+    "BILATERAL_SIGMA_SPACE": 50,
+  
+    "PERSPEKTIF_CIKTI_EN": 520,
+    "PERSPEKTIF_CIKTI_BOY": 110,
+    "CANNY_ESIK1": 50,
+    "CANNY_ESIK2": 150,
+    "PERSPEKTIF_MIN_ALAN_ORAN": 0.08,
+    "PERSPEKTIF_EPSILON_CARPAN": 0.02,
+  
+    "ESIK_DEGERI": 4,
+    "OYLAMA_MIN_TOPLAM_GUVEN": 2.5,
+    "BEKLEME_SURESI_SONRA": 120.0,
+  
+    "CSV_DOSYA": "kantar_raporu.csv",
+    "LOG_DOSYA": "otokantar.log",
+    "JSON_CANLI": "canli_durum.json",
+    "DB_DOSYA": "otokantar.db",
+    "CANLI_KARE_DOSYA": "canli_kare.jpg",
+    "CANLI_KARE_ARALIK": 5,
+  
+    "KARE_KUYRUK_BOYUTU": 2,
+    "OCR_WORKER_KUYRUK": 4,
+  
+    "PLATE_WEIGHTS_URL": "https://raw.githubusercontent.com/Muhammad-Zeerak-Khan/Automatic-License-Plate-Recognition-using-YOLOv8/main/license_plate_detector.pt",
+    "MODELS_DIR": "models",
+  
+    "KARA_LISTE": ["06ABC123", "34YASAR01"],
+  
+    "KANTAR_PORT": "COM1",
+    "KANTAR_BAUD": 9600,
+    "KANTAR_PROTOKOL": "ermet",
+    "MIN_KILIT_AGIRLIK": 2000,
+  
+    "KANTAR_ROI_NORM": [0.0, 0.185, 1.0, 1.0],
+  
+    "PLAKA_BUFFER_TTL": 120.0,
+    "SEANS_SIFIR_BEKLEME": 3.0,
+  
+    "YAZICI_BACKEND": "win32",
+    "YAZICI_ADI": "",
+    "ESCPOS_USB_VENDOR": 1208,
+    "ESCPOS_USB_PRODUCT": 514,
+  
+    "LOG_MAX_BYTES": 5242880,
+    "LOG_BACKUP_COUNT": 7,
+    "CAPTURES_RETENTION_DAYS": 30,
+  
+    "FASTAPI_HOST": "0.0.0.0",
+    "FASTAPI_PORT": 8000
+  }
