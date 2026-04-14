@@ -22,7 +22,7 @@ Eski usul manuel veri girişi süreçlerini tamamen ortadan kaldırarak; kantar 
 
 Projeyi kurduğunuz dizin yapısı şu şekilde görünmelidir:
 
-
+```bash
 OtoKantar_V11/
 ├── otokantar.py # Ana Python uygulaması (Sistemin kalbi)
 ├── config.json # Dışarıdan yönetilebilir ayar dosyası
@@ -32,7 +32,7 @@ OtoKantar_V11/
 ├── otokantar.db # (Otomatik oluşur) SQLite veritabanı
 ├── captures/ # (Otomatik oluşur) Başarılı geçişlerin fotoğrafları
 └── models/ # (Otomatik oluşur) YOLOv8 plaka modeli (.pt)
-
+```
 
 ---
 
@@ -44,10 +44,14 @@ Sistem Python 3.9 veya daha üzeri bir sürüm gerektirir.
 
 ```bash
 pip install opencv-python ultralytics easyocr pyserial fastapi uvicorn pydantic numpy torch
+```
 
 Sadece Windows kullanıcıları için (fiş yazdırma özelliği kullanılacaksa):
 
+```bash
 pip install pywin32
+```
+
 2. Modelin İndirilmesi
 
 YOLOv8 plaka modeli (license_plate_detector.pt) ilk çalıştırmada otomatik olarak internetten indirilip models/ klasörüne kaydedilecektir.
@@ -61,51 +65,69 @@ Adım 2: Konfigürasyon (config.json)
 Sistemi çalıştırmadan önce config.json dosyasını düzenleyin.
 
 Önemli ayarlar:
-
+```bash
 "KANTAR_PORT": "COM3",
 "KAMERA_INDEX": 0,
 "KARA_LISTE": ["34ABC123", "06TEST99"]
+```
 Adım 3: Sistemi Başlatma
+
+```bash
 python otokantar.py
+```
+
 🖥️ Canlı Takip Paneli (Dashboard)
 
 Sistem çalıştığı anda arkada FastAPI sunucusu başlatılır.
 
 Erişim:
+```bash
 http://localhost:8000
+```
+
 Ağ Üzerinden Erişim:
 
 Eğer bilgisayar IP’si:
 
+```bash
 192.168.1.50
+```
 
 ise aynı ağdaki cihazlardan:
 
+```bash
 http://192.168.1.50:8000
+```
 
 adresine girerek sistemi izleyebilirsiniz.
 
 🛠️ Sorun Giderme (Troubleshooting)
 ❌ [KANTAR UYARI] Port açılamadı (COMX)
 
-Hata:
 
-FileNotFoundError
+❌FileNotFoundError
 
 Çözüm:
 
+```bash
 Kantar kablosunu kontrol edin
 Aygıt Yöneticisi → COM portunu kontrol edin
 config.json içinden portu güncelleyin
+```
+
 ❌ Kamera açılamadı (Deneme 5/5)
 
 Çözüm:
 
+```bash
 Kameranın bağlı olduğundan emin olun
 KAMERA_INDEX değerini değiştirin (0, 1, 2...)
+```
+
 ❌ EasyOCR CUDA Hatası / Yavaş Çalışma
 
 Çözüm:
-
+```bash
 NVIDIA GPU yoksa:
 "OCR_GPU": false
+```
