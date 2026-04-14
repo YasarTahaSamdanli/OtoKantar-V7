@@ -129,6 +129,21 @@
     gap: 1rem;
   }
 
+  .agirlik-hero {
+    grid-column: span 4;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem 2rem;
+    background: linear-gradient(135deg, var(--surface) 0%, var(--surface2) 100%);
+    border-color: rgba(0,229,160,0.12);
+  }
+
+  .agirlik-hero .hero-sol { flex: 1; min-width: 200px; }
+  .agirlik-hero .metric-value { font-size: 42px; }
+  .agirlik-hero .metric-sub { margin-top: 4px; }
+
   /* KADEMELİ GİRİŞ ANİMASYONU */
   .card {
     background: var(--surface);
@@ -143,13 +158,17 @@
     to   { opacity: 1; transform: translateY(0); }
   }
 
-  .card:nth-child(1) { animation-delay: 0.05s; }
-  .card:nth-child(2) { animation-delay: 0.10s; }
-  .card:nth-child(3) { animation-delay: 0.15s; }
-  .card:nth-child(4) { animation-delay: 0.20s; }
-  .card:nth-child(5) { animation-delay: 0.25s; grid-column: span 2; }
-  .card:nth-child(6) { animation-delay: 0.30s; grid-column: span 2; }
-  .card:nth-child(7) { animation-delay: 0.35s; grid-column: span 4; }
+  .card:nth-child(1) { animation-delay: 0.04s; }
+  .card:nth-child(2) { animation-delay: 0.08s; }
+  .card:nth-child(3) { animation-delay: 0.12s; }
+  .card:nth-child(4) { animation-delay: 0.16s; }
+  .card:nth-child(5) { animation-delay: 0.20s; }
+  .card:nth-child(6) { animation-delay: 0.24s; }
+  .card:nth-child(7) { animation-delay: 0.28s; grid-column: span 2; }
+  .card:nth-child(8) { animation-delay: 0.32s; grid-column: span 2; }
+  .card:nth-child(9) { animation-delay: 0.36s; }
+  .card:nth-child(10) { animation-delay: 0.40s; }
+  .card:nth-child(11) { animation-delay: 0.44s; }
 
   /* METRİK KART */
   .metric-label {
@@ -254,6 +273,24 @@
     font-size: 18px;
     letter-spacing: 0.2em;
     font-family: var(--mono);
+  }
+
+  /* KAMERA KARTI */
+  .kamera-feed {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    object-fit: cover;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: #0a0d11;
+    display: block;
+  }
+
+  .kamera-durum {
+    margin-top: 8px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
   }
 
   /* DOĞRULAMA GÖSTERGESI */
@@ -531,9 +568,7 @@
   /* RESPONSIVE */
   @media (max-width: 900px) {
     main { grid-template-columns: 1fr 1fr; padding: 1rem; }
-    .card:nth-child(5),
-    .card:nth-child(6),
-    .card:nth-child(7) { grid-column: span 2; }
+    .agirlik-hero { grid-column: span 2; }
     .tablo-kart { grid-column: span 2; }
   }
 </style>
@@ -567,6 +602,19 @@
 
 <main>
 
+  <!-- ANLIK KANTAR -->
+  <div class="card agirlik-hero">
+    <div class="hero-sol">
+      <div class="metric-label">Anlık Kantar</div>
+      <div class="metric-value accent" id="metric-kantar-kg">—</div>
+      <div class="metric-sub" id="metric-kantar-durum">Ağırlık verisi bekleniyor (FastAPI /api/canli-durum)</div>
+    </div>
+    <div style="text-align:right;">
+      <div class="metric-label" style="margin-bottom:4px;">Plaka tampon</div>
+      <div class="metric-value" style="font-size:20px;" id="metric-plaka-buffer">—</div>
+    </div>
+  </div>
+
   <!-- METRİK 1 -->
   <div class="card">
     <div class="metric-label">Bugün Giriş</div>
@@ -596,6 +644,15 @@
     <div class="since-bar">
       <div class="since-fill" id="since-fill"></div>
     </div>
+  </div>
+
+  <!-- CANLI PLAKA -->
+  <div class="card" style="grid-column: span 2;">
+    <div class="card-title" style="font-size:11px; text-transform:uppercase; letter-spacing:0.1em; color:var(--text-muted); margin-bottom:1rem;">
+      Kamera (Canli Kare)
+    </div>
+    <img id="kamera-feed" class="kamera-feed" src="" alt="Kamera goruntusu">
+    <div class="kamera-durum" id="kamera-durum">kamera kare bekleniyor...</div>
   </div>
 
   <!-- CANLI PLAKA -->
@@ -680,6 +737,7 @@
       <thead>
         <tr>
           <th>Plaka</th>
+          <th>Ağırlık (kg)</th>
           <th>Tarih</th>
           <th>Saat</th>
           <th>Tip</th>
@@ -688,7 +746,7 @@
       </thead>
       <tbody id="tablo-govde">
         <tr>
-          <td colspan="5" style="color:var(--text-dim); font-family:var(--mono); font-size:12px; padding:20px 12px;">
+          <td colspan="6" style="color:var(--text-dim); font-family:var(--mono); font-size:12px; padding:20px 12px;">
             Henüz kayıt yok — sistem bekleniyor...
           </td>
         </tr>
@@ -704,15 +762,26 @@ const DEMO_PLAKALAR = [
   "34ABC123","41KLM99","07ZZZ1111","01AA987","55MN432"
 ];
 
-let kayitlar = [];
-let aktifPlaka = null;
-let aktifSayac = 0;
 const ESIK = 4;
-let simBasladi = false;
-let simInterval = null;
+const POLL_MS = 2000;
+const LOG_POLL_MS = 4000;
+const CAM_POLL_MS = 1200;
+
+let kayitlar = [];
 let logSayac = 0;
 let sonKayitZaman = null;
 let saatlikData = new Array(12).fill(0);
+let sonKayitImza = '';
+let sistemCanli = false;
+let demoModu = false;
+let simBasladi = false;
+let simInterval = null;
+let aktifPlaka = null;
+let aktifSayac = 0;
+let canliInterval = null;
+let logInterval = null;
+let camInterval = null;
+let canliHataSayisi = 0;
 
 function simdiStr() {
   return new Date().toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
@@ -737,12 +806,42 @@ function log(seviye, mesaj) {
   document.getElementById('log-sayac').textContent = logSayac + ' satır';
 }
 
-function plakaGoster(plaka, sayac) {
+function statusGuncelle(canli) {
+  const pill = document.querySelector('.status-pill span');
+  const pulse = document.querySelector('.pulse');
+  if (canli) {
+    pill.textContent = 'CANLI';
+    pulse.style.background = 'var(--accent)';
+  } else {
+    pill.textContent = 'BEKLENIYOR';
+    pulse.style.background = 'var(--warn)';
+  }
+}
+
+function simulasyonuBaslat() {
+  if (simBasladi) return;
+  demoModu = true;
+  simBasladi = true;
+  if (canliInterval) clearInterval(canliInterval);
+  if (logInterval) clearInterval(logInterval);
+  if (camInterval) clearInterval(camInterval);
+  if (simInterval) clearInterval(simInterval);
+  document.getElementById('btn-sim').textContent = 'Durdur';
+  document.getElementById('btn-sim').classList.add('primary');
+  const kd = document.getElementById('kamera-durum');
+  if (kd) kd.textContent = 'demo modunda kamera yerine simulasyon calisiyor';
+  log('info', 'Demo/simulasyon modu otomatik baslatildi');
+  simAdimi();
+  simInterval = setInterval(simAdimi, 1000);
+  statusGuncelle(true);
+}
+
+function plakaGoster(plaka, sayac, kayitOldu = false) {
   const el = document.getElementById('plaka-big');
   el.innerHTML = plaka;
   el.classList.remove('yeni');
   void el.offsetWidth;
-  if (sayac >= ESIK) el.classList.add('yeni');
+  if (kayitOldu || sayac >= ESIK) el.classList.add('yeni');
 
   for (let i = 1; i <= 4; i++) {
     const dot = document.getElementById('vd-' + i);
@@ -752,23 +851,23 @@ function plakaGoster(plaka, sayac) {
   }
 
   document.getElementById('verify-label').textContent =
-    sayac >= ESIK
+    kayitOldu || sayac >= ESIK
       ? '✓ doğrulandı — kayıt yapıldı'
       : `doğrulanıyor: ${sayac} / ${ESIK}`;
 }
 
-function kayitEkle(plaka, guven = 0.85) {
+function kayitEkle(plaka, guven = 0.85, tip = 'GIRIS', tarih = simdiTarih(), saat = simdiStr()) {
   const kayit = {
     plaka,
-    tarih: simdiTarih(),
-    saat: simdiStr(),
-    tip: 'GİRİŞ',
+    tarih,
+    saat,
+    tip,
     guven: guven,
+    agirlik: null,
   };
   kayitlar.unshift(kayit);
   sonKayitZaman = Date.now();
 
-  const saat = new Date().getHours();
   const idx = 11 - (new Date().getHours() % 12);
   saatlikData[idx] = (saatlikData[idx] || 0) + 1;
 
@@ -783,10 +882,10 @@ function metrikleriGuncelle() {
 
   const birSaatOnce = Date.now() - 3600000;
   const sonSaat = kayitlar.filter(k => {
-    const t = new Date(k.tarih + ' ' + k.saat);
+    const t = new Date(`${k.tarih}T${k.saat}`);
     return t.getTime() > birSaatOnce;
   }).length;
-  document.getElementById('metric-son-saat').textContent = sonSaat || kayitlar.length;
+  document.getElementById('metric-son-saat').textContent = sonSaat;
 
   const ort = kayitlar.length
     ? Math.round(kayitlar.reduce((s, k) => s + k.guven, 0) / kayitlar.length * 100)
@@ -798,14 +897,29 @@ function tabloGuncelle() {
   const tbody = document.getElementById('tablo-govde');
   document.getElementById('tablo-badge').textContent = kayitlar.length + ' kayıt';
 
+  if (!kayitlar.length) {
+    tbody.innerHTML = `<tr>
+      <td colspan="6" style="color:var(--text-dim); font-family:var(--mono); font-size:12px; padding:20px 12px;">
+        Henüz kayıt yok — sistem bekleniyor...
+      </td>
+    </tr>`;
+    return;
+  }
+
   tbody.innerHTML = kayitlar.slice(0,15).map(k => {
     const pct = Math.round(k.guven * 100);
     const sinif = pct >= 80 ? '' : pct >= 60 ? 'orta' : 'dusuk';
+    const tipSinif = (k.tip || '').includes('CIKIS') ? 'badge-cikis' : 'badge-giris';
+    const ag = k.agirlik;
+    const agStr = ag != null && !Number.isNaN(ag)
+      ? ag.toLocaleString('tr-TR', { maximumFractionDigits: 1 })
+      : '—';
     return `<tr>
       <td class="td-plaka">${k.plaka}</td>
+      <td class="td-zaman">${agStr}</td>
       <td class="td-zaman">${k.tarih}</td>
       <td class="td-zaman">${k.saat}</td>
-      <td><span class="badge-tip badge-giris">${k.tip}</span></td>
+      <td><span class="badge-tip ${tipSinif}">${k.tip || 'GIRIS'}</span></td>
       <td>
         <div class="guven-bar">
           <div class="guven-track">
@@ -847,7 +961,7 @@ function simAdimi() {
 
   if (aktifSayac >= ESIK) {
     const guven = 0.65 + Math.random() * 0.34;
-    kayitEkle(aktifPlaka, guven);
+    kayitEkle(aktifPlaka, guven, 'GIRIS');
     aktifSayac = 0;
     aktifPlaka = null;
     setTimeout(() => {
@@ -858,28 +972,191 @@ function simAdimi() {
   }
 }
 
+function kantarPanelGuncelle(veri) {
+  const kgEl = document.getElementById('metric-kantar-kg');
+  const durEl = document.getElementById('metric-kantar-durum');
+  const bufEl = document.getElementById('metric-plaka-buffer');
+  if (demoModu) return;
+  const kg = veri?.kantar_kg;
+  if (kg != null && kg !== '' && !Number.isNaN(Number(kg))) {
+    const n = Number(kg);
+    kgEl.textContent = n.toLocaleString('tr-TR', { maximumFractionDigits: 1 }) + ' kg';
+    durEl.textContent = veri.kantar_sabit
+      ? 'Ölçü sabit — tartı dengede'
+      : 'Ölçü değişiyor — sabitlenmesi bekleniyor';
+  } else {
+    kgEl.textContent = '—';
+    durEl.textContent = 'Kantar verisi yok (Otokantar çalışmıyor veya COM kapalı)';
+  }
+  const pb = veri?.plaka_buffer;
+  bufEl.textContent = pb ? String(pb) : '—';
+}
+
+function verileriUygula(veri) {
+  kantarPanelGuncelle(veri);
+  const son10 = Array.isArray(veri?.son_10) ? veri.son_10 : [];
+  kayitlar = son10.slice().reverse().map(k => ({
+    plaka: k.plaka || '',
+    tarih: k.tarih || '',
+    saat: k.saat || '',
+    tip: (k.tip || 'GIRIS').replace('KARA LİSTE', 'KARA LISTE'),
+    guven: Number(k.guven) || 0,
+    agirlik: k.agirlik != null && k.agirlik !== '' ? Number(k.agirlik) : null,
+  }));
+
+  saatlikData = new Array(12).fill(0);
+  const nowHour = new Date().getHours();
+  kayitlar.forEach(k => {
+    const saatNo = Number((k.saat || '00:00:00').split(':')[0]);
+    if (Number.isNaN(saatNo)) return;
+    const diff = (nowHour - saatNo + 24) % 24;
+    if (diff < 12) {
+      const idx = 11 - diff;
+      saatlikData[idx] += 1;
+    }
+  });
+
+  if (veri?.son_kayit && veri.son_kayit.plaka) {
+    const sk = veri.son_kayit;
+    const imza = `${sk.plaka}|${sk.tarih}|${sk.saat}`;
+    sonKayitZaman = new Date(`${sk.tarih}T${sk.saat}`).getTime() || Date.now();
+    plakaGoster(sk.plaka || 'BEKLENIYOR', ESIK, imza !== sonKayitImza);
+    sonKayitImza = imza;
+  }
+
+  metrikleriGuncelle();
+  tabloGuncelle();
+  grafikGuncelle();
+}
+
+async function canliOku() {
+  if (demoModu) return;
+  const kaynaklar = [`/api/canli-durum?t=${Date.now()}`, `canli_durum.json?t=${Date.now()}`];
+  let veri = null;
+  try {
+    for (const url of kaynaklar) {
+      try {
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) continue;
+        veri = await res.json();
+        break;
+      } catch (e) {
+        /* bir sonraki kaynak */
+      }
+    }
+    if (!veri) throw new Error('canli veri yok');
+    verileriUygula(veri);
+    canliHataSayisi = 0;
+    if (!sistemCanli) {
+      sistemCanli = true;
+      statusGuncelle(true);
+      log('info', 'Canlı veri bağlantısı kuruldu (FastAPI veya JSON dosyası)');
+    }
+  } catch (err) {
+    canliHataSayisi += 1;
+    if (sistemCanli) {
+      sistemCanli = false;
+      statusGuncelle(false);
+      log('warn', 'Canli veri okunamadi, baglanti bekleniyor');
+    }
+    // Python backend yoksa otomatik demo ac
+    if (canliHataSayisi >= 2 && !simBasladi) {
+      simulasyonuBaslat();
+    }
+  }
+}
+
+async function backendUyandir() {
+  try {
+    await fetch('/api/ensure-otokantar', { cache: 'no-store' });
+  } catch (err) {
+    // Statik sunucuda bu endpoint olmayabilir; sessizce devam et.
+  }
+}
+
+async function logOku() {
+  if (demoModu) return;
+  const alan = document.getElementById('log-alan');
+  const satirlariIsle = (satirlar) => {
+    alan.innerHTML = '';
+    satirlar.forEach(s => {
+      const seviye = s.includes('[ERROR]') ? 'error' : s.includes('[WARNING]') ? 'warn' : 'info';
+      const saat = (s.match(/\d{2}:\d{2}:\d{2}/) || ['--:--:--'])[0];
+      const mesaj = s.replace(/^.*\]\s*/, '');
+      const satir = document.createElement('div');
+      satir.className = 'log-satir';
+      satir.innerHTML = `
+        <span class="log-zaman">${saat}</span>
+        <span class="log-seviye ${seviye}">${seviye.toUpperCase()}</span>
+        <span class="log-mesaj">${mesaj}</span>
+      `;
+      alan.appendChild(satir);
+    });
+    logSayac = satirlar.length;
+    document.getElementById('log-sayac').textContent = `${logSayac} satır`;
+  };
+  try {
+    const api = await fetch(`/api/log-son?t=${Date.now()}`, { cache: 'no-store' });
+    if (api.ok) {
+      const js = await api.json();
+      if (Array.isArray(js.satirlar) && js.satirlar.length) {
+        satirlariIsle(js.satirlar);
+        return;
+      }
+    }
+    const res = await fetch(`otokantar.log?t=${Date.now()}`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const text = await res.text();
+    satirlariIsle(text.split(/\r?\n/).filter(Boolean).slice(-8));
+  } catch (err) {
+    /* sessizce bekle */
+  }
+}
+
+function kameraGuncelle() {
+  if (demoModu) return;
+  const img = document.getElementById('kamera-feed');
+  const durum = document.getElementById('kamera-durum');
+  let yedekDenendi = false;
+  img.onerror = () => {
+    if (!yedekDenendi) {
+      yedekDenendi = true;
+      img.src = `canli_kare.jpg?t=${Date.now()}`;
+      return;
+    }
+    durum.textContent = 'Canlı kare yok — Otokantar çalışınca /canli_kare.jpg güncellenir';
+  };
+  img.onload = () => {
+    yedekDenendi = false;
+    durum.textContent = 'Canlı kare — tartıdaki araç görüntüsü (periyodik yenileme)';
+  };
+  img.src = `/canli_kare.jpg?t=${Date.now()}`;
+}
+
 document.getElementById('btn-sim').addEventListener('click', () => {
   if (!simBasladi) {
-    simBasladi = true;
-    document.getElementById('btn-sim').textContent = 'Durdur';
-    document.getElementById('btn-sim').classList.add('primary');
-    simInterval = setInterval(simAdimi, 1200);
-    log('info', 'Simülasyon başlatıldı');
+    simulasyonuBaslat();
   } else {
+    demoModu = false;
     simBasladi = false;
-    clearInterval(simInterval);
+    if (simInterval) clearInterval(simInterval);
+    simInterval = null;
     document.getElementById('btn-sim').textContent = 'Simülasyon Başlat';
-    log('warn', 'Simülasyon durduruldu');
+    document.getElementById('btn-sim').classList.remove('primary');
+    log('warn', 'Simulasyon durduruldu, canli moda donuldu');
+    canliInterval = setInterval(canliOku, POLL_MS);
+    logInterval = setInterval(logOku, LOG_POLL_MS);
+    camInterval = setInterval(kameraGuncelle, CAM_POLL_MS);
+    canliOku();
+    logOku();
+    kameraGuncelle();
   }
 });
 
 document.getElementById('btn-manuel').addEventListener('click', () => {
-  const p = prompt('Plaka girin (örn: 06ABC1234):');
-  if (p) {
-    const temiz = p.toUpperCase().replace(/[^A-Z0-9]/g,'');
-    kayitEkle(temiz, 1.0);
-    log('info', `Manuel giriş: ${temiz}`);
-  }
+  canliOku();
+  logOku();
+  log('info', 'Panel verisi manuel yenilendi');
 });
 
 setInterval(() => {
@@ -893,9 +1170,17 @@ setInterval(() => {
 }, 1000);
 
 grafikGuncelle();
-log('info', 'OtoKantar V7 arayüzü yüklendi');
-log('info', 'Kamera bağlantısı bekleniyor...');
-log('warn', 'GPU bulunamadı — CPU modunda çalışılıyor');
+statusGuncelle(false);
+log('info', 'OtoKantar V7 arayuzu yuklendi');
+log('info', 'Veri: /api/canli-durum veya canli_durum.json — görüntü: /canli_kare.jpg');
+log('info', 'Backend yoksa demo modu otomatik acilir');
+backendUyandir();
+canliOku();
+logOku();
+kameraGuncelle();
+canliInterval = setInterval(canliOku, POLL_MS);
+logInterval = setInterval(logOku, LOG_POLL_MS);
+camInterval = setInterval(kameraGuncelle, CAM_POLL_MS);
 </script>
 </body>
 </html>
