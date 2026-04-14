@@ -1,74 +1,111 @@
-# OtoKantar V7 — Kullanım Kılavuzu
+# 🚛 OtoKantar V11 - Akıllı Plaka Tanıma ve Kantar Otomasyonu
 
-## Kurulum
+OtoKantar V11, araç kantarları için geliştirilmiş, yüksek performanslı ve asenkron çalışan bir plaka tanıma ve otomasyon sistemidir.  
+Eski usul manuel veri girişi süreçlerini tamamen ortadan kaldırarak; kantar ağırlığını anlık okur, YOLOv8 ve EasyOCR ile plakayı tespit eder ve verileri (fotoğraflarıyla birlikte) SQLite, CSV ve canlı bir web paneline (Dashboard) aktarır.
+
+---
+
+## ✨ Öne Çıkan Özellikler
+
+- **Asenkron OCR Motoru:** Ana kamera akışını (YOLO tespitlerini) dondurmadan arka planda çalışan ayrılmış OCR thread'i.
+- **Canlı Web Dashboard:** `dashboard.html` üzerinden çalışan FastAPI destekli canlı izleme ekranı.  
+  Kantar ağırlığı, son geçen araçlar ve canlı kamera karesi anlık olarak ofis tarayıcısından izlenebilir.
+- **Dinamik Buffer ve Debounce:** Ağırlık tam sabitlenmeden veya araç kantardan inmeden (zıplama koruması) eksik/hatalı kayıt yapılmasını engelleyen seans guard sistemi.
+- **Donanım Soyutlaması:** Ermet ve Tolpa protokolleri hazır. Yeni nesil RS232 kantarlar için kolayca genişletilebilir mimari.
+- **Gece Modu & Dinamik ROI:** Farların kamerayı kör etmesini engelleyen `%95 persentil` parlaklık kontrolü ve Bilateral filtreleme.
+- **Kendi Kendini Temizleme:** Ayarlanan günden eski logları ve plaka fotoğraflarını (`captures/`) otomatik silen bakım modülü.
+- **Fiş Yazdırma Desteği:** `win32print` veya `escpos` üzerinden tartım fişi yazdırma özelliği.
+
+---
+
+## 📂 Proje Yapısı
+
+Projeyi kurduğunuz dizin yapısı şu şekilde görünmelidir:
+
+
+OtoKantar_V11/
+├── otokantar.py # Ana Python uygulaması (Sistemin kalbi)
+├── config.json # Dışarıdan yönetilebilir ayar dosyası
+├── dashboard.html # FastAPI tarafından sunulan ofis izleme arayüzü
+├── kantar_raporu.csv # (Otomatik oluşur) Excel için yedek geçiş raporu
+├── otokantar.log # (Otomatik oluşur) Sistem logları
+├── otokantar.db # (Otomatik oluşur) SQLite veritabanı
+├── captures/ # (Otomatik oluşur) Başarılı geçişlerin fotoğrafları
+└── models/ # (Otomatik oluşur) YOLOv8 plaka modeli (.pt)
+
+
+---
+
+## ⚙️ Kurulum ve Gereksinimler
+
+Sistem Python 3.9 veya daha üzeri bir sürüm gerektirir.
+
+### 1. Gerekli kütüphaneleri yükleyin:
 
 ```bash
-pip install -r requirements.txt
+pip install opencv-python ultralytics easyocr pyserial fastapi uvicorn pydantic numpy torch
+
+Sadece Windows kullanıcıları için (fiş yazdırma özelliği kullanılacaksa):
+
+pip install pywin32
+2. Modelin İndirilmesi
+
+YOLOv8 plaka modeli (license_plate_detector.pt) ilk çalıştırmada otomatik olarak internetten indirilip models/ klasörüne kaydedilecektir.
+
+🚀 Kullanım ve Başlatma
+Adım 1: Donanım Bağlantıları
+Kantar indikatöründen gelen RS232 kablosunun bilgisayara (COM portu) bağlı olduğundan emin olun.
+IP Kamera RTSP linki veya USB kameranın bağlı olduğundan emin olun.
+Adım 2: Konfigürasyon (config.json)
+
+Sistemi çalıştırmadan önce config.json dosyasını düzenleyin.
+
+Önemli ayarlar:
+
+"KANTAR_PORT": "COM3",
+"KAMERA_INDEX": 0,
+"KARA_LISTE": ["34ABC123", "06TEST99"]
+Adım 3: Sistemi Başlatma
 python otokantar.py
-```
+🖥️ Canlı Takip Paneli (Dashboard)
 
-## Dashboard'u Canli Kullanma
+Sistem çalıştığı anda arkada FastAPI sunucusu başlatılır.
 
-`dashboard.html` dosyasi demo icerir ama asil olarak `canli_durum.json` ve `otokantar.log` dosyalarindan veri okur.
+Erişim:
+http://localhost:8000
+Ağ Üzerinden Erişim:
 
-Tarayicida dogrudan `file://` olarak acmak yerine klasoru HTTP ile yayinlayin:
+Eğer bilgisayar IP’si:
 
-```bash
-cd OtoKantar_V7
-python -m http.server 8080
-```
+192.168.1.50
 
-Sonra tarayicida acin: `http://localhost:8080/dashboard.html`
+ise aynı ağdaki cihazlardan:
 
-Bu sirada `python otokantar.py` calisiyor olmali ki panel canli veri gostersin.
+http://192.168.1.50:8000
 
-### Otomatik Baslatma (Onerilen)
+adresine girerek sistemi izleyebilirsiniz.
 
-Dashboard acildiginda `Otokantar.py` otomatik acilsin istiyorsan `http.server` yerine su sunucuyu kullan:
+🛠️ Sorun Giderme (Troubleshooting)
+❌ [KANTAR UYARI] Port açılamadı (COMX)
 
-```bash
-python dashboard_server.py
-```
+Hata:
 
-Ardindan:
+FileNotFoundError
 
-`http://127.0.0.1:8080/dashboard.html`
+Çözüm:
 
-Bu sunucu, ilk istekte `Otokantar.py` surecini otomatik baslatir.
+Kantar kablosunu kontrol edin
+Aygıt Yöneticisi → COM portunu kontrol edin
+config.json içinden portu güncelleyin
+❌ Kamera açılamadı (Deneme 5/5)
 
-## Dosyalar
+Çözüm:
 
-| Dosya | Açıklama |
-|---|---|
-| `otokantar.py` | Ana Python sistemi |
-| `dashboard.html` | Canlı izleme arayüzü (tarayıcıda aç) |
-| `kantar_raporu.csv` | Otomatik oluşan kayıt dosyası |
-| `canli_durum.json` | GUI için anlık durum verisi |
-| `otokantar.log` | Sistem log dosyası |
-| `models/` | YOLO model ağırlıkları (otomatik indirilir) |
+Kameranın bağlı olduğundan emin olun
+KAMERA_INDEX değerini değiştirin (0, 1, 2...)
+❌ EasyOCR CUDA Hatası / Yavaş Çalışma
 
-## Yapılandırma
+Çözüm:
 
-`otokantar.py` içindeki `CONFIG` sözlüğünü düzenleyin:
-
-```python
-CONFIG = {
-    "KAMERA_INDEX": 0,       # Farklı kamera için 1, 2...
-    "ESIK_DEGERI": 4,        # Kaç kez görülünce kaydet
-    "BEKLEME_SURESI_SONRA": 12.0,  # Kayıt sonrası bekleme (sn)
-    "OCR_GPU": False,        # GPU varsa True
-    "OCR_KARE_ATLAMA": 3,    # Her N karede bir OCR
-    ...
-}
-```
-
-## V6'dan Farklılıklar
-
-- **Mimari**: Tek döngü → 5 bağımsız sınıf (test edilebilir)
-- **Hata düzeltmesi**: `O↔0`, `I↔1`, `S↔5`, `B↔8` bağlama göre
-- **Bekleme hatası**: V6'da bekleme doğrulama sırasında uygulanıyordu; V7'de sadece kayıt sonrasında
-- **CLAHE**: Gece/düşük ışık desteği eklendi
-- **Kamera**: Bağlantı kopunca otomatik yeniden bağlanma
-- **Loglama**: `print()` yerine `logging` modülü (dosya + ekran)
-- **Bellek**: Eski doğrulama durumları periyodik temizleniyor
-- **CSV**: Başlık satırı + tip/güven/operatör alanları eklendi
+NVIDIA GPU yoksa:
+"OCR_GPU": false
