@@ -1,20 +1,30 @@
 {
-  "son_guncelleme": "2026-04-10T18:59:51.806577",
+  "son_guncelleme": "2026-04-15T19:27:08.987818",
   "son_kayit": {
-    "plaka": "40AAB050",
-    "tarih": "2026-04-10",
-    "saat": "18:59:51",
-    "guven": 0.8107101530730167,
-    "tip": "GIRIS",
+    "plaka": "06NE944",
+    "giris_tarih": "2026-04-15",
+    "giris_saat": "19:27:08",
+    "giris_agirlik": 12000.0,
+    "guven": 0.0,
+    "cikis_tarih": null,
+    "cikis_saat": null,
+    "cikis_agirlik": null,
+    "net_agirlik": null,
+    "durum": "ICERIDE",
     "operator": "AUTO"
   },
   "son_10": [
     {
-      "plaka": "40AAB050",
-      "tarih": "2026-04-10",
-      "saat": "18:59:51",
-      "guven": 0.8107101530730167,
-      "tip": "GIRIS",
+      "plaka": "06NE944",
+      "giris_tarih": "2026-04-15",
+      "giris_saat": "19:27:08",
+      "giris_agirlik": 12000.0,
+      "guven": 0.0,
+      "cikis_tarih": null,
+      "cikis_saat": null,
+      "cikis_agirlik": null,
+      "net_agirlik": null,
+      "durum": "ICERIDE",
       "operator": "AUTO"
     }
   ]

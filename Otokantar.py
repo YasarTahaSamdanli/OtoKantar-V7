@@ -17,7 +17,7 @@ V11 Prodüksiyon Güncellemeleri
 -------------------------------
 [P1] OcrWorker Entegrasyonu   : OCR artık asenkron OcrWorker thread üzerinden çalışır.
      _kare_isle YOLO + ROI hazırlığı yapıp kuyruğa bırakır; sonuçlar bir sonraki
-     kare başında toplanır. Ana thread hiçbir EasyOCR çağrısında bloklanmaz.
+     kare başında toplanır. Ana thread hiçbir zaman EasyOCR çağrısında bloklanmaz.
 
 [P2] Dışarıdan Config Okuma   : CONFIG artık config.json'dan yüklenir. Dosya yoksa
      kod içi varsayılanlar kullanılır. Tuple değerleri (MORPH_KERNEL, vb.) JSON
@@ -33,6 +33,12 @@ V11 Prodüksiyon Güncellemeleri
 [P5] Graceful Shutdown         : uvicorn Server nesnesi programatik olarak başlatılır
      ve signal_handler üzerinden shutdown() çağrılır. KantarKaydedici.kapat() ile
      DB yazma işlemleri tamamlanır; port asılı kalmaz.
+
+[P6] State Machine (Giriş/Çıkış):
+     Kantar sabitlendiğinde acik_seans_getir() ile araç durumu sorgulanır.
+     - Araç yoksa → giris_kaydet() — FİŞ YAZILMAZ (net kilo henüz belli değil)
+     - Araç içerideyse → cikis_kaydet() — FİŞ YALNIZCA BURADA YAZILIR
+     EkranCizici: Giriş=yeşil "GIRIS YAPILDI", Çıkış=sarı "CIKIS YAPILDI - NET: X kg"
 """
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -302,13 +308,17 @@ def _periyodik_temizlik_baslat(aralik_saat: float = 6.0) -> threading.Thread:
 # ─────────────────────────────────────────────────────────────────────────────
 @dataclass
 class PlakaKayit:
-    plaka   : str
-    tarih   : str
-    saat    : str
-    guven   : float
-    agirlik : float = 0.0
-    tip     : str   = "GIRIS"
-    operator: str   = "AUTO"
+    plaka        : str
+    giris_tarih  : str
+    giris_saat   : str
+    giris_agirlik: float
+    guven        : float = 0.0
+    cikis_tarih  : Optional[str] = None
+    cikis_saat   : Optional[str] = None
+    cikis_agirlik: Optional[float] = None
+    net_agirlik  : Optional[float] = None
+    durum        : str = "ICERIDE"
+    operator     : str = "AUTO"
 
 
 @dataclass
@@ -749,16 +759,20 @@ class FisYazdirici:
     def _fis_metin_olustur(self, kayit: PlakaKayit) -> str:
         sep  = "=" * self.GENISLIK
         dash = "-" * self.GENISLIK
+        cikis_agirlik = kayit.cikis_agirlik if kayit.cikis_agirlik is not None else 0.0
+        net_agirlik = kayit.net_agirlik if kayit.net_agirlik is not None else 0.0
         return "\n".join([
             sep,
             "         BRİKET FABRİKASI KANTAR FİŞİ",
             sep,
-            f"  Tarih    : {kayit.tarih}",
-            f"  Saat     : {kayit.saat}",
+            f"  Giriş T. : {kayit.giris_tarih}",
+            f"  Giriş S. : {kayit.giris_saat}",
             dash,
             f"  Plaka    : {kayit.plaka}",
-            f"  Ağırlık  : {kayit.agirlik:.1f} kg",
-            f"  Tip      : {kayit.tip}",
+            f"  Giriş Kg : {kayit.giris_agirlik:.1f} kg",
+            f"  Çıkış Kg : {cikis_agirlik:.1f} kg",
+            f"  Net Kg   : {net_agirlik:.1f} kg",
+            f"  Durum    : {kayit.durum}",
             f"  Operatör : {kayit.operator}",
             dash,
             f"  Güven    : %{kayit.guven * 100:.1f}",
@@ -777,6 +791,8 @@ class FisYazdirici:
         enc  = "cp857"
         sep  = ("=" * self.GENISLIK + "\n").encode(enc, errors="replace")
         dash = ("-" * self.GENISLIK + "\n").encode(enc, errors="replace")
+        cikis_agirlik = kayit.cikis_agirlik if kayit.cikis_agirlik is not None else 0.0
+        net_agirlik = kayit.net_agirlik if kayit.net_agirlik is not None else 0.0
 
         def satir(m: str) -> bytes:
             return (m + "\n").encode(enc, errors="replace")
@@ -787,14 +803,16 @@ class FisYazdirici:
             + satir("BRİKET FABRİKASI KANTAR FİŞİ")
             + self._ESC_BOLD_OFF + self._ESC_LEFT
             + sep
-            + satir(f"  Tarih    : {kayit.tarih}")
-            + satir(f"  Saat     : {kayit.saat}")
+            + satir(f"  Giris T. : {kayit.giris_tarih}")
+            + satir(f"  Giris S. : {kayit.giris_saat}")
             + dash
             + self._ESC_BOLD_ON
             + satir(f"  Plaka    : {kayit.plaka}")
-            + satir(f"  Ağırlık  : {kayit.agirlik:.1f} kg")
+            + satir(f"  Giris Kg : {kayit.giris_agirlik:.1f} kg")
+            + satir(f"  Cikis Kg : {cikis_agirlik:.1f} kg")
+            + satir(f"  Net Kg   : {net_agirlik:.1f} kg")
             + self._ESC_BOLD_OFF
-            + satir(f"  Tip      : {kayit.tip}")
+            + satir(f"  Durum    : {kayit.durum}")
             + satir(f"  Operatör : {kayit.operator}")
             + dash
             + satir(f"  Güven    : %{kayit.guven * 100:.1f}")
@@ -1317,7 +1335,9 @@ class DogrulamaMotoru:
 class KantarKaydedici:
     """
     V11: DB Writer thread'i exponential backoff retry.
-    [P1] ile değişiklik yok — kaydedici zaten thread-safe.
+    [P6] FisYazdirici artık KantarKaydedici içinden çağrılmaz.
+         Fiş yazdırma sorumluluğu tamamen OtoKantar._kayit_yap() metoduna taşındı.
+         Bu sayede giriş/çıkış ayrımı State Machine seviyesinde kontrol edilir.
     """
     _RETRY_GECIKME = [0.5, 1.0, 2.0]
 
@@ -1326,12 +1346,11 @@ class KantarKaydedici:
         csv_dosya    : str,
         json_dosya   : str,
         db_dosya     : str,
-        fis_yazdirici: Optional[FisYazdirici] = None,
     ):
         self.csv_dosya     = csv_dosya
         self.json_dosya    = json_dosya
         self.db_dosya      = db_dosya
-        self.fis_yazdirici = fis_yazdirici
+        # [P6] fis_yazdirici parametresi kaldırıldı — fiş OtoKantar._kayit_yap()'ta yazılır
         self.son_kayitlar  : list = []
         self._kilit        = threading.Lock()
         self._csv_aktif    = True
@@ -1362,20 +1381,129 @@ class KantarKaydedici:
             """)
             con.execute("""
                 CREATE TABLE IF NOT EXISTS gecis_raporlari (
-                    id      INTEGER PRIMARY KEY AUTOINCREMENT,
-                    plaka   TEXT,
-                    tarih   TEXT,
-                    saat    TEXT,
-                    guven   REAL,
-                    agirlik REAL DEFAULT 0.0
+                    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                    plaka         TEXT NOT NULL,
+                    giris_tarih   TEXT NOT NULL,
+                    giris_saat    TEXT NOT NULL,
+                    giris_agirlik REAL NOT NULL DEFAULT 0.0,
+                    cikis_tarih   TEXT,
+                    cikis_saat    TEXT,
+                    cikis_agirlik REAL,
+                    net_agirlik   REAL,
+                    durum         TEXT NOT NULL DEFAULT 'ICERIDE',
+                    guven         REAL DEFAULT 0.0
                 )
             """)
+
+            # Eski şemadan (tarih/saat/agirlik) yeni şemaya otomatik geçiş.
+            kolonlar = {
+                str(r[1]).lower()
+                for r in con.execute("PRAGMA table_info(gecis_raporlari)").fetchall()
+            }
+            if "giris_tarih" not in kolonlar:
+                log.warning("Eski gecis_raporlari şeması tespit edildi, migrasyon başlatılıyor...")
+                con.execute("DROP TABLE IF EXISTS gecis_raporlari_yeni")
+                con.execute("""
+                    CREATE TABLE gecis_raporlari_yeni (
+                        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                        plaka         TEXT NOT NULL,
+                        giris_tarih   TEXT NOT NULL,
+                        giris_saat    TEXT NOT NULL,
+                        giris_agirlik REAL NOT NULL DEFAULT 0.0,
+                        cikis_tarih   TEXT,
+                        cikis_saat    TEXT,
+                        cikis_agirlik REAL,
+                        net_agirlik   REAL,
+                        durum         TEXT NOT NULL DEFAULT 'ICERIDE',
+                        guven         REAL DEFAULT 0.0
+                    )
+                """)
+                tarih_src = "tarih" if "tarih" in kolonlar else "DATE('now')"
+                saat_src = "saat" if "saat" in kolonlar else "TIME('now')"
+                agirlik_src = "agirlik" if "agirlik" in kolonlar else "0.0"
+                guven_src = "guven" if "guven" in kolonlar else "0.0"
+                con.execute(f"""
+                    INSERT INTO gecis_raporlari_yeni
+                    (id, plaka, giris_tarih, giris_saat, giris_agirlik, durum, guven)
+                    SELECT
+                        id,
+                        COALESCE(plaka, ''),
+                        COALESCE({tarih_src}, DATE('now')),
+                        COALESCE({saat_src}, TIME('now')),
+                        COALESCE({agirlik_src}, 0.0),
+                        'TAMAMLANDI',
+                        COALESCE({guven_src}, 0.0)
+                    FROM gecis_raporlari
+                """)
+                con.execute("DROP TABLE gecis_raporlari")
+                con.execute("ALTER TABLE gecis_raporlari_yeni RENAME TO gecis_raporlari")
+                log.info("gecis_raporlari migrasyonu tamamlandı.")
+
             con.execute("CREATE INDEX IF NOT EXISTS idx_plaka ON kayitli_araclar(plaka)")
-            con.execute("CREATE INDEX IF NOT EXISTS idx_gecis_plaka_tarih ON gecis_raporlari(plaka, tarih)")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_gecis_plaka_giris_tarih ON gecis_raporlari(plaka, giris_tarih)")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_gecis_plaka_durum ON gecis_raporlari(plaka, durum)")
             con.commit()
             log.debug("SQLite WAL şema hazır: %s", self.db_dosya)
         finally:
             con.close()
+
+    def acik_seans_getir(self, plaka: str) -> Optional[dict]:
+        con = sqlite3.connect(self.db_dosya, timeout=10)
+        con.row_factory = sqlite3.Row
+        try:
+            row = con.execute(
+                "SELECT * FROM gecis_raporlari WHERE plaka = ? AND durum = 'ICERIDE' ORDER BY id DESC LIMIT 1",
+                (plaka,),
+            ).fetchone()
+            return dict(row) if row is not None else None
+        finally:
+            con.close()
+
+    def giris_kaydet(self, plaka: str, agirlik: float) -> PlakaKayit:
+        """
+        [P6] Yalnızca giriş kaydı oluşturur. Çağırmadan önce acik_seans_getir() ile
+        kontrol yapılmış olmalıdır. Bu metod doğrudan ICERIDE kaydı yazar.
+        """
+        plaka = plaka.strip().upper()
+        simdi = datetime.now()
+        kayit = PlakaKayit(
+            plaka=plaka,
+            giris_tarih=simdi.strftime("%Y-%m-%d"),
+            giris_saat=simdi.strftime("%H:%M:%S"),
+            giris_agirlik=float(agirlik),
+            durum="ICERIDE",
+        )
+        self.gecis_kaydet(kayit)
+        return kayit
+
+    def cikis_kaydet(self, plaka: str, agirlik: float) -> Optional[PlakaKayit]:
+        """
+        [P6] Açık seansı TAMAMLANDI olarak kapatır ve net ağırlığı hesaplar.
+        Açık seans yoksa None döner (çağıran kod loglamalıdır).
+        """
+        plaka = plaka.strip().upper()
+        simdi = datetime.now()
+        acik = self.acik_seans_getir(plaka)
+        if acik is None:
+            log.warning("Çıkış kaydı atlandı: açık seans yok (%s)", plaka)
+            return None
+
+        giris_agirlik = float(acik.get("giris_agirlik") or 0.0)
+        cikis_agirlik = float(agirlik)
+        kayit = PlakaKayit(
+            plaka=plaka,
+            giris_tarih=str(acik.get("giris_tarih") or simdi.strftime("%Y-%m-%d")),
+            giris_saat=str(acik.get("giris_saat") or simdi.strftime("%H:%M:%S")),
+            giris_agirlik=giris_agirlik,
+            guven=float(acik.get("guven") or 0.0),
+            cikis_tarih=simdi.strftime("%Y-%m-%d"),
+            cikis_saat=simdi.strftime("%H:%M:%S"),
+            cikis_agirlik=cikis_agirlik,
+            net_agirlik=max(0.0, giris_agirlik - cikis_agirlik),
+            durum="TAMAMLANDI",
+        )
+        self.gecis_kaydet(kayit)
+        return kayit
 
     def _db_writer_loop(self) -> None:
         def _yaz(con: sqlite3.Connection, kayit: PlakaKayit) -> None:
@@ -1387,14 +1515,56 @@ class KantarKaydedici:
             if cur.fetchone() is None:
                 cur.execute(
                     "INSERT INTO kayitli_araclar (plaka, ilk_kayit_tarihi) VALUES (?, ?)",
-                    (kayit.plaka, f"{kayit.tarih} {kayit.saat}"),
+                    (kayit.plaka, f"{kayit.giris_tarih} {kayit.giris_saat}"),
                 )
-            cur.execute(
-                "INSERT INTO gecis_raporlari (plaka, tarih, saat, guven, agirlik) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (kayit.plaka, kayit.tarih, kayit.saat,
-                 float(kayit.guven), float(kayit.agirlik)),
-            )
+
+            if kayit.durum == "ICERIDE":
+                cur.execute(
+                    "INSERT INTO gecis_raporlari (plaka, giris_tarih, giris_saat, giris_agirlik, durum, guven) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        kayit.plaka,
+                        kayit.giris_tarih,
+                        kayit.giris_saat,
+                        float(kayit.giris_agirlik),
+                        "ICERIDE",
+                        float(kayit.guven),
+                    ),
+                )
+            elif kayit.durum == "TAMAMLANDI":
+                cur.execute(
+                    "UPDATE gecis_raporlari "
+                    "SET cikis_tarih = ?, cikis_saat = ?, cikis_agirlik = ?, net_agirlik = ?, durum = 'TAMAMLANDI' "
+                    "WHERE id = ("
+                    "    SELECT id FROM gecis_raporlari "
+                    "    WHERE plaka = ? AND durum = 'ICERIDE' "
+                    "    ORDER BY id DESC LIMIT 1"
+                    ")",
+                    (
+                        kayit.cikis_tarih,
+                        kayit.cikis_saat,
+                        float(kayit.cikis_agirlik or 0.0),
+                        float(kayit.net_agirlik or 0.0),
+                        kayit.plaka,
+                    ),
+                )
+                if cur.rowcount == 0:
+                    cur.execute(
+                        "INSERT INTO gecis_raporlari (plaka, giris_tarih, giris_saat, giris_agirlik, cikis_tarih, cikis_saat, cikis_agirlik, net_agirlik, durum, guven) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            kayit.plaka,
+                            kayit.giris_tarih,
+                            kayit.giris_saat,
+                            float(kayit.giris_agirlik),
+                            kayit.cikis_tarih,
+                            kayit.cikis_saat,
+                            float(kayit.cikis_agirlik or 0.0),
+                            float(kayit.net_agirlik or 0.0),
+                            "TAMAMLANDI",
+                            float(kayit.guven),
+                        ),
+                    )
             con.commit()
 
         con = sqlite3.connect(self.db_dosya, timeout=30)
@@ -1440,7 +1610,7 @@ class KantarKaydedici:
                 if not basarili:
                     log.error(
                         "DbWriter: %d deneme sonrası BAŞARISIZ → %s %.1fkg",
-                        len(self._RETRY_GECIKME), kayit.plaka, kayit.agirlik,
+                        len(self._RETRY_GECIKME), kayit.plaka, kayit.giris_agirlik,
                     )
         finally:
             con.close()
@@ -1451,12 +1621,11 @@ class KantarKaydedici:
         [P5] Graceful shutdown: DB kuyruğu boşalana kadar bekle, sonra thread'i durdur.
         """
         log.info("KantarKaydedici: kuyruk boşaltılıyor...")
-        # Kuyruktaki öğelerin işlenmesini bekle (en fazla 10sn)
         bitis = time.time() + 10.0
         while not self._db_kuyrugu.empty() and time.time() < bitis:
             time.sleep(0.1)
         self._db_dur.set()
-        self._db_kuyrugu.put(None)    # Worker'ı uyandır
+        self._db_kuyrugu.put(None)
         self._db_thread.join(timeout=8.0)
         if self._db_thread.is_alive():
             log.warning("DbWriter thread 8sn içinde sonlanmadı — zorla bırakılıyor.")
@@ -1469,7 +1638,11 @@ class KantarKaydedici:
             with open(self.csv_dosya, mode="a", newline="", encoding="utf-8-sig") as f:
                 w = csv.writer(f, delimiter=";")
                 if not dosya_var:
-                    w.writerow(["Tarih", "Saat", "Plaka", "Agirlik(kg)", "Tip", "Guven", "Operator"])
+                    w.writerow([
+                        "Plaka", "Durum", "GirisTarih", "GirisSaat", "GirisAgirlik(kg)",
+                        "CikisTarih", "CikisSaat", "CikisAgirlik(kg)", "NetAgirlik(kg)",
+                        "Guven", "Operator",
+                    ])
         except PermissionError as e:
             self._csv_aktif = False
             log.warning("CSV erişilemedi, devre dışı: %s", e)
@@ -1486,9 +1659,12 @@ class KantarKaydedici:
                     with open(self.csv_dosya, mode="a", newline="", encoding="utf-8-sig") as f:
                         w = csv.writer(f, delimiter=";")
                         w.writerow([
-                            kayit.tarih, kayit.saat, kayit.plaka,
-                            f"{kayit.agirlik:.1f}",
-                            kayit.tip, f"{kayit.guven:.2f}", kayit.operator,
+                            kayit.plaka, kayit.durum, kayit.giris_tarih, kayit.giris_saat,
+                            f"{kayit.giris_agirlik:.1f}",
+                            kayit.cikis_tarih or "", kayit.cikis_saat or "",
+                            "" if kayit.cikis_agirlik is None else f"{kayit.cikis_agirlik:.1f}",
+                            "" if kayit.net_agirlik is None else f"{kayit.net_agirlik:.1f}",
+                            f"{kayit.guven:.2f}", kayit.operator,
                         ])
                 except PermissionError as e:
                     self._csv_aktif = False
@@ -1500,12 +1676,13 @@ class KantarKaydedici:
 
             self._json_guncelle(kayit)
             log.info(
-                "KAYIT: %s | %s | %.1fkg | %s %s",
-                kayit.plaka, kayit.tip, kayit.agirlik, kayit.tarih, kayit.saat,
+                "KAYIT: %s | %s | giris=%.1fkg | cikis=%s | net=%s",
+                kayit.plaka,
+                kayit.durum,
+                kayit.giris_agirlik,
+                "-" if kayit.cikis_agirlik is None else f"{kayit.cikis_agirlik:.1f}kg",
+                "-" if kayit.net_agirlik is None else f"{kayit.net_agirlik:.1f}kg",
             )
-
-            if self.fis_yazdirici is not None:
-                self.fis_yazdirici.yazdir(kayit)
 
     def kaydet(self, kayit: PlakaKayit):
         self.gecis_kaydet(kayit)
@@ -1552,6 +1729,39 @@ class EkranCizici:
         )
         cv2.putText(kare, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, renk, 2)
 
+    @staticmethod
+    def giris_yapildi(kare, bbox: tuple, plaka: str) -> None:
+        """
+        [P6] Araç giriş yaptığında yeşil renkte "GIRIS YAPILDI: [Plaka]" yazar.
+        Brüt ağırlık (giriş tartımı) belli, net henüz bilinmiyor.
+        """
+        x1, y1, x2, y2 = bbox
+        renk = (0, 200, 0)   # BGR → yeşil
+        cv2.rectangle(kare, (x1, y1), (x2, y2), renk, 4)
+        cv2.putText(
+            kare,
+            f"GIRIS YAPILDI: {plaka}",
+            (x1, y1 - 14),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.85, renk, 2,
+        )
+
+    @staticmethod
+    def cikis_yapildi(kare, bbox: tuple, plaka: str, net_kg: float) -> None:
+        """
+        [P6] Araç çıkış yaptığında sarı renkte "CIKIS YAPILDI - NET: X kg" yazar.
+        Net ağırlık hesaplanmış durumda; fiş de bu aşamada yazdırılır.
+        """
+        x1, y1, x2, y2 = bbox
+        renk = (0, 220, 255)   # BGR → sarı/turuncu
+        cv2.rectangle(kare, (x1, y1), (x2, y2), renk, 4)
+        cv2.putText(
+            kare,
+            f"CIKIS YAPILDI - NET: {net_kg:.1f} kg  [{plaka}]",
+            (x1, y1 - 14),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.85, renk, 2,
+        )
+
+    # Geriye dönük uyumluluk için eski imza korunuyor; yeni kod giris_yapildi/cikis_yapildi kullanmalı
     @staticmethod
     def basarili_kayit(kare, bbox, plaka):
         x1, y1, x2, y2 = bbox
@@ -1608,11 +1818,12 @@ class OtoKantar:
         )
         self.kantar_okuyucu = KantarOkuyucu()
         self.fis_yazdirici  = FisYazdirici()
+
+        # [P6] KantarKaydedici artık fis_yazdirici almıyor
         self.kaydedici = KantarKaydedici(
             csv_dosya    =CONFIG["CSV_DOSYA"],
             json_dosya   =CONFIG["JSON_CANLI"],
             db_dosya     =CONFIG["DB_DOSYA"],
-            fis_yazdirici=self.fis_yazdirici,
         )
         self.cizici  = EkranCizici()
         self.tracker = CentroidTracker()
@@ -1643,6 +1854,79 @@ class OtoKantar:
     def seans_kilitli_mi(self) -> bool:
         return self._kantar_seans_kilitli
 
+    # ── [P6] State Machine: Giriş / Çıkış karar noktası ─────────────────────
+
+    def _kayit_yap(
+        self,
+        kare      : np.ndarray,
+        bbox      : tuple,
+        plaka     : str,
+        agirlik   : float,
+        final_conf: float,
+        kaynak    : str = "DOĞRUDAN",   # log etiketinde görünür ("DOĞRUDAN" | "BUFFER")
+    ) -> Optional[PlakaKayit]:
+        """
+        [P6] Tek yetkili kayıt noktası.
+
+        Akış:
+          acik_seans_getir() → None  → giris_kaydet()  → ekran: yeşil  → FİŞ YOK
+          acik_seans_getir() → dict  → cikis_kaydet()  → ekran: sarı   → FİŞ YAZDIR
+        """
+        kara_listede = plaka in CONFIG.get("KARA_LISTE", [])
+        acik_seans   = self.kaydedici.acik_seans_getir(plaka)
+
+        if acik_seans is None:
+            # ── GİRİŞ TARTIMI ────────────────────────────────────────────────
+            kayit = self.kaydedici.giris_kaydet(plaka, agirlik)
+            log.info(
+                "GİRİŞ TARTIMI  [%s]: %s - %.1f kg  güven=%.2f",
+                kaynak, plaka, agirlik, final_conf,
+            )
+            self.cizici.giris_yapildi(kare, bbox, plaka)
+            # Giriş aşamasında fiş yazdırılmaz (net kilo henüz belli değil)
+        else:
+            # ── ÇIKIŞ TARTIMI ────────────────────────────────────────────────
+            kayit = self.kaydedici.cikis_kaydet(plaka, agirlik)
+            if kayit is None:
+                # cikis_kaydet() None dönerse seans zaten kapanmış — atla
+                return None
+            net_kg = float(kayit.net_agirlik or 0.0)
+            log.info(
+                "ÇIKIŞ TARTIMI  [%s]: %s - Net: %.1f kg  güven=%.2f",
+                kaynak, plaka, net_kg, final_conf,
+            )
+            self.cizici.cikis_yapildi(kare, bbox, plaka, net_kg)
+            # Fiş YALNIZCA çıkışta yazdırılır
+            try:
+                self.fis_yazdirici.yazdir(kayit)
+            except Exception as e:
+                log.error("Fiş yazdırma hatası (%s): %s", type(e).__name__, e)
+
+        # Snapshot
+        try:
+            simdi_dt = datetime.now()
+            Path("captures").mkdir(exist_ok=True)
+            snap = (
+                f"captures/{plaka}_{simdi_dt.strftime('%Y-%m-%d_%H-%M-%S')}"
+                f"_{'CIKIS' if acik_seans else 'GIRIS'}.jpg"
+            )
+            cv2.imwrite(snap, kare)
+            log.info("Snapshot: %s", snap)
+        except Exception as e:
+            log.warning("Snapshot yazılamadı: %s", e)
+
+        # Sesli uyarı
+        if _WINSOUND_OK:
+            try:
+                winsound.Beep(
+                    500  if kara_listede else 1000,
+                    1000 if kara_listede else 300,
+                )
+            except Exception:
+                pass
+
+        return kayit
+
     # ── [P5] Signal handler ───────────────────────────────────────────────────
 
     def _signal_handler(self, signum, frame) -> None:
@@ -1652,11 +1936,6 @@ class OtoKantar:
     # ── [P5] uvicorn programatik başlatma ─────────────────────────────────────
 
     def _fastapi_baslat(self) -> None:
-        """
-        uvicorn.Server nesnesini programatik başlatır.
-        Kapatma sırasında self._uvicorn_server.should_exit = True ile
-        port serbest bırakılır; daemon değil, join edilebilir thread.
-        """
         uconf = uvicorn.Config(
             app   =app,
             host  =str(CONFIG.get("FASTAPI_HOST", "0.0.0.0")),
@@ -1690,26 +1969,21 @@ class OtoKantar:
     ) -> None:
         log.info("Kapatma süreci başladı...")
 
-        # 1. Kamera üreticisini durdur
         dur_event.set()
         uretici_thread.join(timeout=5.0)
         if uretici_thread.is_alive():
             log.warning("Kamera üreticisi 5sn içinde sonlanmadı.")
 
-        # 2. [P1] OcrWorker'ı durdur
         self.ocr_worker.durdur()
         self.ocr_worker.join(timeout=5.0)
         if self.ocr_worker.is_alive():
             log.warning("OcrWorker 5sn içinde sonlanmadı.")
 
-        # 3. Kantar okuyucuyu durdur
         self.kantar_okuyucu.durdur()
         self.kantar_okuyucu.join(timeout=3.0)
 
-        # 4. [P5] DB yazma işlemlerini güvenle bitir
         self.kaydedici.kapat()
 
-        # 5. [P5] uvicorn'u programatik kapat (port serbest)
         if self._uvicorn_server is not None:
             log.info("uvicorn kapatılıyor...")
             self._uvicorn_server.should_exit = True
@@ -1822,7 +2096,7 @@ class OtoKantar:
         except Exception as e:
             log.warning("Canlı kare yazılamadı: %s", e)
 
-    # ── [P1] OCR SONUÇLARINI İŞLE ────────────────────────────────────────────
+    # ── [P1 + P6] OCR SONUÇLARINI İŞLE ──────────────────────────────────────
 
     def _ocr_sonuclarini_isle(
         self,
@@ -1832,8 +2106,8 @@ class OtoKantar:
         kare_w       : int,
     ) -> None:
         """
-        [P1] OcrWorker'dan toplanan sonuçları işler.
-        Bu metod _kare_isle'den çağrılır; EasyOCR bu thread'de çalışmaz.
+        [P1] OcrWorker'dan toplanan sonuçları işler — EasyOCR bu thread'de çalışmaz.
+        [P6] Kayıt kararı _kayit_yap() üzerinden State Machine'e delege edilir.
         """
         sonuclar = self.ocr_worker.sonuclari_topla()
         for (arac_id, sonuc, yolo_conf, bbox) in sonuclar:
@@ -1864,11 +2138,8 @@ class OtoKantar:
             kara_listede_final = final_plaka in CONFIG.get("KARA_LISTE", [])
             ort_ocr            = float(kazan_toplam) / max(1, int(kazan_n))
             final_conf         = 0.6 * ort_ocr + 0.4 * float(yolo_conf)
-            simdi_dt           = datetime.now()
-            bugun_tarih        = simdi_dt.strftime("%Y-%m-%d")
-            ix1, iy1, ix2, iy2 = bbox
 
-            # V11: PlakaBuffer güncelle
+            # V11: PlakaBuffer güncelle (kantar doluysa, kayıt henüz yapılmamışsa)
             kantar_dolu = guncel_kg >= float(CONFIG["MIN_KILIT_AGIRLIK"])
             if kantar_dolu:
                 if self._plaka_buffer is None:
@@ -1879,49 +2150,30 @@ class OtoKantar:
                     )
                     log.debug("PlakaBuffer oluşturuldu: %s (güven=%.2f)", final_plaka, final_conf)
                 else:
-                    guncellendi = self._plaka_buffer.guncelle_eger_daha_iyi(
+                    guncellendi = self._plaka_buffer.guncule_eger_daha_iyi(
                         final_plaka, ort_ocr, float(yolo_conf)
                     )
                     if guncellendi:
                         log.debug("PlakaBuffer güncellendi: %s (yeni güven=%.2f)", final_plaka, final_conf)
 
-            # Ağırlık sabit ve seans açık → doğrudan kayıt
+            # [P6] Ağırlık sabit, seans açık değil → State Machine üzerinden kayıt
             if agirlik_sabit and not self._kantar_seans_kilitli:
-                kayit = PlakaKayit(
-                    plaka   =final_plaka,
-                    tarih   =bugun_tarih,
-                    saat    =simdi_dt.strftime("%H:%M:%S"),
-                    guven   =final_conf,
-                    agirlik =guncel_kg,
-                    tip     =("KARA LİSTE" if kara_listede_final else "GIRIS"),
+                kayit = self._kayit_yap(
+                    kare      =kare,
+                    bbox      =bbox,
+                    plaka     =final_plaka,
+                    agirlik   =guncel_kg,
+                    final_conf=final_conf,
+                    kaynak    ="DOĞRUDAN",
                 )
-                self.kaydedici.gecis_kaydet(kayit)
-                self.plaka_hafizasi[arac_id] = final_plaka
-                self._kantar_seans_kilitli   = True
-                self._plaka_buffer           = None
-                self.cizici.basarili_kayit(kare, bbox, final_plaka)
-                log.info("DOĞRUDAN KAYIT: plaka=%s ağırlık=%.1fkg güven=%.2f",
-                         final_plaka, guncel_kg, final_conf)
-
-                # Snapshot
-                try:
-                    Path("captures").mkdir(exist_ok=True)
-                    snap = f"captures/{final_plaka}_{bugun_tarih}_{simdi_dt.strftime('%H-%M-%S')}.jpg"
-                    cv2.imwrite(snap, kare)
-                    log.info("Snapshot: %s", snap)
-                except Exception as e:
-                    log.warning("Snapshot yazılamadı: %s", e)
-
-                if _WINSOUND_OK:
-                    try:
-                        winsound.Beep(
-                            500 if kara_listede_final else 1000,
-                            1000 if kara_listede_final else 300,
-                        )
-                    except Exception:
-                        pass
+                if kayit is not None:
+                    self.plaka_hafizasi[arac_id] = final_plaka
+                    self._kantar_seans_kilitli   = True
+                    self._plaka_buffer           = None
 
             elif not agirlik_sabit and kantar_dolu:
+                # Ağırlık henüz sabitlenmemiş — bilgilendirici mesaj
+                ix1, iy1 = bbox[0], bbox[1]
                 cv2.putText(
                     kare,
                     f"PLAKA HAZIR ({final_plaka}) — AĞIRLIK SABİTLENİYOR...",
@@ -1991,45 +2243,31 @@ class OtoKantar:
                 cv2.putText(kare, f"AĞIRLIK BEKLENİYOR... {guncel_kg:.0f} kg",
                             (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 200, 255), 2)
 
-            # Buffer'dan kayıt (ağırlık sabitlendi, kamera boşalmış olabilir)
+            # [P6] Buffer'dan kayıt (ağırlık sabitlendi, kamera boşalmış olabilir)
+            # State Machine burada da acik_seans_getir() üzerinden çalışır.
             if (
                 agirlik_sabit
                 and self._plaka_buffer is not None
                 and not self._kantar_seans_kilitli
                 and not self._plaka_buffer.suresi_doldu_mu(float(CONFIG["PLAKA_BUFFER_TTL"]))
             ):
-                buf         = self._plaka_buffer
-                simdi_dt    = datetime.now()
-                final_conf  = 0.6 * buf.guven + 0.4 * buf.yolo_conf
-                kara_listede = buf.plaka in CONFIG.get("KARA_LISTE", [])
+                buf        = self._plaka_buffer
+                final_conf = 0.6 * buf.guven + 0.4 * buf.yolo_conf
 
-                kayit = PlakaKayit(
-                    plaka   =buf.plaka,
-                    tarih   =simdi_dt.strftime("%Y-%m-%d"),
-                    saat    =simdi_dt.strftime("%H:%M:%S"),
-                    guven   =final_conf,
-                    agirlik =guncel_kg,
-                    tip     =("KARA LİSTE" if kara_listede else "GIRIS"),
+                # Buffer kayıtlarında ekran bbox'u tahmin et (en son bilinen konum)
+                buf_bbox = self._aktif_bbox or (10, 90, 400, 130)
+
+                kayit = self._kayit_yap(
+                    kare      =kare,
+                    bbox      =buf_bbox,
+                    plaka     =buf.plaka,
+                    agirlik   =guncel_kg,
+                    final_conf=final_conf,
+                    kaynak    ="BUFFER",
                 )
-                self.kaydedici.gecis_kaydet(kayit)
-                self._kantar_seans_kilitli = True
-                self._plaka_buffer         = None
-
-                log.info("BUFFER'DAN KAYIT: plaka=%s ağırlık=%.1fkg güven=%.2f",
-                         buf.plaka, guncel_kg, final_conf)
-
-                try:
-                    Path("captures").mkdir(exist_ok=True)
-                    snap = f"captures/{buf.plaka}_{simdi_dt.strftime('%Y-%m-%d_%H-%M-%S')}.jpg"
-                    cv2.imwrite(snap, kare)
-                except Exception as e:
-                    log.warning("Snapshot yazılamadı: %s", e)
-
-                if _WINSOUND_OK:
-                    try:
-                        winsound.Beep(500 if kara_listede else 1000, 1000 if kara_listede else 300)
-                    except Exception:
-                        pass
+                if kayit is not None:
+                    self._kantar_seans_kilitli = True
+                    self._plaka_buffer         = None
 
         # Seans kilitliyse yalnızca ekran güncelle
         if self._kantar_seans_kilitli:
@@ -2039,7 +2277,7 @@ class OtoKantar:
             self.ocr_worker.sonuclari_topla()
             return
 
-        # ── [P1] Tamamlanan OCR sonuçlarını işle ──────────────────────────────
+        # ── [P1 + P6] Tamamlanan OCR sonuçlarını işle ────────────────────────
         self._ocr_sonuclarini_isle(kare, guncel_kg, agirlik_sabit, kare_w)
 
         # ── YOLO (çift karelerde çalışır) ─────────────────────────────────────
@@ -2158,7 +2396,6 @@ class OtoKantar:
 
         try:
             while not self._cikis_istendi.is_set():
-                # Kare al
                 try:
                     kare = kare_kuyrugu.get(timeout=0.25)
                 except queue.Empty:
@@ -2191,5 +2428,7 @@ class OtoKantar:
 # BAŞLAT
 # ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    sistem = OtoKantar()
+    from otokantar_app.main import OtoKantar as OtoKantarApp
+
+    sistem = OtoKantarApp()
     sistem.calistir()

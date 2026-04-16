@@ -1104,10 +1104,6 @@ async function logOku() {
         return;
       }
     }
-    const res = await fetch(`otokantar.log?t=${Date.now()}`, { cache: 'no-store' });
-    if (!res.ok) return;
-    const text = await res.text();
-    satirlariIsle(text.split(/\r?\n/).filter(Boolean).slice(-8));
   } catch (err) {
     /* sessizce bekle */
   }
