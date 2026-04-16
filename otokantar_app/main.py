@@ -1,3 +1,5 @@
+import multiprocessing
+import os
 import platform
 import queue
 import signal
@@ -19,10 +21,9 @@ from otokantar_app.core.tracker import CentroidTracker
 from otokantar_app.db.kaydedici import KantarKaydedici
 from otokantar_app.donanim.kantar import KantarOkuyucu
 from otokantar_app.donanim.yazici import FisYazdirici
-from otokantar_app.logger import _periyodik_temizlik_baslat, eski_snapshot_temizle, log
+from otokantar_app.logger import periyodik_temizlik_baslat, eski_snapshot_temizle, log
 from otokantar_app.models import OcrGorevi, PlakaBuffer, PlakaKayit
 from otokantar_app.utils.cizici import EkranCizici
-
 
 if platform.system() == "Windows":
     import winsound
@@ -30,13 +31,26 @@ if platform.system() == "Windows":
 else:
     _WINSOUND_OK = False
 
+def _fastapi_sureci_hedef(host: str, port: int) -> None:
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    uconf = uvicorn.Config(app=app, host=host, port=port, log_level="warning")
+    server = uvicorn.Server(uconf)
+
+    def _sigterm_handler(signum, frame):
+        server.should_exit = True
+
+    signal.signal(signal.SIGTERM, _sigterm_handler)
+    server.run()
 
 class OtoKantar:
     def __init__(self):
         log.info("=" * 60)
         log.info("OtoKantar V11 (Prodüksiyon) başlatılıyor...")
+        
+        self._cikis_istendi = threading.Event()
         eski_snapshot_temizle()
-        _periyodik_temizlik_baslat(aralik_saat=6.0)
+        self.temizlik_thread = periyodik_temizlik_baslat(self._cikis_istendi, aralik_saat=6.0)
+        
         self.tespitci = PlakaTespitci(CONFIG["PLATE_WEIGHTS_URL"], CONFIG["MODELS_DIR"], CONFIG["YOLO_CONF"], CONFIG["OCR_GPU"])
         self.cozucu = PlakaCozucu(CONFIG["OCR_DILLER"], CONFIG["OCR_GPU"], CONFIG["MIN_OCR_CONF"])
         self.ocr_worker = OcrWorker(self.cozucu, int(CONFIG.get("OCR_WORKER_KUYRUK", 4)))
@@ -60,15 +74,14 @@ class OtoKantar:
         self._aktif_bbox = None
         self._canli_kare_sayac = 0
         self._son_plaka_listesi: list = []
-        self._uvicorn_server: Optional[uvicorn.Server] = None
-        self._cikis_istendi = threading.Event()
+        self._fastapi_proc: Optional[multiprocessing.Process] = None
 
     @property
     def seans_kilitli_mi(self) -> bool:
         return self._kantar_seans_kilitli
 
     def _kayit_yap(self, kare: np.ndarray, bbox: tuple, plaka: str, agirlik: float, final_conf: float, kaynak: str = "DOĞRUDAN") -> Optional[PlakaKayit]:
-        kara_listede = plaka in CONFIG.get("KARA_LISTE", [])
+        kara_listede = self.kaydedici.plaka_kara_listede_mi(plaka)
         acik_seans = self.kaydedici.acik_seans_getir(plaka)
         if acik_seans is None:
             kayit = self.kaydedici.giris_kaydet(plaka, agirlik)
@@ -104,42 +117,49 @@ class OtoKantar:
         log.info("Signal %s alındı — graceful shutdown başlıyor...", signum)
         self._cikis_istendi.set()
 
-    def _fastapi_baslat(self) -> None:
-        uconf = uvicorn.Config(app=app, host=str(CONFIG.get("FASTAPI_HOST", "0.0.0.0")), port=int(CONFIG.get("FASTAPI_PORT", 8000)), log_level="warning")
-        self._uvicorn_server = uvicorn.Server(uconf)
+    def _fastapi_baslat(self) -> multiprocessing.Process:
+        host = str(CONFIG.get("FASTAPI_HOST", "0.0.0.0"))
+        port = int(CONFIG.get("FASTAPI_PORT", 8000))
+        proc = multiprocessing.Process(
+            target=_fastapi_sureci_hedef,
+            args=(host, port),
+            name="FastAPIProcess",
+            daemon=True,
+        )
+        proc.start()
+        log.info("FastAPI süreci başlatıldı (PID=%d) → http://%s:%s", proc.pid, host, port)
+        return proc
 
-        def _calistir():
-            try:
-                self._uvicorn_server.run()
-            except Exception as e:
-                log.error("FastAPI sunucu hatası: %s", e)
-
-        t = threading.Thread(target=_calistir, name="FastAPIServer", daemon=False)
-        t.start()
-        log.info("FastAPI sunucusu başlatıldı → http://%s:%s", CONFIG.get("FASTAPI_HOST", "0.0.0.0"), CONFIG.get("FASTAPI_PORT", 8000))
-        return t
-
-    def _kapat(self, dur_event: threading.Event, uretici_thread: threading.Thread, fastapi_thread: threading.Thread) -> None:
+    def _kapat(self, dur_event: threading.Event, uretici_thread: threading.Thread) -> None:
         log.info("Kapatma süreci başladı...")
         dur_event.set()
+        
+        if hasattr(self, 'temizlik_thread') and self.temizlik_thread.is_alive():
+            self.temizlik_thread.join(timeout=2.0)
+            
         uretici_thread.join(timeout=5.0)
         if uretici_thread.is_alive():
-            log.warning("Kamera üreticisi 5sn içinde sonlanmadı.")
+            log.warning("Kamera üreticisi 5 sn içinde sonlanmadı.")
+            
         self.ocr_worker.durdur()
         self.ocr_worker.join(timeout=5.0)
         if self.ocr_worker.is_alive():
-            log.warning("OcrWorker 5sn içinde sonlanmadı.")
+            log.warning("OcrWorker 5 sn içinde sonlanmadı.")
+            
         self.kantar_okuyucu.durdur()
         self.kantar_okuyucu.join(timeout=3.0)
         self.kaydedici.kapat()
-        if self._uvicorn_server is not None:
-            log.info("uvicorn kapatılıyor...")
-            self._uvicorn_server.should_exit = True
-            fastapi_thread.join(timeout=5.0)
-            if fastapi_thread.is_alive():
-                log.warning("FastAPI thread 5sn içinde sonlanmadı.")
+        
+        if self._fastapi_proc is not None and self._fastapi_proc.is_alive():
+            log.info("FastAPI süreci (PID=%d) kapatılıyor...", self._fastapi_proc.pid)
+            self._fastapi_proc.terminate()
+            self._fastapi_proc.join(timeout=5.0)
+            if self._fastapi_proc.is_alive():
+                self._fastapi_proc.kill()
+                self._fastapi_proc.join(timeout=2.0)
             else:
-                log.info("FastAPI thread temiz kapandı.")
+                log.info("FastAPI süreci temiz kapandı.")
+
         cv2.destroyAllWindows()
         log.info("OtoKantar V11 temiz kapandı.")
 
@@ -173,7 +193,7 @@ class OtoKantar:
         else:
             backendler = [("AUTO", None)]
         warmup_frames = int(CONFIG.get("KAMERA_WARMUP_FRAMES", 8))
-        siyah_esik = float(CONFIG.get("KAMERA_SIYAH_ESIK", 2.0))  # mean intensity
+        siyah_esik = float(CONFIG.get("KAMERA_SIYAH_ESIK", 2.0))
         warmup_sleep = float(CONFIG.get("KAMERA_WARMUP_SLEEP", 0.02))
 
         def _siyah_mi(kare: np.ndarray) -> bool:
@@ -195,7 +215,6 @@ class OtoKantar:
                 if not kamera.isOpened():
                     kamera.release()
                     continue
-                # Bazı sürücülerde ilk kareler siyah/boş gelir: warm-up yap.
                 ok = False
                 son_kare = None
                 for _ in range(max(1, warmup_frames)):
@@ -281,13 +300,13 @@ class OtoKantar:
         except Exception as e:
             log.warning("Canlı kare yazılamadı: %s", e)
 
-    def _ocr_sonuclarini_isle(self, kare: np.ndarray, guncel_kg: float, agirlik_sabit: bool, kare_w: int) -> None:
+    def _ocr_sonuclarini_isle(self, kare: np.ndarray, guncel_kg: float, agirlik_sabit: bool, kare_w: int, kare_h: int) -> None:
         sonuclar = self.ocr_worker.sonuclari_topla()
         for (arac_id, sonuc, yolo_conf, bbox) in sonuclar:
             if not sonuc.gecerli or sonuc.plaka is None:
                 continue
             plaka = sonuc.plaka
-            kara_listede_okunan = plaka in CONFIG.get("KARA_LISTE", [])
+            kara_listede_okunan = self.kaydedici.plaka_kara_listede_mi(plaka)
             if kara_listede_okunan:
                 log.warning("ALARM: KARA LİSTEDEKİ ARAÇ TESPİT EDİLDİ! (%s)", plaka)
             kaydet, final_plaka, kazan_toplam, kazan_n = self.dogrulama.isle(arac_id, plaka, float(sonuc.guven or 0.0))
@@ -303,11 +322,8 @@ class OtoKantar:
             if kantar_dolu:
                 if self._plaka_buffer is None:
                     self._plaka_buffer = PlakaBuffer(plaka=final_plaka, guven=ort_ocr, yolo_conf=float(yolo_conf))
-                    log.debug("PlakaBuffer oluşturuldu: %s (güven=%.2f)", final_plaka, final_conf)
                 else:
-                    guncellendi = self._plaka_buffer.guncule_eger_daha_iyi(final_plaka, ort_ocr, float(yolo_conf))
-                    if guncellendi:
-                        log.debug("PlakaBuffer güncellendi: %s (yeni güven=%.2f)", final_plaka, final_conf)
+                    self._plaka_buffer.guncule_eger_daha_iyi(final_plaka, ort_ocr, float(yolo_conf))
             if agirlik_sabit and not self._kantar_seans_kilitli:
                 kayit = self._kayit_yap(kare=kare, bbox=bbox, plaka=final_plaka, agirlik=guncel_kg, final_conf=final_conf, kaynak="DOĞRUDAN")
                 if kayit is not None:
@@ -316,7 +332,9 @@ class OtoKantar:
                     self._plaka_buffer = None
             elif not agirlik_sabit and kantar_dolu:
                 ix1, iy1 = bbox[0], bbox[1]
-                cv2.putText(kare, f"PLAKA HAZIR ({final_plaka}) — AĞIRLIK SABİTLENİYOR...", (ix1, max(18, iy1 - 38)), cv2.FONT_HERSHEY_SIMPLEX, 0.72, (0, 200, 255), 2)
+                _pad_y  = max(int(kare_h * 0.055), 14)
+                _fs     = round(0.72 * (kare_h / 720.0), 2)
+                cv2.putText(kare, f"PLAKA HAZIR ({final_plaka}) — AĞIRLIK SABİTLENİYOR...", (ix1, max(_pad_y, iy1 - _pad_y)), cv2.FONT_HERSHEY_SIMPLEX, _fs, (0, 200, 255), 2)
 
     def _kare_isle(self, kare: np.ndarray):
         self._kare_sayaci += 1
@@ -327,47 +345,60 @@ class OtoKantar:
         guncel_kg, agirlik_sabit = self.kantar_okuyucu.veri
         esik_kg = float(CONFIG["MIN_KILIT_AGIRLIK"])
         kantar_dolu = guncel_kg >= esik_kg
+
+        _olcek_ref  = kare_h / 720.0
+        tx          = int(kare_w * 0.013)
+        y1          = int(kare_h * 0.090)
+        y2          = int(kare_h * 0.135)
+        y3          = int(kare_h * 0.180)
+        fs_normal   = round(0.65 * _olcek_ref, 2)
+        fs_kucuk    = round(0.55 * _olcek_ref, 2)
+        pad_y_bbox  = max(int(kare_h * 0.055), 14)
+
         if not kantar_dolu and self._kantar_seans_kilitli:
             if self._seans_sifir_baslangic is None:
                 self._seans_sifir_baslangic = simdi
-                log.debug("Seans sıfır guard başladı — %.1fsn beklenecek (%.0fkg < %.0fkg)", CONFIG["SEANS_SIFIR_BEKLEME"], guncel_kg, esik_kg)
             else:
                 gecen = simdi - self._seans_sifir_baslangic
                 if gecen >= float(CONFIG["SEANS_SIFIR_BEKLEME"]):
                     self._seans_temizle()
                 else:
                     kalan = float(CONFIG["SEANS_SIFIR_BEKLEME"]) - gecen
-                    cv2.putText(kare, f"ARAÇ İNİYOR — Guard: {kalan:.1f}sn kaldı", (10, 106), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 200, 255), 1)
+                    cv2.putText(kare, f"ARAÇ İNİYOR — Guard: {kalan:.1f}sn kaldı", (tx, y3), cv2.FONT_HERSHEY_SIMPLEX, fs_kucuk, (0, 200, 255), 1)
         elif kantar_dolu and self._seans_sifir_baslangic is not None:
-            log.debug("Seans sıfır guard iptal — ağırlık tekrar eşiğin üstüne çıktı (%.0fkg)", guncel_kg)
             self._seans_sifir_baslangic = None
+        
         if not kantar_dolu and self._plaka_buffer is not None:
             if self._plaka_buffer.suresi_doldu_mu(float(CONFIG["PLAKA_BUFFER_TTL"])):
-                log.debug("PlakaBuffer TTL doldu, temizlendi.")
                 self._plaka_buffer = None
+        
         if not kantar_dolu and self.tracker.is_empty():
             self._aktif_bbox = None
-            cv2.putText(kare, f"DURUM: KANTAR BOŞ ({guncel_kg:.0f} kg)", (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
+            cv2.putText(kare, f"DURUM: KANTAR BOŞ ({guncel_kg:.0f} kg)", (tx, y1), cv2.FONT_HERSHEY_SIMPLEX, fs_normal, (0, 255, 0), 2)
             self.ocr_worker.sonuclari_topla()
             return
+        
         if kantar_dolu:
             if agirlik_sabit:
-                cv2.putText(kare, f"KANTARDA ARAÇ VAR: {guncel_kg:.0f} kg  [SABİT]", (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 165, 255), 2)
+                cv2.putText(kare, f"KANTARDA ARAÇ VAR: {guncel_kg:.0f} kg  [SABİT]", (tx, y1), cv2.FONT_HERSHEY_SIMPLEX, fs_normal, (0, 165, 255), 2)
             else:
-                cv2.putText(kare, f"AĞIRLIK BEKLENİYOR... {guncel_kg:.0f} kg", (10, 58), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 200, 255), 2)
+                cv2.putText(kare, f"AĞIRLIK BEKLENİYOR... {guncel_kg:.0f} kg", (tx, y1), cv2.FONT_HERSHEY_SIMPLEX, fs_normal, (0, 200, 255), 2)
             if agirlik_sabit and self._plaka_buffer is not None and not self._kantar_seans_kilitli and not self._plaka_buffer.suresi_doldu_mu(float(CONFIG["PLAKA_BUFFER_TTL"])):
                 buf = self._plaka_buffer
                 final_conf = 0.6 * buf.guven + 0.4 * buf.yolo_conf
-                buf_bbox = self._aktif_bbox or (10, 90, 400, 130)
+                buf_bbox = self._aktif_bbox or (tx, int(kare_h * 0.125), int(kare_w * 0.556), int(kare_h * 0.181))
                 kayit = self._kayit_yap(kare=kare, bbox=buf_bbox, plaka=buf.plaka, agirlik=guncel_kg, final_conf=final_conf, kaynak="BUFFER")
                 if kayit is not None:
                     self._kantar_seans_kilitli = True
                     self._plaka_buffer = None
+        
         if self._kantar_seans_kilitli:
-            cv2.putText(kare, "SEANS KİLİTLİ — ARAÇ ÇIKIŞI BEKLENİYOR", (10, 82), cv2.FONT_HERSHEY_SIMPLEX, 0.60, (0, 80, 255), 2)
+            cv2.putText(kare, "SEANS KİLİTLİ — ARAÇ ÇIKIŞI BEKLENİYOR", (tx, y2), cv2.FONT_HERSHEY_SIMPLEX, fs_normal, (0, 80, 255), 2)
             self.ocr_worker.sonuclari_topla()
             return
-        self._ocr_sonuclarini_isle(kare, guncel_kg, agirlik_sabit, kare_w)
+        
+        self._ocr_sonuclarini_isle(kare, guncel_kg, agirlik_sabit, kare_w, kare_h)
+        
         if self._kare_sayaci % 2 == 0:
             plaka_listesi = self.tespitci.plakalari_bul(kare)
             self._son_plaka_listesi = plaka_listesi
@@ -376,44 +407,41 @@ class OtoKantar:
         if not plaka_listesi:
             self._aktif_bbox = None
             return
+        
         for silinen_id in self.tracker.purge_expired():
             self.plaka_hafizasi.pop(silinen_id, None)
         self._aktif_bbox = None
         ocr_calis = self._kare_sayaci % CONFIG["OCR_KARE_ATLAMA"] == 0
+        
         for x1, y1, x2, y2, yolo_conf in plaka_listesi:
-            ix1 = max(0, int(x1))
-            iy1 = max(0, int(y1))
-            ix2 = min(kare_w, int(x2))
-            iy2 = min(kare_h, int(y2))
-            if ix2 <= ix1 or iy2 <= iy1:
-                continue
-            cx = (ix1 + ix2) / 2.0
-            cy = (iy1 + iy2) / 2.0
-            if not (roi_x1 <= cx <= roi_x2 and roi_y1 <= cy <= roi_y2):
-                continue
+            ix1, iy1 = max(0, int(x1)), max(0, int(y1))
+            ix2, iy2 = min(kare_w, int(x2)), min(kare_h, int(y2))
+            if ix2 <= ix1 or iy2 <= iy1: continue
+            cx, cy = (ix1 + ix2) / 2.0, (iy1 + iy2) / 2.0
+            if not (roi_x1 <= cx <= roi_x2 and roi_y1 <= cy <= roi_y2): continue
             bbox = (ix1, iy1, ix2, iy2)
             arac_id = self.tracker.assign_id(bbox)
-            if self._aktif_bbox is None:
-                self._aktif_bbox = bbox
+            if self._aktif_bbox is None: self._aktif_bbox = bbox
             cv2.rectangle(kare, (ix1, iy1), (ix2, iy2), (128, 0, 128), 1)
+            
             if arac_id in self.plaka_hafizasi:
                 plaka_cached = self.plaka_hafizasi[arac_id]
-                kara_listede = plaka_cached in CONFIG.get("KARA_LISTE", [])
+                kara_listede = self.kaydedici.plaka_kara_listede_mi(plaka_cached)
                 if kara_listede:
                     log.warning("ALARM: KARA LİSTEDEKİ ARAÇ TESPİT EDİLDİ!")
                 self.cizici.basarili_kayit(kare, bbox, plaka_cached)
-                cv2.putText(kare, f"ID:{arac_id} - {plaka_cached}", (ix1, max(18, iy1 - 38)), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255) if kara_listede else (0, 255, 0), 2)
+                cv2.putText(kare, f"ID:{arac_id} - {plaka_cached}", (ix1, max(pad_y_bbox, iy1 - pad_y_bbox)), cv2.FONT_HERSHEY_SIMPLEX, round(0.80 * _olcek_ref, 2), (0, 0, 255) if kara_listede else (0, 255, 0), 2)
                 continue
-            if not ocr_calis:
-                continue
+            
+            if not ocr_calis: continue
             w_roi = ix2 - ix1
             pad = int(w_roi * 0.10)
             roi = kare[iy1:iy2, max(0, ix1 - pad):min(kare_w, ix2 + pad)]
-            if roi.size == 0:
-                continue
+            if roi.size == 0: continue
             gonderildi = self.ocr_worker.gorevi_gonder(OcrGorevi(roi_bgr=roi.copy(), arac_id=arac_id, yolo_conf=float(yolo_conf), bbox=bbox))
             if not gonderildi:
                 log.debug("OCR kuyruğu dolu — kare %d için araç %d atlandı.", self._kare_sayaci, arac_id)
+        
         if self._kare_sayaci % 300 == 0:
             self.dogrulama.temizle_eski()
 
@@ -421,7 +449,9 @@ class OtoKantar:
         sistem_referansi_ata(self)
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
-        fastapi_thread = self._fastapi_baslat()
+        
+        self._fastapi_proc = self._fastapi_baslat()
+        
         self.kantar_okuyucu.start()
         log.info("KantarOkuyucu başlatıldı.")
         self.ocr_worker.start()
@@ -437,12 +467,9 @@ class OtoKantar:
                     kare = kare_kuyrugu.get(timeout=0.25)
                 except queue.Empty:
                     tus = cv2.waitKey(1) & 0xFF
-                    if tus == ord("0"):
-                        self.kantar_okuyucu.simule_et(0.0)
-                    elif tus == ord("1"):
-                        self.kantar_okuyucu.simule_et(12000.0)
-                    elif tus == ord("2"):
-                        self.kantar_okuyucu.simule_et(42000.0)
+                    if tus == ord("0"): self.kantar_okuyucu.simule_et(0.0)
+                    elif tus == ord("1"): self.kantar_okuyucu.simule_et(12000.0)
+                    elif tus == ord("2"): self.kantar_okuyucu.simule_et(42000.0)
                     elif tus == ord("q"):
                         log.info("Kullanıcı 'q' ile çıkış yaptı.")
                         break
@@ -452,21 +479,18 @@ class OtoKantar:
                 self._canli_kare_yaz(kare)
                 cv2.imshow("OtoKantar V11", kare)
                 tus = cv2.waitKey(1) & 0xFF
-                if tus == ord("0"):
-                    self.kantar_okuyucu.simule_et(0.0)
-                elif tus == ord("1"):
-                    self.kantar_okuyucu.simule_et(12000.0)
-                elif tus == ord("2"):
-                    self.kantar_okuyucu.simule_et(42000.0)
+                if tus == ord("0"): self.kantar_okuyucu.simule_et(0.0)
+                elif tus == ord("1"): self.kantar_okuyucu.simule_et(12000.0)
+                elif tus == ord("2"): self.kantar_okuyucu.simule_et(42000.0)
                 elif tus == ord("q"):
                     log.info("Kullanıcı 'q' ile çıkış yaptı.")
                     break
         except KeyboardInterrupt:
             log.info("Ctrl+C (KeyboardInterrupt) — graceful shutdown tetiklendi.")
         finally:
-            self._kapat(dur, uretici, fastapi_thread)
-
+            self._kapat(dur, uretici)
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     sistem = OtoKantar()
     sistem.calistir()

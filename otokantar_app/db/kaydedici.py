@@ -13,6 +13,16 @@ from otokantar_app.logger import log
 from otokantar_app.models import PlakaKayit
 
 
+# ---------------------------------------------------------------------------
+# Yardımcı: Her bağlantıya uygulanacak standart PRAGMA seti
+# ---------------------------------------------------------------------------
+def _baglanti_pragma_uygula(con: sqlite3.Connection) -> None:
+    """Tüm bağlantılarda elektrik kesintisine karşı dayanıklılık ve
+    eşzamanlı okuma/yazma performansı için zorunlu PRAGMA'ları uygular."""
+    con.execute("PRAGMA journal_mode=WAL;")
+    con.execute("PRAGMA synchronous=NORMAL;")
+
+
 class KantarKaydedici:
     _RETRY_GECIKME = [0.5, 1.0, 2.0]
 
@@ -34,9 +44,10 @@ class KantarKaydedici:
     def _db_kur_sema(self):
         con = sqlite3.connect(self.db_dosya, timeout=10)
         try:
-            con.execute("PRAGMA journal_mode=WAL;")
-            con.execute("PRAGMA synchronous=NORMAL;")
+            # --- Standart bağlantı ayarları ---
+            _baglanti_pragma_uygula(con)
             con.execute("PRAGMA wal_autocheckpoint=100;")
+            # ----------------------------------
             con.execute("""
                 CREATE TABLE IF NOT EXISTS kayitli_araclar (
                     plaka TEXT PRIMARY KEY,
@@ -100,9 +111,17 @@ class KantarKaydedici:
                 con.execute("DROP TABLE gecis_raporlari")
                 con.execute("ALTER TABLE gecis_raporlari_yeni RENAME TO gecis_raporlari")
                 log.info("gecis_raporlari migrasyonu tamamlandı.")
+            con.execute("""
+                CREATE TABLE IF NOT EXISTS kara_liste (
+                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                    plaka          TEXT UNIQUE NOT NULL,
+                    eklenme_tarihi DATETIME NOT NULL DEFAULT (datetime('now', 'localtime'))
+                )
+            """)
             con.execute("CREATE INDEX IF NOT EXISTS idx_plaka ON kayitli_araclar(plaka)")
             con.execute("CREATE INDEX IF NOT EXISTS idx_gecis_plaka_giris_tarih ON gecis_raporlari(plaka, giris_tarih)")
             con.execute("CREATE INDEX IF NOT EXISTS idx_gecis_plaka_durum ON gecis_raporlari(plaka, durum)")
+            con.execute("CREATE INDEX IF NOT EXISTS idx_kara_liste_plaka ON kara_liste(plaka)")
             con.commit()
             log.debug("SQLite WAL şema hazır: %s", self.db_dosya)
         finally:
@@ -110,6 +129,9 @@ class KantarKaydedici:
 
     def acik_seans_getir(self, plaka: str) -> Optional[dict]:
         con = sqlite3.connect(self.db_dosya, timeout=10)
+        # --- Standart bağlantı ayarları ---
+        _baglanti_pragma_uygula(con)
+        # ----------------------------------
         con.row_factory = sqlite3.Row
         try:
             row = con.execute(
@@ -117,6 +139,24 @@ class KantarKaydedici:
                 (plaka,),
             ).fetchone()
             return dict(row) if row is not None else None
+        finally:
+            con.close()
+
+    def plaka_kara_listede_mi(self, plaka: str) -> bool:
+        """Plakanın kara_liste tablosunda kayıtlı olup olmadığını anlık sorgular."""
+        con = sqlite3.connect(self.db_dosya, timeout=10)
+        # --- Standart bağlantı ayarları ---
+        _baglanti_pragma_uygula(con)
+        # ----------------------------------
+        try:
+            row = con.execute(
+                "SELECT 1 FROM kara_liste WHERE plaka = ? LIMIT 1",
+                (plaka.strip().upper(),),
+            ).fetchone()
+            return row is not None
+        except Exception as e:
+            log.warning("Kara liste sorgusu başarısız (%s): %s — False döndürülüyor.", plaka, e)
+            return False
         finally:
             con.close()
 
@@ -190,9 +230,10 @@ class KantarKaydedici:
             con.commit()
 
         con = sqlite3.connect(self.db_dosya, timeout=30)
-        con.execute("PRAGMA journal_mode=WAL;")
-        con.execute("PRAGMA synchronous=NORMAL;")
+        # --- Standart bağlantı ayarları ---
+        _baglanti_pragma_uygula(con)
         con.execute("PRAGMA wal_autocheckpoint=100;")
+        # ----------------------------------
         log.debug("DbWriter bağlantısı açıldı.")
         try:
             while not self._db_dur.is_set():

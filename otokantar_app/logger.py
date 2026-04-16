@@ -1,7 +1,6 @@
 import logging
 import logging.handlers
 import threading
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
@@ -60,10 +59,9 @@ def eski_snapshot_temizle(klasor: str = "captures", retention_days: Optional[int
     return silinen
 
 
-def _periyodik_temizlik_baslat(aralik_saat: float = 6.0) -> threading.Thread:
+def periyodik_temizlik_baslat(stop_event: threading.Event, aralik_saat: float = 6.0) -> threading.Thread:
     def _dongu():
-        while True:
-            time.sleep(aralik_saat * 3600)
+        while not stop_event.wait(timeout=aralik_saat * 3600):
             eski_snapshot_temizle()
 
     t = threading.Thread(target=_dongu, name="SnapshotCleaner", daemon=True)
