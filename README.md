@@ -1,7 +1,7 @@
 # 🚛 OtoKantar V11 - Akıllı Plaka Tanıma ve Kantar Otomasyonu
 
 ###  Görseller
-![Python](https://img.shields.io/badge/python-3670A0?style=for-the-badge&logo=python&logoColor=ffdd54)
+![Python](https://github.com/YasarTahaSamdanli/OtoKantar-V7/blob/main/captures/06NE944_2026-04-15_19-12-36_GIRIS.jpg)
 
 OtoKantar V11, araç kantarları için geliştirilmiş, yüksek performanslı ve asenkron çalışan bir plaka tanıma ve otomasyon sistemidir.  
 Eski usul manuel veri girişi süreçlerini tamamen ortadan kaldırarak; kantar ağırlığını anlık okur, YOLOv8 ve EasyOCR ile plakayı tespit eder ve verileri (fotoğraflarıyla birlikte) SQLite, CSV ve canlı bir web paneline (Dashboard) aktarır.
