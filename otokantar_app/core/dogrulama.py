@@ -1,6 +1,5 @@
 import time
 import re
-from collections import defaultdict
 
 from otokantar_app.models import DogrulamaDurumu
 
@@ -12,11 +11,11 @@ class DogrulamaMotoru:
         self.bekleme = float(kayit_sonrasi_bekleme)
         self._durum: dict = {}
 
-        # 🚀 Veritabanındaki bilinen araçların tutulacağı küme (main.py'den beslenecek)
+        # 🚀 Veritabanındaki bilinen araçların tutulacağı küme
         self.bilinen_plakalar = set()
 
-        # TR plaka regex
-        self.TR_PLAKA_REGEX = re.compile(r"^(0[1-9]|[1-7][0-9]|8[0-1])([A-Z]{1,3})(\d{2,4})$")
+        # 🔥 FIX 2: İl kodunu da (01-81) native olarak kontrol eden saf Validation Regex'i
+        self.TR_PLAKA_REGEX = re.compile(r"^(0[1-9]|[1-7][0-9]|8[0-1])[A-Z]{1,3}\d{2,4}$")
 
         # OCR normalize map
         self.normalize_map = str.maketrans({
@@ -29,7 +28,11 @@ class DogrulamaMotoru:
         plaka = plaka.upper().replace(" ", "")
         return plaka.translate(self.normalize_map)
 
-    # 📏 Levenshtein Mesafe Algoritması (Karakter farkını milimetrik hesaplar)
+    # 🔥 FIX 2: Sadeleştirilmiş Katı Format Denetleyicisi
+    def _tr_plaka_gecerli_mi(self, plaka: str) -> bool:
+        return bool(self.TR_PLAKA_REGEX.match(plaka))
+
+    # 📏 Levenshtein Mesafe Algoritması
     def _mesafe_hesapla(self, s1: str, s2: str) -> int:
         if len(s1) < len(s2):
             return self._mesafe_hesapla(s2, s1)
@@ -46,18 +49,25 @@ class DogrulamaMotoru:
             onceki_satir = guncel_satir
         return onceki_satir[-1]
 
+    # 🔥 FIX 4 Uyumlu Benzerlik Kontrolü
     def _benzer_mi(self, p1: str, p2: str) -> bool:
-        # En fazla 2 karakter farkına kadar "Benzer" kabul et
+        if not (self._tr_plaka_gecerli_mi(p1) and self._tr_plaka_gecerli_mi(p2)):
+            return False
+
+        if abs(len(p1) - len(p2)) > 1:
+            return False
+
         return self._mesafe_hesapla(p1, p2) <= 2
 
-    # 🧠 Akıllı Kümeleme (Otorite Puanlı)
+    # 🧠 Akıllı Kümeleme (Merkez Bağımlılığı Kaldırıldı)
     def _cluster(self, oylar: dict, hane: dict):
         kumeler = []
 
         for plaka in oylar:
             bulundu = False
             for kume in kumeler:
-                if self._benzer_mi(plaka, kume["merkez"]):
+                # 🔥 FIX 4: Sabit merkeze değil, kümedeki HERHANGİ bir üyeye benzemesi yeterli
+                if any(self._benzer_mi(plaka, u) for u in kume["uyeler"]):
                     kume["uyeler"].append(plaka)
                     bulundu = True
                     break
@@ -75,12 +85,10 @@ class DogrulamaMotoru:
             toplam_guven = sum(oylar[p] for p in kume["uyeler"])
             toplam_hane = sum(hane[p] for p in kume["uyeler"])
 
-            # Eğer kümedeki plakalardan biri veritabanında kayıtlıysa onu lider yap!
             lider = max(
                 kume["uyeler"],
                 key=lambda p: (
-                    p in self.bilinen_plakalar,  # 🔥 DB Önceliği
-                    self.TR_PLAKA_REGEX.match(p) is not None,
+                    p in self.bilinen_plakalar,
                     oylar[p],
                     hane[p]
                 )
@@ -88,7 +96,7 @@ class DogrulamaMotoru:
 
             skor = toplam_guven + (toplam_hane * 0.2)
             if lider in self.bilinen_plakalar:
-                skor += 2.0  # 🔥 Veritabanında varsa puanını yapay olarak artır (Otorite)
+                skor += 2.0  # Veritabanı otorite puanı
 
             if skor > en_skor:
                 en_skor = skor
@@ -96,22 +104,26 @@ class DogrulamaMotoru:
 
         return en_iyi
 
-    # 🤖 AI Hata Düzeltici
+    # 🔥 FIX 1: Overwrite Engelli Akıllı Oto-Düzeltme
     def _oto_duzelt(self, plaka: str) -> str:
-        """AI'ın okuduğu plakayı veritabanındaki kayıtlı araçlara benzetir."""
         if not self.bilinen_plakalar or plaka in self.bilinen_plakalar:
             return plaka
 
-        en_iyi_aday = plaka
-        en_kucuk_mesafe = 3  # Maksimum 2 karakter farka tolerans
+        best_aday = plaka
+        best_score = 999
 
         for kayitli in self.bilinen_plakalar:
-            mesafe = self._mesafe_hesapla(plaka, kayitli)
-            if mesafe < en_kucuk_mesafe:
-                en_kucuk_mesafe = mesafe
-                en_iyi_aday = kayitli
+            dist = self._mesafe_hesapla(plaka, kayitli)
+            if dist < best_score:
+                best_score = dist
+                best_aday = kayitli
 
-        return en_iyi_aday
+        # Yalnızca 1 karakterlik minimal hataları düzeltir.
+        # Mesafe 2 ise "False Plate Injection" riski taşır, orijinal plakayı bırakır.
+        if best_score <= 1:
+            return best_aday
+        
+        return plaka
 
     def isle(self, arac_id: int, plaka: str, guven: float) -> tuple:
         su_an = time.time()
@@ -134,10 +146,16 @@ class DogrulamaMotoru:
         d.son_gorulme = su_an
         d.okuma_sayisi += 1
 
-        # Normalize 
+        # 🔥 FIX 3: Orta kalite okumalar için Confidence Gate 0.45'e indirildi
+        if guven < 0.45:
+            return (False, None, 0.0, 0)
+
+        # Doğru Akış: Normalize -> Validation -> Düzeltme
         plaka = self._normalize(plaka)
-        
-        # 🔥 OTO-DÜZELTME DEVREDE! (1-2 harf hatası varsa düzeltilir)
+
+        if not self._tr_plaka_gecerli_mi(plaka):
+            return (False, None, 0.0, 0)
+
         plaka = self._oto_duzelt(plaka)
 
         g = min(max(float(guven), 0.3), 0.95)
