@@ -12,6 +12,9 @@ class DogrulamaMotoru:
         self.bekleme = float(kayit_sonrasi_bekleme)
         self._durum: dict = {}
 
+        # 🚀 Veritabanındaki bilinen araçların tutulacağı küme (main.py'den beslenecek)
+        self.bilinen_plakalar = set()
+
         # TR plaka regex
         self.TR_PLAKA_REGEX = re.compile(r"^(0[1-9]|[1-7][0-9]|8[0-1])([A-Z]{1,3})(\d{2,4})$")
 
@@ -21,25 +24,33 @@ class DogrulamaMotoru:
             "G": "6", "Z": "2"
         })
 
-    # 🔧 Normalize (çok kritik)
+    # 🔧 Normalize
     def _normalize(self, plaka: str) -> str:
         plaka = plaka.upper().replace(" ", "")
         return plaka.translate(self.normalize_map)
 
-    # ⚡ Hafif similarity (full levenshtein yok)
+    # 📏 Levenshtein Mesafe Algoritması (Karakter farkını milimetrik hesaplar)
+    def _mesafe_hesapla(self, s1: str, s2: str) -> int:
+        if len(s1) < len(s2):
+            return self._mesafe_hesapla(s2, s1)
+        if len(s2) == 0:
+            return len(s1)
+        onceki_satir = range(len(s2) + 1)
+        for i, c1 in enumerate(s1):
+            guncel_satir = [i + 1]
+            for j, c2 in enumerate(s2):
+                ekleme = onceki_satir[j + 1] + 1
+                silme = guncel_satir[j] + 1
+                degistirme = onceki_satir[j] + (c1 != c2)
+                guncel_satir.append(min(ekleme, silme, degistirme))
+            onceki_satir = guncel_satir
+        return onceki_satir[-1]
+
     def _benzer_mi(self, p1: str, p2: str) -> bool:
-        if abs(len(p1) - len(p2)) > 1:
-            return False
+        # En fazla 2 karakter farkına kadar "Benzer" kabul et
+        return self._mesafe_hesapla(p1, p2) <= 2
 
-        fark = 0
-        for a, b in zip(p1, p2):
-            if a != b:
-                fark += 1
-                if fark > 2:
-                    return False
-        return True
-
-    # 🧠 Hafif cluster (O(n))
+    # 🧠 Akıllı Kümeleme (Otorite Puanlı)
     def _cluster(self, oylar: dict, hane: dict):
         kumeler = []
 
@@ -57,7 +68,6 @@ class DogrulamaMotoru:
                     "uyeler": [plaka]
                 })
 
-        # Küme skorla
         en_iyi = None
         en_skor = -1
 
@@ -65,10 +75,11 @@ class DogrulamaMotoru:
             toplam_guven = sum(oylar[p] for p in kume["uyeler"])
             toplam_hane = sum(hane[p] for p in kume["uyeler"])
 
-            # TR format bonus
+            # Eğer kümedeki plakalardan biri veritabanında kayıtlıysa onu lider yap!
             lider = max(
                 kume["uyeler"],
                 key=lambda p: (
+                    p in self.bilinen_plakalar,  # 🔥 DB Önceliği
                     self.TR_PLAKA_REGEX.match(p) is not None,
                     oylar[p],
                     hane[p]
@@ -76,12 +87,31 @@ class DogrulamaMotoru:
             )
 
             skor = toplam_guven + (toplam_hane * 0.2)
+            if lider in self.bilinen_plakalar:
+                skor += 2.0  # 🔥 Veritabanında varsa puanını yapay olarak artır (Otorite)
 
             if skor > en_skor:
                 en_skor = skor
                 en_iyi = (lider, toplam_guven, toplam_hane)
 
         return en_iyi
+
+    # 🤖 AI Hata Düzeltici
+    def _oto_duzelt(self, plaka: str) -> str:
+        """AI'ın okuduğu plakayı veritabanındaki kayıtlı araçlara benzetir."""
+        if not self.bilinen_plakalar or plaka in self.bilinen_plakalar:
+            return plaka
+
+        en_iyi_aday = plaka
+        en_kucuk_mesafe = 3  # Maksimum 2 karakter farka tolerans
+
+        for kayitli in self.bilinen_plakalar:
+            mesafe = self._mesafe_hesapla(plaka, kayitli)
+            if mesafe < en_kucuk_mesafe:
+                en_kucuk_mesafe = mesafe
+                en_iyi_aday = kayitli
+
+        return en_iyi_aday
 
     def isle(self, arac_id: int, plaka: str, guven: float) -> tuple:
         su_an = time.time()
@@ -104,14 +134,18 @@ class DogrulamaMotoru:
         d.son_gorulme = su_an
         d.okuma_sayisi += 1
 
-        # Normalize + güven clamp
+        # Normalize 
         plaka = self._normalize(plaka)
+        
+        # 🔥 OTO-DÜZELTME DEVREDE! (1-2 harf hatası varsa düzeltilir)
+        plaka = self._oto_duzelt(plaka)
+
         g = min(max(float(guven), 0.3), 0.95)
 
         d.oylar[plaka] = d.oylar.get(plaka, 0.0) + g
         d.hane[plaka] = d.hane.get(plaka, 0) + 1
 
-        # 🔥 Hybrid karar
+        # Hybrid karar
         lider, toplam_guven, toplam_hane = self._cluster(d.oylar, d.hane)
 
         tamam = (

@@ -172,6 +172,16 @@ class OtoKantar:
         # FIX #5: Ağır IO (snapshot kaydetme) ana döngüyü bloklamasın.
         # ------------------------------------------------------------------
         self._io_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="SnapshotIO")
+        # Veritabanındaki bilinen araçları doğrulamaya besle (Fuzzy Match İçin)
+        import sqlite3
+        try:
+            db_baglanti = sqlite3.connect(CONFIG.get("DB_DOSYA", "otokantar.db"))
+            satirlar = db_baglanti.execute("SELECT plaka FROM kayitli_araclar").fetchall()
+            self.dogrulama.bilinen_plakalar = set(r[0] for r in satirlar)
+            db_baglanti.close()
+            log.info(f"Oto-Düzeltme Aktif: Veritabanından {len(self.dogrulama.bilinen_plakalar)} araç hafızaya alındı.")
+        except Exception as e:
+            log.warning("Oto-düzeltme için plakalar okunamadı: %s", e)
 
     # -----------------------------------------------------------------------
     # Property: FastAPI thread'inden de güvenle okunabilir

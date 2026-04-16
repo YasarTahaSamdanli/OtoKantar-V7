@@ -6,7 +6,7 @@
     "KAMERA_BEKLEME_SURESI": 3.0,
   
     "YOLO_CONF": 0.25,
-    "MIN_OCR_CONF": 0.35,
+    "MIN_OCR_CONF": 0.60,
     "PLAKA_MIN_EN": 10,
     "PLAKA_MIN_BOY": 10,
     "ASPECT_RATIO_MIN": 2.0,
