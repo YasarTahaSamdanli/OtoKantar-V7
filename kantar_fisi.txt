@@ -2,11 +2,11 @@
          BRİKET FABRİKASI KANTAR FİŞİ
 ==========================================
   Giriş T. : 2026-04-16
-  Giriş S. : 17:04:37
+  Giriş S. : 17:21:55
 ------------------------------------------
-  Plaka    : 06AKP37
-  Giriş Kg : 0.0 kg
-  Çıkış Kg : 12000.0 kg
+  Plaka    : 795AA001
+  Giriş Kg : 12000.0 kg
+  Çıkış Kg : 42000.0 kg
   Net Kg   : 0.0 kg
   Durum    : TAMAMLANDI
   Operatör : AUTO

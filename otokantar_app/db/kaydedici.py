@@ -178,7 +178,7 @@ class KantarKaydedici:
             cikis_tarih=simdi.strftime("%Y-%m-%d"),
             cikis_saat=simdi.strftime("%H:%M:%S"),
             cikis_agirlik=cikis_agirlik,
-            net_agirlik=max(0.0, giris_agirlik - cikis_agirlik),
+            net_agirlik=abs( giris_agirlik - cikis_agirlik),
             durum="TAMAMLANDI",
         )
         self.gecis_kaydet(kayit)

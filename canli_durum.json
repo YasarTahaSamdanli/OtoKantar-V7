@@ -1,24 +1,24 @@
 {
-  "son_guncelleme": "2026-04-16T17:05:23.421975",
+  "son_guncelleme": "2026-04-16T17:22:48.184585",
   "son_kayit": {
-    "plaka": "06AKP37",
+    "plaka": "795AA001",
     "giris_tarih": "2026-04-16",
-    "giris_saat": "17:05:23",
-    "giris_agirlik": 42000.0,
+    "giris_saat": "17:21:55",
+    "giris_agirlik": 12000.0,
     "guven": 0.0,
-    "cikis_tarih": null,
-    "cikis_saat": null,
-    "cikis_agirlik": null,
-    "net_agirlik": null,
-    "durum": "ICERIDE",
+    "cikis_tarih": "2026-04-16",
+    "cikis_saat": "17:22:48",
+    "cikis_agirlik": 42000.0,
+    "net_agirlik": 0.0,
+    "durum": "TAMAMLANDI",
     "operator": "AUTO"
   },
   "son_10": [
     {
-      "plaka": "06AKP37",
+      "plaka": "795AA001",
       "giris_tarih": "2026-04-16",
-      "giris_saat": "17:04:37",
-      "giris_agirlik": 0.0,
+      "giris_saat": "17:21:55",
+      "giris_agirlik": 12000.0,
       "guven": 0.0,
       "cikis_tarih": null,
       "cikis_saat": null,
@@ -28,29 +28,16 @@
       "operator": "AUTO"
     },
     {
-      "plaka": "06AKP37",
+      "plaka": "795AA001",
       "giris_tarih": "2026-04-16",
-      "giris_saat": "17:04:37",
-      "giris_agirlik": 0.0,
+      "giris_saat": "17:21:55",
+      "giris_agirlik": 12000.0,
       "guven": 0.0,
       "cikis_tarih": "2026-04-16",
-      "cikis_saat": "17:04:46",
-      "cikis_agirlik": 12000.0,
+      "cikis_saat": "17:22:48",
+      "cikis_agirlik": 42000.0,
       "net_agirlik": 0.0,
       "durum": "TAMAMLANDI",
-      "operator": "AUTO"
-    },
-    {
-      "plaka": "06AKP37",
-      "giris_tarih": "2026-04-16",
-      "giris_saat": "17:05:23",
-      "giris_agirlik": 42000.0,
-      "guven": 0.0,
-      "cikis_tarih": null,
-      "cikis_saat": null,
-      "cikis_agirlik": null,
-      "net_agirlik": null,
-      "durum": "ICERIDE",
       "operator": "AUTO"
     }
   ]
