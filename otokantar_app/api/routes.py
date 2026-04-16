@@ -1,7 +1,9 @@
 import json
+import sqlite3
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
+from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,8 +13,8 @@ from pydantic import BaseModel
 from otokantar_app.config import CONFIG, PLAKA_REGEX
 from otokantar_app.logger import log
 
-
 app = FastAPI(title="OtoKantar V11 API")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,156 +22,117 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-sistem_referansi = None
-# repo kökü (…/otokantar_app/api/routes.py -> …/OtoKantar_V7)
-_PROJE_KOKU = Path(__file__).resolve().parents[2]
 
+# Multiprocessing nedeniyle bu referans alt süreçte (FastAPI) None kalabilir.
+# Bu yüzden veriye erişimde her zaman Dosya/Veritabanı önceliklidir.
+sistem_referansi = None
+
+# Proje kök dizini (main.py'nin olduğu yer)
+_PROJE_KOKU = Path(__file__).resolve().parents[2]
 
 def sistem_referansi_ata(sistem) -> None:
     global sistem_referansi
     sistem_referansi = sistem
 
+def _db_baglantisi_kur():
+    """Veritabanına WAL modunda güvenli bağlantı açar."""
+    db_yol = _PROJE_KOKU / CONFIG.get("DB_DOSYA", "otokantar.db")
+    con = sqlite3.connect(db_yol, timeout=10)
+    con.row_factory = sqlite3.Row
+    # WAL modu dashboard okumalarını hızlandırır
+    con.execute("PRAGMA journal_mode=WAL;")
+    return con
 
 def _canli_json_dosyadan_oku() -> dict:
-    yol = _PROJE_KOKU / CONFIG["JSON_CANLI"]
+    yol = _PROJE_KOKU / CONFIG.get("JSON_CANLI", "canli_durum.json")
     if not yol.is_file():
         return {"son_guncelleme": None, "son_kayit": None, "son_10": []}
     try:
         with open(yol, encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except Exception as e:
+        log.error(f"Canlı JSON okuma hatası: {e}")
         return {"son_guncelleme": None, "son_kayit": None, "son_10": []}
 
-
-def _tail_son_satirlar(dosya: Path, n: int = 8, max_bytes: int = 256_000) -> list[str]:
-    """
-    Log dosyasının tamamını okumadan son N satırı döndür.
-    Büyük loglarda /api/log-son çağrıları UI'ı kastırmasın diye dosya sonundan okunur.
-    """
-    n = max(1, int(n))
-    if not dosya.is_file():
-        return []
-    try:
-        with open(dosya, "rb") as f:
-            f.seek(0, 2)
-            end = f.tell()
-            if end <= 0:
-                return []
-            chunk = 8192
-            pos = end
-            buf = b""
-            while pos > 0 and len(buf) < max_bytes:
-                read_size = chunk if pos >= chunk else pos
-                pos -= read_size
-                f.seek(pos)
-                buf = f.read(read_size) + buf
-                if buf.count(b"\n") >= (n + 1):
-                    break
-        text = buf.decode("utf-8", errors="ignore")
-        lines = [s for s in text.splitlines() if s.strip()]
-        return lines[-n:]
-    except Exception:
-        return []
-
-
 @app.get("/")
-def dashboard_sayfa():
-    html_yol = _PROJE_KOKU / "dashboard.html"
-    if not html_yol.is_file():
-        raise HTTPException(404, "dashboard.html bulunamadı.")
-    return FileResponse(html_yol, media_type="text/html; charset=utf-8")
-
-
-@app.get("/dashboard.html")
-def dashboard_sayfa_alias():
-    return dashboard_sayfa()
-
+def index():
+    return FileResponse(_PROJE_KOKU / "dashboard.html")
 
 @app.get("/api/canli-durum")
 def api_canli_durum():
-    veri = _canli_json_dosyadan_oku()
-    if sistem_referansi is not None:
-        ag, st = sistem_referansi.kantar_okuyucu.veri
-        veri["kantar_kg"] = round(ag, 1)
-        veri["kantar_sabit"] = st
-        veri["plaka_buffer"] = sistem_referansi._plaka_buffer.plaka if sistem_referansi._plaka_buffer else None
-        veri["seans_kilitli"] = sistem_referansi.seans_kilitli_mi
-        kk = sistem_referansi.kaydedici.son_kayitlar
-        if kk:
-            veri["son_kayit"] = asdict(kk[-1])
-            veri["son_10"] = [asdict(k) for k in kk[-10:]]
-        veri["son_guncelleme"] = datetime.now().isoformat()
-    else:
-        veri.setdefault("kantar_kg", None)
-        veri.setdefault("kantar_sabit", None)
-        veri.setdefault("plaka_buffer", None)
-        veri.setdefault("seans_kilitli", None)
-    return veri
-
-
-@app.get("/canli_kare.jpg")
-def api_canli_kare_dosyasi():
-    yol = _PROJE_KOKU / CONFIG["CANLI_KARE_DOSYA"]
-    if not yol.is_file():
-        raise HTTPException(404, "Canlı kare henüz yok.")
-    return FileResponse(yol, media_type="image/jpeg", headers={"Cache-Control": "no-store, max-age=0"})
-
-
-@app.get("/api/log-son")
-def api_log_son():
-    yol = _PROJE_KOKU / CONFIG["LOG_DOSYA"]
-    if not yol.is_file():
-        return {"satirlar": []}
-    return {"satirlar": _tail_son_satirlar(yol, n=8)}
-
-
-@app.get("/api/durum")
-def api_durum():
-    if sistem_referansi is None:
-        return {"hata": "Sistem henüz başlatılmadı"}
-    return {
-        "kantar_kg": sistem_referansi.kantar_okuyucu.agirlik,
-        "sabit": sistem_referansi.kantar_okuyucu.sabit,
-        "seans_kilitli": sistem_referansi.seans_kilitli_mi,
-        "plaka_buffer": sistem_referansi._plaka_buffer.plaka if sistem_referansi._plaka_buffer else None,
-    }
-
+    """
+    Kantarın anlık durumunu döner. 
+    Multiprocessing nedeniyle RAM yerine JSON dosyasına güvenir.
+    """
+    durum = _canli_json_dosyadan_oku()
+    
+    # Eğer sistem_referansi varsa (Linux/Unix fork veya tek process), ekstra detay ekle
+    if sistem_referansi:
+        durum.update({
+            "fps": round(getattr(sistem_referansi, "_fps", 0.0), 1),
+            "kilitli": getattr(sistem_referansi, "_kantar_seans_kilitli", False),
+            "plaka_buffer": sistem_referansi._plaka_buffer.plaka if sistem_referansi._plaka_buffer else None
+        })
+    return durum
 
 @app.get("/api/son-kayitlar")
 def api_son_kayitlar():
-    if sistem_referansi is None:
+    """Son 50 geçiş kaydını doğrudan veritabanından çeker."""
+    try:
+        with _db_baglantisi_kur() as con:
+            rows = con.execute(
+                "SELECT * FROM gecis_raporlari ORDER BY id DESC LIMIT 50"
+            ).fetchall()
+            return [dict(r) for r in rows]
+    except Exception as e:
+        log.error(f"Son kayıtlar DB hatası: {e}")
+        # DB hatası durumunda bellekteki son kayıtları dene (varsa)
+        if sistem_referansi and hasattr(sistem_referansi.kaydedici, "son_kayitlar"):
+            return [asdict(k) for k in sistem_referansi.kaydedici.son_kayitlar]
         return []
-    return [asdict(k) for k in sistem_referansi.kaydedici.son_kayitlar]
-
 
 class KaraListeEkleIstek(BaseModel):
     plaka: str
 
-
 @app.get("/api/kara-liste")
 def api_kara_liste_listele():
-    return {"kara_liste": list(CONFIG.get("KARA_LISTE", []))}
-
+    """Veritabanındaki güncel kara listeyi döner."""
+    try:
+        with _db_baglantisi_kur() as con:
+            rows = con.execute("SELECT plaka FROM kara_liste ORDER BY id DESC").fetchall()
+            return {"kara_liste": [r["plaka"] for r in rows]}
+    except Exception as e:
+        log.error(f"Kara liste listeleme hatası: {e}")
+        return {"kara_liste": []}
 
 @app.post("/api/kara-liste")
 def api_kara_liste_ekle(istek: KaraListeEkleIstek):
+    """Veritabanına yeni yasaklı plaka ekler."""
     plaka = istek.plaka.strip().upper()
     if not PLAKA_REGEX.fullmatch(plaka):
         raise HTTPException(422, f"Geçersiz Türk plaka formatı: '{plaka}'")
-    kara_liste: list = CONFIG.setdefault("KARA_LISTE", [])
-    if plaka in kara_liste:
-        raise HTTPException(409, f"'{plaka}' zaten kara listede.")
-    kara_liste.append(plaka)
-    log.info("Kara listeye eklendi (API): %s", plaka)
-    return {"eklendi": plaka, "kara_liste": list(kara_liste)}
-
+    
+    try:
+        with _db_baglantisi_kur() as con:
+            con.execute("INSERT INTO kara_liste (plaka) VALUES (?)", (plaka,))
+            con.commit()
+        log.info("Kara listeye yeni plaka eklendi (API): %s", plaka)
+        return {"mesaj": "Başarılı", "plaka": plaka}
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, f"'{plaka}' zaten kara listede mevcut.")
+    except Exception as e:
+        log.error(f"Kara liste ekleme hatası: {e}")
+        raise HTTPException(500, "Veritabanına yazılırken bir hata oluştu.")
 
 @app.delete("/api/kara-liste/{plaka}")
 def api_kara_liste_sil(plaka: str):
+    """Veritabanından plaka yasaklamasını kaldırır."""
     plaka = plaka.strip().upper()
-    kara_liste: list = CONFIG.get("KARA_LISTE", [])
-    if plaka not in kara_liste:
-        raise HTTPException(404, f"'{plaka}' kara listede bulunamadı.")
-    kara_liste.remove(plaka)
-    log.info("Kara listeden silindi (API): %s", plaka)
-    return {"silindi": plaka, "kara_liste": list(kara_liste)}
+    try:
+        with _db_baglantisi_kur() as con:
+            con.execute("DELETE FROM kara_liste WHERE plaka = ?", (plaka,))
+            con.commit()
+        return {"mesaj": "Silindi", "plaka": plaka}
+    except Exception as e:
+        log.error(f"Kara liste silme hatası: {e}")
+        raise HTTPException(500, "Veritabanı hatası.")
