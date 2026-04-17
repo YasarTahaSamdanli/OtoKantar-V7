@@ -113,7 +113,10 @@ class OtoKantar:
             CONFIG["OCR_DILLER"], CONFIG["OCR_GPU"], CONFIG["MIN_OCR_CONF"]
         )
         _ocr_kuyruk = int(CONFIG.get("OCR_WORKER_KUYRUK", 4))
-        self.ocr_worker = OcrWorker(self.cozucu, kuyruk_boyutu=_ocr_kuyruk)
+        _ocr_cikis_kuyrugu = queue.Queue(maxsize=max(_ocr_kuyruk * 2, 8))
+        self.ocr_worker = OcrWorker(
+            self.cozucu, _ocr_cikis_kuyrugu, kuyruk_boyutu=_ocr_kuyruk
+        )
         self.dogrulama   = DogrulamaMotoru(
             CONFIG["ESIK_DEGERI"],
             CONFIG["OYLAMA_MIN_TOPLAM_GUVEN"],
