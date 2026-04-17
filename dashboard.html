@@ -565,11 +565,110 @@
   .log-seviye.error { color: var(--danger); }
   .log-mesaj { color: var(--text-muted); flex: 1; }
 
+  /* LOJİSTİK PANEL */
+  .lojistik-kart {
+    grid-column: span 4;
+    border-color: rgba(0,229,160,0.18);
+    background: linear-gradient(135deg, var(--surface) 0%, #161e1a 100%);
+  }
+
+  .lojistik-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 12px;
+    margin-top: 1rem;
+  }
+
+  .lojistik-alan {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .lojistik-alan label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+  }
+
+  .lojistik-input {
+    background: var(--bg);
+    border: 1px solid var(--border-bright);
+    border-radius: 7px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 8px 10px;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    width: 100%;
+  }
+
+  .lojistik-input:focus {
+    border-color: rgba(0,229,160,0.5);
+    box-shadow: 0 0 0 2px rgba(0,229,160,0.08);
+  }
+
+  .lojistik-input.auto-dolu {
+    border-color: rgba(0,229,160,0.4);
+    background: rgba(0,229,160,0.04);
+    color: var(--accent);
+  }
+
+  .lojistik-status {
+    font-family: var(--mono);
+    font-size: 11px;
+    margin-top: 10px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    display: none;
+  }
+
+  .lojistik-status.basarili {
+    display: block;
+    color: var(--accent);
+    background: var(--accent-dim);
+    border: 1px solid rgba(0,229,160,0.2);
+  }
+
+  .lojistik-status.hata {
+    display: block;
+    color: var(--danger);
+    background: var(--danger-dim);
+    border: 1px solid rgba(255,71,87,0.2);
+  }
+
+  .btn-kaydet {
+    padding: 9px 20px;
+    border-radius: 8px;
+    border: 1px solid rgba(0,229,160,0.35);
+    background: var(--accent-dim);
+    color: var(--accent);
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    align-self: flex-end;
+  }
+
+  .btn-kaydet:hover { background: rgba(0,229,160,0.2); }
+  .btn-kaydet:active { transform: scale(0.97); }
+
+  .lojistik-aralik {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+  }
+
   /* RESPONSIVE */
   @media (max-width: 900px) {
     main { grid-template-columns: 1fr 1fr; padding: 1rem; }
     .agirlik-hero { grid-column: span 2; }
     .tablo-kart { grid-column: span 2; }
+    .lojistik-kart { grid-column: span 2; }
+    .lojistik-grid { grid-template-columns: 1fr 1fr; }
   }
 </style>
 </head>
@@ -752,6 +851,52 @@
         </tr>
       </tbody>
     </table>
+  </div>
+
+  <!-- ARAÇ & SEFER DETAYLARI PANELİ -->
+  <div class="card lojistik-kart">
+    <div class="kart-baslik">
+      <span>Araç &amp; Sefer Detayları</span>
+      <span class="badge" id="lojistik-plaka-badge">— plaka bekleniyor</span>
+    </div>
+    <div class="lojistik-grid">
+      <div class="lojistik-alan">
+        <label>Firma Adı</label>
+        <input id="inp-firma" class="lojistik-input" type="text" placeholder="Örn: Ankara Demir A.Ş." autocomplete="off">
+      </div>
+      <div class="lojistik-alan">
+        <label>Şoför Adı</label>
+        <input id="inp-sofor" class="lojistik-input" type="text" placeholder="Örn: Mehmet Yılmaz" autocomplete="off">
+      </div>
+      <div class="lojistik-alan">
+        <label>Şoför Telefonu</label>
+        <input id="inp-tel" class="lojistik-input" type="tel" placeholder="05XX XXX XX XX" autocomplete="off">
+      </div>
+      <div class="lojistik-alan">
+        <label>Malzeme Cinsi</label>
+        <select id="inp-malzeme" class="lojistik-input">
+          <option value="">— Seçiniz —</option>
+          <option value="Hurda Demir">Hurda Demir</option>
+          <option value="Kömür">Kömür</option>
+          <option value="Çakıl / Kum">Çakıl / Kum</option>
+          <option value="Ahşap">Ahşap</option>
+          <option value="Plastik Atık">Plastik Atık</option>
+          <option value="Tahıl / Hububat">Tahıl / Hububat</option>
+          <option value="Gübre">Gübre</option>
+          <option value="Yakıt">Yakıt</option>
+          <option value="İnşaat Malzemesi">İnşaat Malzemesi</option>
+          <option value="Diğer">Diğer</option>
+        </select>
+      </div>
+      <div class="lojistik-alan" style="grid-column: span 2;">
+        <label>İrsaliye / Sevk No</label>
+        <div class="lojistik-aralik">
+          <input id="inp-irsaliye" class="lojistik-input" type="text" placeholder="Örn: 2024-00123" autocomplete="off">
+          <button class="btn-kaydet" id="btn-lojistik-kaydet" onclick="lojistikKaydet()">Kaydet / Güncelle</button>
+        </div>
+      </div>
+    </div>
+    <div class="lojistik-status" id="lojistik-status"></div>
   </div>
 
 </main>
@@ -1165,9 +1310,164 @@ setInterval(() => {
   }
 }, 1000);
 
+// ─── LOJİSTİK PANEL DEĞİŞKENLERİ ─────────────────────────────────
+let lojistikAktifPlaka = null;
+
+async function aracBilgisiGetir(plaka) {
+  if (!plaka || demoModu) return;
+  try {
+    const res = await fetch(`/api/arac/${encodeURIComponent(plaka)}`, { cache: 'no-store' });
+    if (!res.ok) return;
+    const veri = await res.json();
+
+    document.getElementById('lojistik-plaka-badge').textContent = plaka;
+    lojistikAktifPlaka = plaka;
+
+    const inpFirma  = document.getElementById('inp-firma');
+    const inpSofor  = document.getElementById('inp-sofor');
+    const inpTel    = document.getElementById('inp-tel');
+
+    if (veri.kayitli) {
+      // Otomatik doldur ve yeşile boya
+      inpFirma.value = veri.firma_adi || '';
+      inpSofor.value = veri.sofor_adi || '';
+      inpTel.value   = veri.sofor_tel || '';
+      [inpFirma, inpSofor, inpTel].forEach(el => {
+        if (el.value) el.classList.add('auto-dolu');
+      });
+      log('info', `Araç sicili yüklendi: ${plaka} — ${veri.firma_adi || 'firma yok'}`);
+    } else {
+      // Temizle
+      inpFirma.value = '';
+      inpSofor.value = '';
+      inpTel.value   = '';
+      [inpFirma, inpSofor, inpTel].forEach(el => el.classList.remove('auto-dolu'));
+      log('info', `Yeni araç tespit edildi: ${plaka} — sicil boş`);
+    }
+    // Malzeme ve irsaliye her seferde temizlenir
+    document.getElementById('inp-malzeme').value  = '';
+    document.getElementById('inp-irsaliye').value = '';
+    lojistikStatusGizle();
+  } catch (e) {
+    log('warn', `Araç bilgisi getirilemedi (${plaka}): ${e.message}`);
+  }
+}
+
+// Input değişince auto-dolu sınıfını kaldır
+['inp-firma','inp-sofor','inp-tel'].forEach(id => {
+  document.getElementById(id).addEventListener('input', function () {
+    this.classList.remove('auto-dolu');
+  });
+});
+
+async function lojistikKaydet() {
+  const plaka   = lojistikAktifPlaka;
+  const firma   = document.getElementById('inp-firma').value.trim();
+  const sofor   = document.getElementById('inp-sofor').value.trim();
+  const tel     = document.getElementById('inp-tel').value.trim();
+  const malzeme = document.getElementById('inp-malzeme').value;
+  const irsaliye = document.getElementById('inp-irsaliye').value.trim();
+
+  if (!plaka) {
+    lojistikStatusGoster('hata', 'Aktif plaka yok. Önce bir araç tespit edilmelidir.');
+    return;
+  }
+
+  const btn = document.getElementById('btn-lojistik-kaydet');
+  btn.disabled = true;
+  btn.textContent = 'Kaydediliyor...';
+
+  let hatalar = [];
+
+  // 1) Araç sicilini güncelle
+  try {
+    const body = { plaka };
+    if (firma)  body.firma_adi = firma;
+    if (sofor)  body.sofor_adi = sofor;
+    if (tel)    body.sofor_tel = tel;
+
+    if (firma || sofor || tel) {
+      const r = await fetch('/api/arac/guncelle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        hatalar.push(`Sicil: ${err.detail || r.statusText}`);
+      }
+    }
+  } catch(e) {
+    hatalar.push(`Sicil bağlantı hatası: ${e.message}`);
+  }
+
+  // 2) Aktif seans ek veri
+  try {
+    if (malzeme || irsaliye) {
+      const body2 = { plaka };
+      if (malzeme)  body2.malzeme_cinsi = malzeme;
+      if (irsaliye) body2.irsaliye_no   = irsaliye;
+
+      const r2 = await fetch('/api/gecis/ek-veri-gir', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body2),
+      });
+      if (!r2.ok) {
+        const err = await r2.json().catch(() => ({}));
+        // 404 → seans yok, uyarı ver ama hata sayma
+        if (r2.status === 404) {
+          hatalar.push('Açık kantar seansı bulunamadı — malzeme/irsaliye kaydedilemedi.');
+        } else {
+          hatalar.push(`Sefer: ${err.detail || r2.statusText}`);
+        }
+      }
+    }
+  } catch(e) {
+    hatalar.push(`Sefer bağlantı hatası: ${e.message}`);
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Kaydet / Güncelle';
+
+  if (hatalar.length === 0) {
+    lojistikStatusGoster('basarili', `✓ ${plaka} — araç sicili ve sefer verisi kaydedildi.`);
+    log('info', `Lojistik güncellendi: ${plaka}`);
+  } else {
+    lojistikStatusGoster('hata', hatalar.join(' | '));
+    log('warn', `Lojistik kısmi hata: ${hatalar.join(', ')}`);
+  }
+}
+
+function lojistikStatusGoster(tip, mesaj) {
+  const el = document.getElementById('lojistik-status');
+  el.className = 'lojistik-status ' + tip;
+  el.textContent = mesaj;
+  clearTimeout(el._timeout);
+  el._timeout = setTimeout(() => lojistikStatusGizle(), 5000);
+}
+
+function lojistikStatusGizle() {
+  const el = document.getElementById('lojistik-status');
+  el.className = 'lojistik-status';
+}
+
+// ─── PLAKA TESPİTİNDE OTOMATİK ARAÇ BİLGİSİ ÇEKME ──────────────────
+// orijinal plakaGoster'i wrap ediyoruz
+const _originalPlakaGoster = plakaGoster;
+plakaGoster = function(plaka, sayac, kayitOldu = false) {
+  _originalPlakaGoster(plaka, sayac, kayitOldu);
+  // Yeni bir araç yerleştiğinde (kayıt anında) sicil bilgisini çek
+  if ((kayitOldu || sayac >= ESIK) && plaka && plaka !== 'BEKLENIYOR') {
+    if (plaka !== lojistikAktifPlaka) {
+      aracBilgisiGetir(plaka);
+    }
+  }
+};
+
 grafikGuncelle();
 statusGuncelle(false);
-log('info', 'OtoKantar V7 arayuzu yuklendi');
+log('info', 'OtoKantar V11 arayuzu yuklendi');
 log('info', 'Veri: /api/canli-durum veya canli_durum.json — görüntü: /canli_kare.jpg');
 log('info', 'Backend yoksa demo modu otomatik acilir');
 backendUyandir();

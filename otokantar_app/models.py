@@ -18,6 +18,12 @@ class PlakaKayit:
     net_agirlik: Optional[float] = None
     durum: str = "ICERIDE"
     operator: str = "AUTO"
+    # --- LOJİSTİK / MUHASEBE ALANLARI ---
+    firma_adi: Optional[str] = None
+    sofor_adi: Optional[str] = None
+    sofor_tel: Optional[str] = None
+    malzeme_cinsi: Optional[str] = None
+    irsaliye_no: Optional[str] = None
 
 
 @dataclass
