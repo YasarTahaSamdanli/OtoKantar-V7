@@ -1,3 +1,14 @@
+# OtoKantar — generated / runtime files (never commit these)
+captures/
+otokantar.db
+canli_kare.jpg
+canli_kare.tmp.jpg
+kantar_raporu.csv
+kantar_fisi.txt
+canli_durum.json
+otokantar.log
+otokantar.log.*
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

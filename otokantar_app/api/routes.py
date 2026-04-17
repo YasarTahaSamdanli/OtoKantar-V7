@@ -1,27 +1,52 @@
 import json
+import secrets
 import sqlite3
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Security
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from otokantar_app.config import CONFIG, PLAKA_REGEX
 from otokantar_app.logger import log
 
-app = FastAPI(title="OtoKantar V11 API")
+app = FastAPI(title="OtoKantar V7 API")
 
+# ---------------------------------------------------------------------------
+# CORS — restrict to configured origins (default: same-origin only)
+# ---------------------------------------------------------------------------
+_cors_origins: list = CONFIG.get("CORS_ORIGINS", ["http://localhost:8000", "http://127.0.0.1:8000"])
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=_cors_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
 )
+
+# ---------------------------------------------------------------------------
+# Optional Bearer-token auth for write endpoints
+# ---------------------------------------------------------------------------
+_API_TOKEN: str = str(CONFIG.get("API_TOKEN", "")).strip()
+_bearer = HTTPBearer(auto_error=False)
+
+
+def _yetki_kontrol(credentials: HTTPAuthorizationCredentials = Security(_bearer)) -> None:
+    """
+    If API_TOKEN is configured, every write request must carry a matching
+    ``Authorization: Bearer <token>`` header.  When API_TOKEN is empty,
+    the check is skipped (suitable for local / dev environments).
+    """
+    if not _API_TOKEN:
+        return  # auth disabled
+    if credentials is None or not secrets.compare_digest(credentials.credentials, _API_TOKEN):
+        raise HTTPException(status_code=403, detail="Geçersiz veya eksik API token.")
+
 
 # Multiprocessing nedeniyle bu referans alt süreçte (FastAPI) None kalabilir.
 # Bu yüzden veriye erişimde her zaman Dosya/Veritabanı önceliklidir.
@@ -68,11 +93,22 @@ def api_canli_durum():
     
     # Eğer sistem_referansi varsa (Linux/Unix fork veya tek process), ekstra detay ekle
     if sistem_referansi:
+        try:
+            ag, st = sistem_referansi.kantar_okuyucu.veri
+        except AttributeError:
+            ag, st = None, None
         durum.update({
             "fps": round(getattr(sistem_referansi, "_fps", 0.0), 1),
             "kilitli": getattr(sistem_referansi, "_kantar_seans_kilitli", False),
-            "plaka_buffer": sistem_referansi._plaka_buffer.plaka if sistem_referansi._plaka_buffer else None
+            "plaka_buffer": sistem_referansi._plaka_buffer.plaka if sistem_referansi._plaka_buffer else None,
+            "kantar_kg": round(ag, 1) if ag is not None else None,
+            "kantar_sabit": st,
         })
+    else:
+        durum.setdefault("kantar_kg", None)
+        durum.setdefault("kantar_sabit", None)
+        durum.setdefault("kilitli", None)
+        durum.setdefault("plaka_buffer", None)
     return durum
 
 @app.get("/api/son-kayitlar")
@@ -106,7 +142,7 @@ def api_kara_liste_listele():
         return {"kara_liste": []}
 
 @app.post("/api/kara-liste")
-def api_kara_liste_ekle(istek: KaraListeEkleIstek):
+def api_kara_liste_ekle(istek: KaraListeEkleIstek, _: None = Depends(_yetki_kontrol)):
     """Veritabanına yeni yasaklı plaka ekler."""
     plaka = istek.plaka.strip().upper()
     if not PLAKA_REGEX.fullmatch(plaka):
@@ -125,7 +161,7 @@ def api_kara_liste_ekle(istek: KaraListeEkleIstek):
         raise HTTPException(500, "Veritabanına yazılırken bir hata oluştu.")
 
 @app.delete("/api/kara-liste/{plaka}")
-def api_kara_liste_sil(plaka: str):
+def api_kara_liste_sil(plaka: str, _: None = Depends(_yetki_kontrol)):
     """Veritabanından plaka yasaklamasını kaldırır."""
     plaka = plaka.strip().upper()
     try:
@@ -136,3 +172,30 @@ def api_kara_liste_sil(plaka: str):
     except Exception as e:
         log.error(f"Kara liste silme hatası: {e}")
         raise HTTPException(500, "Veritabanı hatası.")
+
+
+@app.get("/api/log-son")
+def api_log_son():
+    """Son log satırlarını döner (dashboard için)."""
+    yol = _PROJE_KOKU / CONFIG.get("LOG_DOSYA", "otokantar.log")
+    if not yol.is_file():
+        return {"satirlar": []}
+    try:
+        text = yol.read_text(encoding="utf-8", errors="ignore")
+        tum = [s for s in text.splitlines() if s.strip()]
+        return {"satirlar": tum[-8:]}
+    except Exception:
+        return {"satirlar": []}
+
+
+@app.get("/canli_kare.jpg")
+def api_canli_kare_dosyasi():
+    """Anlık kamera karesini döner."""
+    yol = _PROJE_KOKU / CONFIG.get("CANLI_KARE_DOSYA", "canli_kare.jpg")
+    if not yol.is_file():
+        raise HTTPException(404, "Canlı kare henüz yok.")
+    return FileResponse(
+        yol,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )

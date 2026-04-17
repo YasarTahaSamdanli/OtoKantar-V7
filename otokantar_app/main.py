@@ -1,5 +1,5 @@
 """
-OtoKantar V12 — Production-Grade Refactor
+OtoKantar V7 — Production-Grade Refactor
 ==========================================
 Kritik düzeltmeler:
   1. Thread-safe durum yönetimi (threading.Lock)
@@ -77,7 +77,7 @@ def _fastapi_sureci_hedef(host: str, port: int) -> None:
 class OtoKantar:
     def __init__(self):
         log.info("=" * 60)
-        log.info("OtoKantar V12 (Prodüksiyon) başlatılıyor...")
+        log.info("OtoKantar V7 (Prodüksiyon) başlatılıyor...")
 
         # ------------------------------------------------------------------
         # FIX #1: Tek yetkili çıkış sinyali.
@@ -113,7 +113,10 @@ class OtoKantar:
             CONFIG["OCR_DILLER"], CONFIG["OCR_GPU"], CONFIG["MIN_OCR_CONF"]
         )
         _ocr_kuyruk = int(CONFIG.get("OCR_WORKER_KUYRUK", 4))
-        self.ocr_worker = OcrWorker(self.cozucu, kuyruk_boyutu=_ocr_kuyruk)
+        _ocr_cikis_kuyrugu = queue.Queue(maxsize=max(_ocr_kuyruk * 2, 8))
+        self.ocr_worker = OcrWorker(
+            self.cozucu, _ocr_cikis_kuyrugu, kuyruk_boyutu=_ocr_kuyruk
+        )
         self.dogrulama   = DogrulamaMotoru(
             CONFIG["ESIK_DEGERI"],
             CONFIG["OYLAMA_MIN_TOPLAM_GUVEN"],
@@ -330,7 +333,7 @@ class OtoKantar:
                 log.info("FastAPI süreci temiz kapandı.")
 
         cv2.destroyAllWindows()
-        log.info("OtoKantar V12 temiz kapandı.")
+        log.info("OtoKantar V7 temiz kapandı.")
 
     # -----------------------------------------------------------------------
     # ROI
@@ -863,7 +866,7 @@ class OtoKantar:
                     yakalama_fps=self._yakalama_fps,
                 )
                 self._canli_kare_yaz(kare)
-                cv2.imshow("OtoKantar V12", kare)
+                cv2.imshow("OtoKantar V7", kare)
                 tus = cv2.waitKey(1) & 0xFF
                 if tus == ord("0"):
                     self.kantar_okuyucu.simule_et(0.0)
