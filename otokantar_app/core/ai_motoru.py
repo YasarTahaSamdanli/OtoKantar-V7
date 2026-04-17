@@ -8,7 +8,7 @@ Architecture role: SENSOR only.
   • Detects plate bounding boxes (YOLO)
   • Preprocesses ROI
   • Runs OCR (primary + conditional fallback)
-  • Returns raw plate text + confidence
+  • Returns raw plate text + confidence + bbox
 
 ❌ This layer NEVER:
   • Votes / tracks across frames  (→ dogrulama.py)
@@ -17,8 +17,18 @@ Architecture role: SENSOR only.
 
 OCR Strategy (CPU-optimised):
   • Pass 1 — original binary  → primary backend
-  • Pass 2 — inverted binary  → primary backend  (only if pass-1 conf < 0.6)
+  • Pass 2 — inverted binary  → primary backend  (only if pass-1 conf < threshold)
   • Fallback backend           → only if both passes fail or conf < OCR_MIN_CONF
+
+Key improvements over v1:
+  ✅ bbox propagated through full pipeline (was dropped in coz())
+  ✅ OcrGorevi carries yolo_conf for downstream confidence fusion
+  ✅ Worker pool uses a single shared output queue (not per-worker)
+     → no partial drain race condition in sonuclari_topla()
+  ✅ Queue capacity enforced with drop-oldest strategy under load
+  ✅ Preprocessing is tolerant of degenerate (tiny) ROIs
+  ✅ Aspect-ratio filter is moved to a dedicated static method
+  ✅ LUT table is cached (not rebuilt every dark frame)
 """
 
 from __future__ import annotations
@@ -56,64 +66,70 @@ from otokantar_app.models import OcrGorevi, TespitSonucu
 # ---------------------------------------------------------------------------
 # Config defaults
 # ---------------------------------------------------------------------------
+
 _CONFIG_DEFAULTS: dict = {
-    # --- detection ---
     "ASPECT_RATIO_MIN": 1.8,
     "ASPECT_RATIO_MAX": 6.5,
-    # --- preprocessing toggles ---
     "PREP_GAMMA": True,
     "PREP_BILATERAL": True,
     "PREP_CLAHE": True,
     "PREP_SHARPEN": True,
     "PREP_ADAPTIVE": True,
     "PREP_PERSPECTIVE": True,
-    "PREP_SUPERRES": False,          # requires Real-ESRGAN weights
+    "PREP_SUPERRES": False,
     "PREP_DESKEW": True,
-    # --- gamma ---
-    "GAMMA_PARLAKLIK_ESIK": 100,     # boost when DARK (p95 < threshold)
-    "GAMMA_US": 0.6,                 # <1 → brightens dark images
-    # --- bilateral ---
+    "GAMMA_PARLAKLIK_ESIK": 100,
+    "GAMMA_US": 0.6,
     "BILATERAL_ESIK": 210,
     "BILATERAL_D": 7,
     "BILATERAL_SIGMA_COLOR": 50,
     "BILATERAL_SIGMA_SPACE": 50,
-    # --- CLAHE ---
     "CLAHE_CLIP": 2.0,
     "CLAHE_GRID": (8, 8),
-    # --- sharpen ---
     "SHARPEN_AMOUNT": 1.5,
     "SHARPEN_SIGMA": 1.0,
-    # --- adaptive threshold ---
     "ADAPTIVE_BLOCK": 15,
     "ADAPTIVE_C": 8,
-    # --- morphology ---
     "MORPH_KAPAT": True,
     "MORPH_KERNEL": (3, 3),
-    # --- Canny (perspective corner detection only) ---
     "CANNY_ESIK1": 40,
     "CANNY_ESIK2": 200,
-    # --- perspective ---
     "PERSPEKTIF_MIN_ALAN_ORAN": 0.05,
     "PERSPEKTIF_EPSILON_CARPAN": 0.02,
     "PERSPEKTIF_CIKTI_EN": 400,
     "PERSPEKTIF_CIKTI_BOY": 120,
-    # --- resize ---
     "BOYUTLANDIRMA_KATSAYI": 2.0,
-    # --- crop ---
     "ALT_KIRP_ORAN": 0.15,
-    # --- OCR ---
     "OCR_IZIN_LISTESI": "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
     "OCR_MIN_CONF": 0.35,
-    # ↓ Threshold below which a second OCR pass (inverted) is triggered
     "OCR_IKINCI_GECIS_ESIK": 0.6,
-    # --- worker ---
     "WORKER_KUYRUK": 8,
+    # Min plate pixel width after resize — discard tiny crops
+    "MIN_PLAKA_GENISLIK_PX": 40,
 }
 
 
 def _cfg(key: str):
     """Read from project CONFIG, fall back to local defaults."""
     return CONFIG.get(key, _CONFIG_DEFAULTS.get(key))
+
+
+# ---------------------------------------------------------------------------
+# Cached gamma LUT builder
+# ---------------------------------------------------------------------------
+
+_gamma_lut_cache: dict[float, np.ndarray] = {}
+
+
+def _get_gamma_lut(us: float) -> np.ndarray:
+    """Return a cached gamma correction LUT (256,) uint8."""
+    if us not in _gamma_lut_cache:
+        table = (
+            (np.arange(256, dtype=np.float64) / 255.0) ** us * 255.0
+        ).clip(0, 255).astype(np.uint8)
+        # cv2.LUT on BGR needs shape (256, 1, 3)
+        _gamma_lut_cache[us] = np.stack([table, table, table], axis=-1).reshape(256, 1, 3)
+    return _gamma_lut_cache[us]
 
 
 # ---------------------------------------------------------------------------
@@ -135,7 +151,6 @@ class PlakaTespitci:
 
     @staticmethod
     def _model_indir(url: str, models_dir: str) -> str:
-        """Download YOLO weights if not cached."""
         path = Path(models_dir) / "license_plate_detector.pt"
         path.parent.mkdir(parents=True, exist_ok=True)
         if not path.exists():
@@ -144,18 +159,30 @@ class PlakaTespitci:
             log.info("Model kaydedildi: %s", path)
         return str(path)
 
-    def plakalari_bul(self, bgr: np.ndarray) -> list[tuple[float, float, float, float, float]]:
+    @staticmethod
+    def _aspect_ratio_gecerli(x1: float, y1: float, x2: float, y2: float) -> bool:
+        w = max(1.0, x2 - x1)
+        h = max(1.0, y2 - y1)
+        ar = w / h
+        return float(_cfg("ASPECT_RATIO_MIN")) <= ar <= float(_cfg("ASPECT_RATIO_MAX"))
+
+    def plakalari_bul(
+        self, bgr: np.ndarray
+    ) -> list[tuple[float, float, float, float, float]]:
         """
         Run YOLO inference and return filtered plate bounding boxes.
 
-        Returns:
-            List of (x1, y1, x2, y2, conf) sorted by confidence descending.
+        Returns
+        -------
+        List of (x1, y1, x2, y2, conf) sorted by confidence descending.
         """
         sonuclar = self.model(bgr, verbose=False)[0]
         if sonuclar.boxes is None or len(sonuclar.boxes) == 0:
             return []
+
         names: dict = sonuclar.names or {}
         cikti: list[tuple[float, float, float, float, float]] = []
+
         for b in sonuclar.boxes:
             conf = float(b.conf[0])
             if conf < self.conf:
@@ -165,14 +192,10 @@ class PlakaTespitci:
             if not (cls_name.lower() in self._PLAKA_ETIKETLERI or cls_id == 0):
                 continue
             x1, y1, x2, y2 = (float(v) for v in b.xyxy[0].tolist())
-            w = max(1.0, x2 - x1)
-            h = max(1.0, y2 - y1)
-            ar = w / h
-            ar_min = float(_cfg("ASPECT_RATIO_MIN"))
-            ar_max = float(_cfg("ASPECT_RATIO_MAX"))
-            if not (ar_min <= ar <= ar_max):
+            if not self._aspect_ratio_gecerli(x1, y1, x2, y2):
                 continue
             cikti.append((x1, y1, x2, y2, conf))
+
         cikti.sort(key=lambda t: t[4], reverse=True)
         return cikti
 
@@ -205,8 +228,10 @@ class _PaddleBackend(_OcrBackend):
         sonuc = self._reader.ocr(bgr, cls=False)
         if not sonuc or not sonuc[0]:
             return "", 0.0
+
         parcalar, confs = [], []
         min_conf = float(_cfg("OCR_MIN_CONF"))
+
         for line in sonuc[0]:
             metin, conf = line[1]
             if conf < min_conf:
@@ -215,6 +240,7 @@ class _PaddleBackend(_OcrBackend):
             if temiz:
                 parcalar.append(temiz)
                 confs.append(float(conf))
+
         if not parcalar:
             return "", 0.0
         return "".join(parcalar), sum(confs) / len(confs)
@@ -244,6 +270,7 @@ class _EasyBackend(_OcrBackend):
 
         parcalar, confs = [], []
         min_conf = float(_cfg("OCR_MIN_CONF"))
+
         for (_, metin, conf) in sorted(sonuclar, key=sol_x):
             if conf is None or conf < min_conf:
                 continue
@@ -251,6 +278,7 @@ class _EasyBackend(_OcrBackend):
             if temiz:
                 parcalar.append(temiz)
                 confs.append(float(conf))
+
         if not parcalar:
             return "", 0.0
         return "".join(parcalar), sum(confs) / len(confs)
@@ -274,7 +302,6 @@ def _deskew(gray: np.ndarray) -> np.ndarray:
     Only corrects angles within ±15°. Skipped for very small images.
     """
     h, w = gray.shape[:2]
-    # Skip deskew on small crops — HoughLines on tiny images produces noise
     if w < 60 or h < 20:
         return gray
     edges = cv2.Canny(gray, 50, 150, apertureSize=3)
@@ -293,14 +320,13 @@ def _deskew(gray: np.ndarray) -> np.ndarray:
     if abs(median_angle) < 0.5:
         return gray
     M = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), median_angle, 1.0)
-    return cv2.warpAffine(gray, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+    return cv2.warpAffine(
+        gray, M, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE
+    )
 
 
 def _superres_hook(bgr: np.ndarray) -> np.ndarray:
-    """
-    Super-resolution hook. Drop-in: replace bicubic fallback with Real-ESRGAN
-    by setting PREP_SUPERRES=True and injecting a model via CONFIG["SUPERRES_MODEL"].
-    """
+    """Super-resolution hook. Off by default; inject Real-ESRGAN via CONFIG."""
     sr_model = CONFIG.get("SUPERRES_MODEL")
     if sr_model is not None:
         try:
@@ -319,15 +345,11 @@ class PlakaCozucu:
     """
     Preprocessing pipeline + adaptive two-pass OCR.
 
-    OCR flow (CPU-optimised):
-      1. Preprocess → binary image
-      2. Primary backend reads original binary
-      3. If conf < OCR_IKINCI_GECIS_ESIK → primary re-reads inverted binary
-      4. If still low → fallback backend reads best variant
-      Best result is selected by: valid regex match → highest confidence.
-
-    This class is a SENSOR: it returns raw candidates only.
-    All voting, clustering and final decisions are in dogrulama.py.
+    Key changes vs v1:
+      • coz() now accepts and propagates bbox through TespitSonucu
+      • _roi_hazirla() guards against degenerate (too-small) crops
+      • Gamma LUT is cached (not rebuilt every call)
+      • _aspect_ratio check consolidated in PlakaTespitci
     """
 
     def __init__(self, diller: list[str], gpu: bool, min_conf: float) -> None:
@@ -338,15 +360,15 @@ class PlakaCozucu:
             tileGridSize=tuple(_cfg("CLAHE_GRID")),
         )
 
-        # Build primary and fallback backends
-        # Primary: PaddleOCR (best accuracy)
-        # Fallback: EasyOCR (only triggered when primary is insufficient)
+        # Primary: PaddleOCR (best accuracy); Fallback: EasyOCR
         if _PADDLE_AVAILABLE:
             self._primary: _OcrBackend = _PaddleBackend(gpu)
         elif _EASY_AVAILABLE:
             self._primary = _EasyBackend(diller, gpu)
         else:
-            raise RuntimeError("Hiçbir OCR backend bulunamadı (PaddleOCR veya EasyOCR gerekli).")
+            raise RuntimeError(
+                "Hiçbir OCR backend bulunamadı (PaddleOCR veya EasyOCR gerekli)."
+            )
 
         self._fallback: Optional[_OcrBackend] = None
         if _PADDLE_AVAILABLE and _EASY_AVAILABLE:
@@ -358,7 +380,6 @@ class PlakaCozucu:
 
     @staticmethod
     def _sirala_dort_kose(pts: np.ndarray) -> np.ndarray:
-        """Sort 4 corner points: TL, TR, BR, BL."""
         pts = np.asarray(pts, dtype=np.float32).reshape(4, 2)
         s = pts.sum(axis=1)
         d = np.diff(pts, axis=1).flatten()
@@ -368,10 +389,6 @@ class PlakaCozucu:
         )
 
     def _dortgen_kose_bul(self, bgr: np.ndarray) -> Optional[np.ndarray]:
-        """
-        Find the 4-corner quadrilateral of the plate inside the ROI.
-        Falls back to min-area rotated rect if no clean quad found.
-        """
         h, w = bgr.shape[:2]
         if w < 8 or h < 8:
             return None
@@ -395,21 +412,21 @@ class PlakaCozucu:
             if len(yaklasik) != 4 or not cv2.isContourConvex(yaklasik):
                 continue
             kose = yaklasik.reshape(4, 2).astype(np.float32)
-            if (np.any(kose[:, 0] < -0.5) or np.any(kose[:, 0] > w - 0.5)
-                    or np.any(kose[:, 1] < -0.5) or np.any(kose[:, 1] > h - 0.5)):
+            if (
+                np.any(kose[:, 0] < -0.5) or np.any(kose[:, 0] > w - 0.5)
+                or np.any(kose[:, 1] < -0.5) or np.any(kose[:, 1] > h - 0.5)
+            ):
                 continue
             return self._sirala_dort_kose(kose)
         # Fallback: minimum-area rotated rect
         all_pts = np.vstack(konturlar)
         rect = cv2.minAreaRect(all_pts)
         box = cv2.boxPoints(rect).astype(np.float32)
-        alan = cv2.contourArea(box)
-        if alan >= min_alan:
+        if cv2.contourArea(box) >= min_alan:
             return self._sirala_dort_kose(box)
         return None
 
     def _perspektif_duzelt(self, bgr: np.ndarray) -> np.ndarray:
-        """Apply perspective correction to a plate ROI."""
         h, w = bgr.shape[:2]
         out_w = int(_cfg("PERSPEKTIF_CIKTI_EN"))
         out_h = int(_cfg("PERSPEKTIF_CIKTI_BOY"))
@@ -426,24 +443,17 @@ class PlakaCozucu:
         return cv2.warpPerspective(bgr, M, (out_w, out_h), flags=cv2.INTER_CUBIC)
 
     # ------------------------------------------------------------------
-    # Gamma correction
+    # Gamma correction  (uses cached LUT)
     # ------------------------------------------------------------------
 
     def _gamma_bgr(self, bgr: np.ndarray) -> np.ndarray:
-        """Boost brightness of DARK images only (p95 < threshold)."""
         if not _cfg("PREP_GAMMA"):
             return bgr
         gri = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
         p95 = float(np.percentile(gri, 95))
-        esik = float(_cfg("GAMMA_PARLAKLIK_ESIK"))
-        if p95 >= esik:          # already bright, skip
+        if p95 >= float(_cfg("GAMMA_PARLAKLIK_ESIK")):
             return bgr
-        us = float(_cfg("GAMMA_US"))
-        table = (
-            (np.arange(256, dtype=np.float64) / 255.0) ** us * 255.0
-        ).clip(0, 255).astype(np.uint8)
-        # Stack once — cv2.LUT on BGR needs a (256,1,3) LUT
-        lut = np.stack([table, table, table], axis=-1).reshape(256, 1, 3)
+        lut = _get_gamma_lut(float(_cfg("GAMMA_US")))
         return cv2.LUT(bgr, lut)
 
     # ------------------------------------------------------------------
@@ -456,49 +466,59 @@ class PlakaCozucu:
         grayscale image ready for OCR, or None on failure.
 
         Pipeline:
-          1.  Bottom-strip crop (remove dirt / bolt shadows)
-          2.  2× resize
-          3.  Gamma correction  (dark images only)
-          4.  Perspective correction  (optional)
-          5.  Super-resolution hook  (optional, off by default)
-          6.  Convert to gray
-          7.  Bilateral filter  (bright/reflective plates)
-          8.  Deskew  (optional)
-          9.  CLAHE
-          10. Gaussian blur
-          11. Sharpening  (unsharp mask)
-          12. Dual thresholding  (Otsu vs Adaptive — best chosen)
-          13. Morphological closing
+          1.  Degenerate check
+          2.  Bottom-strip crop (remove dirt / bolt shadows)
+          3.  2× resize
+          4.  Gamma correction  (dark images only)
+          5.  Perspective correction  (optional)
+          6.  Super-resolution hook  (optional, off by default)
+          7.  Convert to gray
+          8.  Minimum width guard  (discard tiny crops post-resize)
+          9.  Bilateral filter  (bright/reflective plates)
+          10. Deskew  (optional)
+          11. CLAHE
+          12. Gaussian blur
+          13. Sharpening  (unsharp mask)
+          14. Dual thresholding  (Otsu vs Adaptive — best chosen)
+          15. Morphological closing
         """
         if bgr is None or bgr.size == 0:
             return None
-        h, w = bgr.shape[:2]
 
-        # 1. Bottom-strip crop
+        h, w = bgr.shape[:2]
+        if w < 10 or h < 5:
+            return None  # Degenerate ROI — skip entirely
+
+        # 2. Bottom-strip crop
         if h >= 30:
             oran = min(float(_cfg("ALT_KIRP_ORAN")), 0.49)
             efektif = min(oran, 1.0 - 0.80)
-            bgr = bgr[: max(1, int(h * (1.0 - efektif))), :w]
+            bgr = bgr[: max(1, int(h * (1.0 - efektif))), :]
 
-        # 2. Resize
+        # 3. Resize
         katsayi = float(_cfg("BOYUTLANDIRMA_KATSAYI"))
         bgr = cv2.resize(bgr, None, fx=katsayi, fy=katsayi, interpolation=cv2.INTER_CUBIC)
 
-        # 3. Gamma
+        # 4. Gamma
         bgr = self._gamma_bgr(bgr)
 
-        # 4. Perspective
+        # 5. Perspective
         if _cfg("PREP_PERSPECTIVE"):
             bgr = self._perspektif_duzelt(bgr)
 
-        # 5. Super-resolution (off by default)
+        # 6. Super-resolution (off by default)
         if _cfg("PREP_SUPERRES"):
             bgr = _superres_hook(bgr)
 
-        # 6. Gray
+        # 7. Gray
         gri = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
 
-        # 7. Bilateral filter (only on bright/reflective plates)
+        # 8. Minimum width guard — discard plates too small after perspective
+        min_px = int(_cfg("MIN_PLAKA_GENISLIK_PX"))
+        if gri.shape[1] < min_px:
+            return None
+
+        # 9. Bilateral filter (only on bright/reflective plates)
         if _cfg("PREP_BILATERAL"):
             p95 = float(np.percentile(gri, 95))
             if p95 > int(_cfg("BILATERAL_ESIK")):
@@ -509,36 +529,33 @@ class PlakaCozucu:
                     sigmaSpace=float(_cfg("BILATERAL_SIGMA_SPACE")),
                 )
 
-        # 8. Deskew
+        # 10. Deskew
         if _cfg("PREP_DESKEW"):
             gri = _deskew(gri)
 
-        # 9. CLAHE
+        # 11. CLAHE
         if _cfg("PREP_CLAHE"):
             gri = self._clahe.apply(gri)
 
-        # 10. Gaussian blur
+        # 12. Gaussian blur
         blur = cv2.GaussianBlur(gri, (3, 3), 0)
 
-        # 11. Sharpen
+        # 13. Sharpen
         if _cfg("PREP_SHARPEN"):
             blur = _sharpen(blur)
 
-        # 12. Dual thresholding — pick version with more foreground detail
+        # 14. Dual thresholding — pick version with more foreground detail
         _, otsu = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         binary = otsu
         if _cfg("PREP_ADAPTIVE"):
             adaptive = cv2.adaptiveThreshold(
-                blur,
-                255,
-                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                cv2.THRESH_BINARY,
-                int(_cfg("ADAPTIVE_BLOCK")),
-                int(_cfg("ADAPTIVE_C")),
+                blur, 255,
+                cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY,
+                int(_cfg("ADAPTIVE_BLOCK")), int(_cfg("ADAPTIVE_C")),
             )
             binary = adaptive if adaptive.mean() > otsu.mean() else otsu
 
-        # 13. Morphological closing
+        # 15. Morphological closing
         if _cfg("MORPH_KAPAT"):
             k = cv2.getStructuringElement(cv2.MORPH_RECT, tuple(_cfg("MORPH_KERNEL")))
             binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, k, iterations=1)
@@ -556,25 +573,21 @@ class PlakaCozucu:
         Pass 1: primary backend on original binary.
         Pass 2: primary backend on inverted binary (only if pass-1 conf < threshold).
         Fallback: secondary backend if passes are insufficient.
-
-        Eliminates 'edge' variant (useless for OCR) and unconditional
-        multi-pass (was 6-9 calls per plate → now 1-3 max).
         """
         ikinci_esik = float(_cfg("OCR_IKINCI_GECIS_ESIK"))
         min_conf = float(_cfg("OCR_MIN_CONF"))
 
-        # --- Pass 1: original ---
+        # Pass 1: original
         metin1, conf1 = self._primary.oku(binary)
 
         # Early exit: high-confidence valid plate on first pass
         if conf1 >= ikinci_esik and PLAKA_REGEX.search(metin1):
             return metin1, conf1
 
-        # --- Pass 2: inverted (only when needed) ---
+        # Pass 2: inverted (only when needed)
         inverted = cv2.bitwise_not(binary)
         metin2, conf2 = self._primary.oku(inverted)
 
-        # Pick the better of the two primary passes
         def _skor(m: str, c: float) -> float:
             return c + (1.0 if PLAKA_REGEX.search(m) else 0.0)
 
@@ -583,7 +596,7 @@ class PlakaCozucu:
         else:
             best_metin, best_conf = metin1, conf1
 
-        # --- Fallback backend (only if primary result is still insufficient) ---
+        # Fallback backend
         if self._fallback is not None and best_conf < min_conf:
             fb_metin, fb_conf = self._fallback.oku(
                 binary if conf1 >= conf2 else inverted
@@ -599,7 +612,6 @@ class PlakaCozucu:
 
     @staticmethod
     def _plaka_duzelt(il: str, harf: str, rakam: str) -> str:
-        """Apply OCR confusion correction maps to each plate segment."""
         il_d = "".join(_RAKAM_DUZELTME.get(c, c) for c in il)
         harf_d = "".join(_HARF_DUZELTME.get(c, c) for c in harf)
         rakam_d = "".join(_RAKAM_DUZELTME.get(c, c) for c in rakam)
@@ -607,24 +619,31 @@ class PlakaCozucu:
 
     @staticmethod
     def _uzunluk_gecerli(plaka: str) -> bool:
-        """Turkish plates are 7–9 characters (e.g. 06ABC123 or 34AB1234)."""
+        """Turkish plates are 7–9 characters."""
         return 7 <= len(plaka) <= 9
 
     # ------------------------------------------------------------------
     # Public interface
     # ------------------------------------------------------------------
 
-    def coz(self, bgr_roi: np.ndarray) -> TespitSonucu:
+    def coz(self, bgr_roi: np.ndarray, bbox: tuple = ()) -> TespitSonucu:
         """
         Full pipeline: preprocess → adaptive OCR → validate → correct.
 
-        Returns:
-            TespitSonucu with raw plate text and confidence.
-            Decision (accept/reject) is made downstream in dogrulama.py.
+        Parameters
+        ----------
+        bgr_roi : BGR crop of the detected plate region
+        bbox    : (x1, y1, x2, y2) of the plate in the original frame
+                  — preserved in the returned TespitSonucu
+
+        Returns
+        -------
+        TespitSonucu with raw plate text, confidence, and bbox.
+        Decision (accept/reject) is made downstream in dogrulama.py.
         """
         binary = self._roi_hazirla(bgr_roi)
         if binary is None:
-            return TespitSonucu(bbox=(), ham_metin="", plaka=None, guven=0.0)
+            return TespitSonucu(bbox=bbox, ham_metin="", plaka=None, guven=0.0)
 
         ham, ocr_conf = self._ocr_calistir(binary)
         eslesen = PLAKA_REGEX.search(ham)
@@ -633,17 +652,30 @@ class PlakaCozucu:
             plaka = self._plaka_duzelt(il, harf, rakam)
             if self._uzunluk_gecerli(plaka):
                 return TespitSonucu(
-                    bbox=(),
+                    bbox=bbox,
                     ham_metin=ham,
                     plaka=plaka,
                     guven=float(ocr_conf),
                     gecerli=True,
                 )
-        return TespitSonucu(bbox=(), ham_metin=ham, plaka=None, guven=0.0)
+        return TespitSonucu(bbox=bbox, ham_metin=ham, plaka=None, guven=0.0)
 
-    def coz_batch(self, roi_listesi: list[np.ndarray]) -> list[TespitSonucu]:
-        """Process multiple ROIs sequentially."""
-        return [self.coz(roi) for roi in roi_listesi]
+    def coz_batch(
+        self,
+        roi_listesi: list[np.ndarray],
+        bbox_listesi: Optional[list[tuple]] = None,
+    ) -> list[TespitSonucu]:
+        """
+        Process multiple ROIs sequentially.
+
+        Parameters
+        ----------
+        roi_listesi  : list of BGR crops
+        bbox_listesi : corresponding bboxes (optional; must match length of roi_listesi)
+        """
+        if bbox_listesi is None:
+            bbox_listesi = [()] * len(roi_listesi)
+        return [self.coz(roi, bbox) for roi, bbox in zip(roi_listesi, bbox_listesi)]
 
     def roi_hazirla_debug(self, bgr_roi: np.ndarray) -> Optional[np.ndarray]:
         """Return preprocessed binary image for debug visualisation."""
@@ -658,22 +690,31 @@ class OcrWorker(threading.Thread):
     """
     Background daemon thread that consumes OcrGorevi tasks,
     runs the full PlakaCozucu pipeline, and pushes raw results
-    to an output queue.
+    to a shared output queue.
 
-    ❌ NO temporal smoothing here — that is dogrulama.py's job.
+    Backpressure strategy:
+      • Input queue is bounded. When full, gorevi_gonder() returns False
+        and the CALLER decides whether to drop or block.
+      • A smarter alternative — gorevi_gonder_drop_oldest() — evicts the
+        oldest queued task to make room for the newest one. This ensures
+        the system always processes the most recent frame instead of
+        building up stale lag under load (latency over throughput).
+      • Queue depth is exposed via queue_depth() for monitoring.
     """
 
     def __init__(
         self,
         cozucu: PlakaCozucu,
+        cikis_kuyrugu: "queue.Queue",
         kuyruk_boyutu: int = 0,
     ) -> None:
         super().__init__(name="OcrWorker", daemon=True)
         boyut = kuyruk_boyutu or int(_cfg("WORKER_KUYRUK"))
         self._cozucu = cozucu
         self._giris_kuyrugu: queue.Queue[Optional[OcrGorevi]] = queue.Queue(maxsize=boyut)
-        self._cikis_kuyrugu: queue.Queue = queue.Queue(maxsize=boyut * 2)
+        self._cikis_kuyrugu = cikis_kuyrugu
         self._dur = threading.Event()
+        self._atilan = 0     # count of tasks dropped under backpressure
 
     # ------------------------------------------------------------------
     # Public helpers
@@ -687,8 +728,34 @@ class OcrWorker(threading.Thread):
         except queue.Full:
             return False
 
+    def gorevi_gonder_drop_oldest(self, gorev: OcrGorevi) -> bool:
+        """
+        Enqueue a task, evicting the oldest entry if the queue is full.
+
+        This is the preferred method under high load: it keeps the queue
+        depth bounded while ensuring the worker always sees the freshest
+        frames. Stale detections cost latency, not accuracy — the validator
+        layer (dogrulama.py) accumulates evidence across frames anyway.
+
+        Returns True if the task was enqueued (always, unless queue size = 0).
+        """
+        try:
+            self._giris_kuyrugu.put_nowait(gorev)
+            return True
+        except queue.Full:
+            try:
+                self._giris_kuyrugu.get_nowait()   # drop oldest
+                self._atilan += 1
+            except queue.Empty:
+                pass
+            try:
+                self._giris_kuyrugu.put_nowait(gorev)
+                return True
+            except queue.Full:
+                return False
+
     def gorevi_gonder_bekle(self, gorev: OcrGorevi, timeout: float = 0.1) -> bool:
-        """Blocking enqueue with timeout. More reliable under load."""
+        """Blocking enqueue with timeout. Use only when latency is acceptable."""
         try:
             self._giris_kuyrugu.put(gorev, timeout=timeout)
             return True
@@ -696,7 +763,7 @@ class OcrWorker(threading.Thread):
             return False
 
     def sonuclari_topla(self) -> list:
-        """Drain and return all available results from the output queue."""
+        """Drain and return all available results from the shared output queue."""
         sonuclar = []
         while True:
             try:
@@ -705,8 +772,15 @@ class OcrWorker(threading.Thread):
                 break
         return sonuclar
 
+    def queue_depth(self) -> int:
+        """Current number of pending tasks in this worker's input queue."""
+        return self._giris_kuyrugu.qsize()
+
+    def atilan_sayisi(self) -> int:
+        """Number of tasks dropped due to backpressure since startup."""
+        return self._atilan
+
     def durdur(self) -> None:
-        """Signal the worker to stop gracefully."""
         self._dur.set()
         try:
             self._giris_kuyrugu.put_nowait(None)
@@ -718,8 +792,9 @@ class OcrWorker(threading.Thread):
     # ------------------------------------------------------------------
 
     def _isle(self, gorev: OcrGorevi) -> None:
-        """Process one task and push raw result to the output queue."""
-        sonuc = self._cozucu.coz(gorev.roi_bgr)
+        """Process one task and push raw result to the shared output queue."""
+        # Pass bbox through so downstream receives it in TespitSonucu
+        sonuc = self._cozucu.coz(gorev.roi_bgr, bbox=gorev.bbox)
         try:
             self._cikis_kuyrugu.put_nowait((gorev.arac_id, sonuc, gorev.yolo_conf, gorev.bbox))
         except queue.Full:
@@ -749,14 +824,22 @@ class OcrWorkerPool:
     """
     Manages N OcrWorker threads for parallel processing.
 
-    Tasks are dispatched round-robin. Collect results from all workers
-    via ``sonuclari_topla``.
+    All workers share ONE output queue (eliminates partial-drain race).
+    Tasks are dispatched to the least-loaded worker (min queue depth),
+    falling back to round-robin when depths are equal.
+
+    Backpressure:
+      • gorevi_gonder()              → returns False if worker queue full
+      • gorevi_gonder_drop_oldest()  → evicts oldest task to make room (preferred)
+      • toplam_kuyruk_derinligi()    → total pending tasks across all workers
+      • toplam_atilan()              → cumulative dropped task count
 
     Example::
 
         pool = OcrWorkerPool(cozucu, n_workers=2)
         pool.baslat()
-        pool.gorevi_gonder(gorev)
+        # Preferred under load — always processes latest frame:
+        pool.gorevi_gonder_drop_oldest(gorev)
         ...
         sonuclar = pool.sonuclari_topla()
         pool.durdur()
@@ -768,8 +851,11 @@ class OcrWorkerPool:
         n_workers: int = 2,
         kuyruk_boyutu: int = 0,
     ) -> None:
+        self._cikis_kuyrugu: queue.Queue = queue.Queue(
+            maxsize=(kuyruk_boyutu or int(_cfg("WORKER_KUYRUK"))) * max(1, n_workers) * 2
+        )
         self._workers: list[OcrWorker] = [
-            OcrWorker(cozucu, kuyruk_boyutu=kuyruk_boyutu)
+            OcrWorker(cozucu, self._cikis_kuyrugu, kuyruk_boyutu=kuyruk_boyutu)
             for _ in range(max(1, n_workers))
         ]
         self._idx = 0
@@ -779,17 +865,39 @@ class OcrWorkerPool:
         for w in self._workers:
             w.start()
 
+    def _least_loaded_worker(self) -> OcrWorker:
+        """Return the worker with the fewest queued tasks."""
+        return min(self._workers, key=lambda w: w.queue_depth())
+
     def gorevi_gonder(self, gorev: OcrGorevi) -> bool:
-        with self._kilit:
-            worker = self._workers[self._idx % len(self._workers)]
-            self._idx += 1
-        return worker.gorevi_gonder(gorev)
+        """Dispatch to least-loaded worker. Returns False if that worker is full."""
+        return self._least_loaded_worker().gorevi_gonder(gorev)
+
+    def gorevi_gonder_drop_oldest(self, gorev: OcrGorevi) -> bool:
+        """
+        Dispatch to least-loaded worker, evicting its oldest task if full.
+        Preferred under high load — keeps latency low at the cost of
+        occasionally skipping a stale frame.
+        """
+        return self._least_loaded_worker().gorevi_gonder_drop_oldest(gorev)
 
     def sonuclari_topla(self) -> list:
+        """Drain and return all available results from the shared output queue."""
         sonuclar = []
-        for w in self._workers:
-            sonuclar.extend(w.sonuclari_topla())
+        while True:
+            try:
+                sonuclar.append(self._cikis_kuyrugu.get_nowait())
+            except queue.Empty:
+                break
         return sonuclar
+
+    def toplam_kuyruk_derinligi(self) -> int:
+        """Total number of pending tasks across all input queues."""
+        return sum(w.queue_depth() for w in self._workers)
+
+    def toplam_atilan(self) -> int:
+        """Total tasks dropped under backpressure since pool start."""
+        return sum(w.atilan_sayisi() for w in self._workers)
 
     def durdur(self) -> None:
         for w in self._workers:
