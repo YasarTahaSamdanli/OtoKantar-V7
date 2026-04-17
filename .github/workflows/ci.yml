@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "master", "copilot/**"]
+  pull_request:
+    branches: ["main", "master"]
+
+jobs:
+  test:
+    name: Lint & Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python kurulumu
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Ağır ML bağımlılıkları (torch, easyocr, ultralytics) CI'da gerekmiyor;
+      # yalnızca test için gereken hafif bağımlılıklar kurulur.
+      - name: Bağımlılık kurulumu (test)
+        run: |
+          python -m pip install --upgrade pip
+          pip install fastapi uvicorn pydantic httpx pytest pyserial numpy
+
+      - name: Ruff lint
+        run: |
+          pip install ruff
+          ruff check otokantar_app/ tests/ --select E,W,F --ignore E501
+
+      - name: Pytest — dogrulama & API testleri
+        run: |
+          pytest tests/test_dogrulama.py tests/test_api.py -v --tb=short
+        env:
+          # Gerçek donanım veya model gerekmeden çalışması için simülasyon modu
+          OTOKANTAR_SIMULASYON: "1"

@@ -1,5 +1,5 @@
 """
-OtoKantar V12 — Production-Grade Refactor
+OtoKantar V7 — Production-Grade Refactor
 ==========================================
 Kritik düzeltmeler:
   1. Thread-safe durum yönetimi (threading.Lock)
@@ -77,7 +77,7 @@ def _fastapi_sureci_hedef(host: str, port: int) -> None:
 class OtoKantar:
     def __init__(self):
         log.info("=" * 60)
-        log.info("OtoKantar V12 (Prodüksiyon) başlatılıyor...")
+        log.info("OtoKantar V7 (Prodüksiyon) başlatılıyor...")
 
         # ------------------------------------------------------------------
         # FIX #1: Tek yetkili çıkış sinyali.
@@ -330,7 +330,7 @@ class OtoKantar:
                 log.info("FastAPI süreci temiz kapandı.")
 
         cv2.destroyAllWindows()
-        log.info("OtoKantar V12 temiz kapandı.")
+        log.info("OtoKantar V7 temiz kapandı.")
 
     # -----------------------------------------------------------------------
     # ROI
@@ -863,7 +863,7 @@ class OtoKantar:
                     yakalama_fps=self._yakalama_fps,
                 )
                 self._canli_kare_yaz(kare)
-                cv2.imshow("OtoKantar V12", kare)
+                cv2.imshow("OtoKantar V7", kare)
                 tus = cv2.waitKey(1) & 0xFF
                 if tus == ord("0"):
                     self.kantar_okuyucu.simule_et(0.0)

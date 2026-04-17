@@ -995,13 +995,17 @@ function kantarPanelGuncelle(veri) {
 function verileriUygula(veri) {
   kantarPanelGuncelle(veri);
   const son10 = Array.isArray(veri?.son_10) ? veri.son_10 : [];
+  // Alan adları PlakaKayit dataclass'ından gelir:
+  //   giris_tarih, giris_saat, giris_agirlik, durum
   kayitlar = son10.slice().reverse().map(k => ({
     plaka: k.plaka || '',
-    tarih: k.tarih || '',
-    saat: k.saat || '',
-    tip: (k.tip || 'GIRIS').replace('KARA LİSTE', 'KARA LISTE'),
+    tarih: k.giris_tarih || k.tarih || '',
+    saat: k.giris_saat || k.saat || '',
+    tip: (k.durum || k.tip || 'ICERIDE').replace('KARA LİSTE', 'KARA LISTE'),
     guven: Number(k.guven) || 0,
-    agirlik: k.agirlik != null && k.agirlik !== '' ? Number(k.agirlik) : null,
+    agirlik: k.giris_agirlik != null && k.giris_agirlik !== ''
+      ? Number(k.giris_agirlik)
+      : (k.agirlik != null && k.agirlik !== '' ? Number(k.agirlik) : null),
   }));
 
   saatlikData = new Array(12).fill(0);
@@ -1018,8 +1022,10 @@ function verileriUygula(veri) {
 
   if (veri?.son_kayit && veri.son_kayit.plaka) {
     const sk = veri.son_kayit;
-    const imza = `${sk.plaka}|${sk.tarih}|${sk.saat}`;
-    sonKayitZaman = new Date(`${sk.tarih}T${sk.saat}`).getTime() || Date.now();
+    const tarih = sk.giris_tarih || sk.tarih || '';
+    const saat  = sk.giris_saat  || sk.saat  || '';
+    const imza = `${sk.plaka}|${tarih}|${saat}`;
+    sonKayitZaman = new Date(`${tarih}T${saat}`).getTime() || Date.now();
     plakaGoster(sk.plaka || 'BEKLENIYOR', ESIK, imza !== sonKayitImza);
     sonKayitImza = imza;
   }

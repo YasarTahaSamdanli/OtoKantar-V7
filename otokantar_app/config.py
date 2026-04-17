@@ -70,6 +70,12 @@ _CONFIG_VARSAYILAN = {
     "CAPTURES_RETENTION_DAYS": 30,
     "FASTAPI_HOST": "0.0.0.0",
     "FASTAPI_PORT": 8000,
+    # API güvenliği
+    # Boş bırakılırsa kimlik doğrulama devre dışıdır (yerel/geliştirme ortamı).
+    # Üretimde güçlü rastgele bir değer kullanın: python -c "import secrets; print(secrets.token_hex(32))"
+    "API_TOKEN": "",
+    # İzin verilen CORS kökenleri. Üretimde sadece kendi alan adınızı girin.
+    "CORS_ORIGINS": ["http://localhost:8000", "http://127.0.0.1:8000"],
 }
 
 _TUPLE_ANAHTARLAR = {"MORPH_KERNEL", "CLAHE_GRID", "KANTAR_ROI_NORM"}
