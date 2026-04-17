@@ -93,7 +93,10 @@ def api_canli_durum():
     
     # Eğer sistem_referansi varsa (Linux/Unix fork veya tek process), ekstra detay ekle
     if sistem_referansi:
-        ag, st = getattr(sistem_referansi, "kantar_okuyucu", type("_", (), {"veri": (None, None)})()).veri
+        try:
+            ag, st = sistem_referansi.kantar_okuyucu.veri
+        except AttributeError:
+            ag, st = None, None
         durum.update({
             "fps": round(getattr(sistem_referansi, "_fps", 0.0), 1),
             "kilitli": getattr(sistem_referansi, "_kantar_seans_kilitli", False),

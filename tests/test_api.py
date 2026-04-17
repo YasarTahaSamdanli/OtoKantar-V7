@@ -47,9 +47,14 @@ def test_kara_liste_get(client):
 
 
 def test_kara_liste_ekle_gecerli_plaka(client):
-    resp = client.post("/api/kara-liste", json={"plaka": "06AEP01"})
-    # 200 veya 409 (zaten varsa) beklenir
-    assert resp.status_code in (200, 409)
+    """Yeni bir plaka 200 ile eklenmeli; tekrar eklenirse 409 gelmeli."""
+    # Önce silinmiş bir durumda başla (olmayabilir, sorun değil)
+    client.delete("/api/kara-liste/06AEP01")
+    resp_ekle = client.post("/api/kara-liste", json={"plaka": "06AEP01"})
+    assert resp_ekle.status_code == 200
+    # Aynı plakayı tekrar ekle → çakışma
+    resp_tekrar = client.post("/api/kara-liste", json={"plaka": "06AEP01"})
+    assert resp_tekrar.status_code == 409
 
 
 def test_kara_liste_ekle_gecersiz_plaka(client):
@@ -58,11 +63,10 @@ def test_kara_liste_ekle_gecersiz_plaka(client):
 
 
 def test_kara_liste_sil(client):
-    # Önce ekle
+    """Eklenen bir plaka başarıyla silinmeli."""
     client.post("/api/kara-liste", json={"plaka": "06AEP02"})
     resp = client.delete("/api/kara-liste/06AEP02")
-    # 200 (silindi) veya 500 (DB yoksa) beklenir
-    assert resp.status_code in (200, 500)
+    assert resp.status_code == 200
 
 
 # ---------------------------------------------------------------------------
@@ -94,14 +98,16 @@ def test_auth_reddet_gecersiz_token(monkeypatch):
 
 
 def test_auth_kabul_et_dogru_token(monkeypatch):
-    """Doğru token ile istek kabul edilmeli."""
+    """Doğru token ile istek kabul edilmeli (200 veya 409 çakışması)."""
     import otokantar_app.api.routes as routes_module
     monkeypatch.setattr(routes_module, "_API_TOKEN", "dogru-token")
 
     with TestClient(app) as c:
+        # Önce temizle (olmayabilir)
+        c.delete("/api/kara-liste/06AEP04", headers={"Authorization": "Bearer dogru-token"})
         resp = c.post(
             "/api/kara-liste",
             json={"plaka": "06AEP04"},
             headers={"Authorization": "Bearer dogru-token"},
         )
-    assert resp.status_code in (200, 409, 500)
+    assert resp.status_code in (200, 409)
