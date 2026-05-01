@@ -494,7 +494,6 @@ class KantarKaydedici:
             self.son_kayitlar.append(kayit)
             if len(self.son_kayitlar) > 50:
                 self.son_kayitlar = self.son_kayitlar[-50:]
-            self._json_guncelle(kayit)
             log.info(
                 "KAYIT: %s | %s | giris=%.1fkg | cikis=%s | net=%s | firma=%s",
                 kayit.plaka, kayit.durum, kayit.giris_agirlik,

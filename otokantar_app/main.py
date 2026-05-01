@@ -16,23 +16,21 @@ Kritik düzeltmeler:
  12. _kapat: _cikis_istendi ve dur_event birleştirildi
 """
 
-import multiprocessing
-import os
+import json
 import platform
 import queue
 import signal
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 import cv2
 import numpy as np
-import uvicorn
 
-from otokantar_app.api.routes import app, sistem_referansi_ata
 from otokantar_app.config import CONFIG
 from otokantar_app.core.ai_motoru import OcrWorker, PlakaCozucu, PlakaTespitci
 from otokantar_app.core.dogrulama import DogrulamaMotoru
@@ -49,25 +47,6 @@ if platform.system() == "Windows":
     _WINSOUND_OK = True
 else:
     _WINSOUND_OK = False
-
-# ---------------------------------------------------------------------------
-# FastAPI alt-süreci
-# ---------------------------------------------------------------------------
-
-def _fastapi_sureci_hedef(host: str, port: int) -> None:
-    """
-    DÜZELTME: SIGINT görmezden gel, SIGTERM ile temiz çıkış yap.
-    Orijinalde aynıydı — burada değişiklik yok, yalnızca belgelendi.
-    """
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
-    uconf = uvicorn.Config(app=app, host=host, port=port, log_level="warning")
-    server = uvicorn.Server(uconf)
-
-    def _sigterm_handler(signum, frame):
-        server.should_exit = True
-
-    signal.signal(signal.SIGTERM, _sigterm_handler)
-    server.run()
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +82,10 @@ class OtoKantar:
         self._cfg_ocr_kare_atlama     = int(CONFIG["OCR_KARE_ATLAMA"])
         self._cfg_canli_kare_aralik   = max(1, int(CONFIG["CANLI_KARE_ARALIK"]))
         self._cfg_canli_kare_dosya    = str(CONFIG["CANLI_KARE_DOSYA"])
+        self._cfg_canli_durum_dosya   = str(CONFIG["JSON_CANLI"])
+        self._cfg_canli_durum_aralik  = max(
+            0.2, float(CONFIG.get("CANLI_DURUM_YAZIM_ARALIK", 0.5))
+        )
 
         # Modeller
         self.tespitci    = PlakaTespitci(
@@ -113,12 +96,7 @@ class OtoKantar:
             CONFIG["OCR_DILLER"], CONFIG["OCR_GPU"], CONFIG["MIN_OCR_CONF"]
         )
         _ocr_kuyruk = int(CONFIG.get("OCR_WORKER_KUYRUK", 4))
-        self._ocr_cikis_kuyrugu = queue.Queue(maxsize=max(2, _ocr_kuyruk * 2))
-        self.ocr_worker = OcrWorker(
-            self.cozucu,
-            self._ocr_cikis_kuyrugu,
-            kuyruk_boyutu=_ocr_kuyruk,
-        )
+        self.ocr_worker = OcrWorker(self.cozucu, kuyruk_boyutu=_ocr_kuyruk)
         self.dogrulama   = DogrulamaMotoru(
             CONFIG["ESIK_DEGERI"],
             CONFIG["OYLAMA_MIN_TOPLAM_GUVEN"],
@@ -169,8 +147,7 @@ class OtoKantar:
         # _son_plaka_listesi'ne iki thread'den erişilmiyor; ancak
         # gelecekte tracker thread'e taşınırsa bu lock gerekecek.
         self._plaka_listesi_lock = threading.Lock()
-
-        self._fastapi_proc: Optional[multiprocessing.Process] = None
+        self._son_canli_durum_yazimi = 0.0
 
         # ------------------------------------------------------------------
         # FIX #5: Ağır IO (snapshot kaydetme) ana döngüyü bloklamasın.
@@ -265,31 +242,83 @@ class OtoKantar:
         except Exception as e:
             log.warning("Snapshot yazılamadı: %s", e)
 
+    def _canli_durum_payload(self, guncel_kg: float, agirlik_sabit: bool) -> dict:
+        with self._durum_lock:
+            plaka_buffer = None
+            if self._plaka_buffer is not None:
+                plaka_buffer = {
+                    "plaka": self._plaka_buffer.plaka,
+                    "guven": round(float(self._plaka_buffer.guven), 3),
+                    "yolo_conf": round(float(self._plaka_buffer.yolo_conf), 3),
+                    "yas_saniye": round(
+                        time.time() - float(self._plaka_buffer.zaman), 1
+                    ),
+                }
+            seans_kilitli = self._kantar_seans_kilitli
+            aktif_bbox = list(self._aktif_bbox) if self._aktif_bbox is not None else None
+
+        with self.kaydedici._kilit:
+            son_kayitlar = list(self.kaydedici.son_kayitlar[-10:])
+
+        return {
+            "son_guncelleme": datetime.now().isoformat(),
+            "kantar_kg": round(float(guncel_kg), 1),
+            "kantar_sabit": bool(agirlik_sabit),
+            "seans_kilitli": bool(seans_kilitli),
+            "plaka_buffer": plaka_buffer["plaka"] if plaka_buffer else None,
+            "plaka_buffer_detay": plaka_buffer,
+            "aktif_bbox": aktif_bbox,
+            "fps": round(float(self._fps), 1),
+            "yakalama_fps": round(float(self._yakalama_fps), 1),
+            "son_kayit": asdict(son_kayitlar[-1]) if son_kayitlar else None,
+            "son_10": [asdict(k) for k in son_kayitlar],
+            "sistem": {
+                "surum": "V12-LC",
+                "mimari": "Loose Coupling",
+                "kanallar": ["canli_durum.json", "kantar_raporu.csv", "canli_kare.jpg"],
+                "simulasyon_modu": bool(CONFIG.get("SIMULASYON_MODU")),
+                "ocr_backend": getattr(self.cozucu, "primary_backend_adi", "OCR"),
+                "ocr_fallback": getattr(self.cozucu, "fallback_backend_adi", None),
+                "ocr_kare_atlama": self._cfg_ocr_kare_atlama,
+                "canli_kare_aralik": self._cfg_canli_kare_aralik,
+                "calisiyor": not self._cikis_istendi.is_set(),
+            },
+        }
+
+    def _canli_durum_yaz(
+        self,
+        guncel_kg: float,
+        agirlik_sabit: bool,
+        zorla: bool = False,
+    ) -> None:
+        simdi = time.monotonic()
+        if not zorla and (
+            simdi - self._son_canli_durum_yazimi
+        ) < self._cfg_canli_durum_aralik:
+            return
+
+        hedef = Path(self._cfg_canli_durum_dosya)
+        tmp = hedef.with_name(hedef.name + ".tmp")
+        payload = self._canli_durum_payload(guncel_kg, agirlik_sabit)
+        try:
+            hedef.parent.mkdir(parents=True, exist_ok=True)
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            tmp.replace(hedef)
+            self._son_canli_durum_yazimi = simdi
+        except Exception as e:
+            log.warning("Canlı durum JSON yazılamadı: %s", e)
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+
     # -----------------------------------------------------------------------
     # Sinyal işleyici
     # -----------------------------------------------------------------------
     def _signal_handler(self, signum, frame) -> None:
         log.info("Signal %s alındı — graceful shutdown başlıyor...", signum)
         self._cikis_istendi.set()
-
-    # -----------------------------------------------------------------------
-    # FastAPI süreci
-    # -----------------------------------------------------------------------
-    def _fastapi_baslat(self) -> multiprocessing.Process:
-        host = str(CONFIG.get("FASTAPI_HOST", "0.0.0.0"))
-        port = int(CONFIG.get("FASTAPI_PORT", 8000))
-        proc = multiprocessing.Process(
-            target=_fastapi_sureci_hedef,
-            args=(host, port),
-            name="FastAPIProcess",
-            daemon=True,
-        )
-        proc.start()
-        log.info(
-            "FastAPI süreci başlatıldı (PID=%d) → http://%s:%s",
-            proc.pid, host, port,
-        )
-        return proc
 
     # -----------------------------------------------------------------------
     # Graceful shutdown
@@ -319,20 +348,12 @@ class OtoKantar:
         # IO thread-pool'u kapat (devam eden snapshotları tamamla)
         self._io_executor.shutdown(wait=True, cancel_futures=False)
 
+        self._canli_durum_yaz(
+            self.kantar_okuyucu.agirlik,
+            self.kantar_okuyucu.sabit,
+            zorla=True,
+        )
         self.kaydedici.kapat()
-
-        if self._fastapi_proc is not None and self._fastapi_proc.is_alive():
-            log.info(
-                "FastAPI süreci (PID=%d) kapatılıyor...", self._fastapi_proc.pid
-            )
-            self._fastapi_proc.terminate()          # SIGTERM → graceful
-            self._fastapi_proc.join(timeout=5.0)
-            if self._fastapi_proc.is_alive():
-                log.warning("FastAPI SIGTERM'e yanıt vermedi → SIGKILL.")
-                self._fastapi_proc.kill()
-                self._fastapi_proc.join(timeout=2.0)
-            else:
-                log.info("FastAPI süreci temiz kapandı.")
 
         cv2.destroyAllWindows()
         log.info("OtoKantar V12 temiz kapandı.")
@@ -815,15 +836,18 @@ class OtoKantar:
     # Ana döngü
     # -----------------------------------------------------------------------
     def calistir(self) -> None:
-        sistem_referansi_ata(self)
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
 
-        self._fastapi_proc = self._fastapi_baslat()
         self.kantar_okuyucu.start()
         log.info("KantarOkuyucu başlatıldı.")
         self.ocr_worker.start()
         log.info("OcrWorker başlatıldı.")
+        self._canli_durum_yaz(
+            self.kantar_okuyucu.agirlik,
+            self.kantar_okuyucu.sabit,
+            zorla=True,
+        )
 
         kare_kuyrugu: queue.Queue = queue.Queue(
             maxsize=max(1, int(CONFIG.get("KARE_KUYRUK_BOYUTU", 2)))
@@ -849,6 +873,10 @@ class OtoKantar:
                 try:
                     kare = kare_kuyrugu.get(timeout=0.25)
                 except queue.Empty:
+                    self._canli_durum_yaz(
+                        self.kantar_okuyucu.agirlik,
+                        self.kantar_okuyucu.sabit,
+                    )
                     tus = cv2.waitKey(1) & 0xFF
                     if tus == ord("0"):
                         self.kantar_okuyucu.simule_et(0.0)
@@ -868,6 +896,10 @@ class OtoKantar:
                     yakalama_fps=self._yakalama_fps,
                 )
                 self._canli_kare_yaz(kare)
+                self._canli_durum_yaz(
+                    self.kantar_okuyucu.agirlik,
+                    self.kantar_okuyucu.sabit,
+                )
                 cv2.imshow("OtoKantar V12", kare)
                 tus = cv2.waitKey(1) & 0xFF
                 if tus == ord("0"):
@@ -891,6 +923,5 @@ class OtoKantar:
 # Entry point
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    multiprocessing.freeze_support()
     sistem = OtoKantar()
     sistem.calistir()

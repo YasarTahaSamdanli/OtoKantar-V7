@@ -1,123 +1,433 @@
 <?php
 /**
- * OtoKantar V7 — api_canli.php
- * AJAX endpoint: JavaScript'in fetch() ile her 1 saniyede çağırdığı PHP servisi.
+ * OtoKantar V7 - canli panel endpoint'i
  *
- * Desteklenen action'lar:
- *   ?action=durum     → canli_durum.json içeriğini JSON olarak döner
- *   ?action=csv       → kantar_raporu.csv'den son N kaydı JSON olarak döner
- *   ?action=csv_indir → kantar_raporu.csv'yi tarayıcıya indirir
+ * Bu katman Python surecine dokunmaz.
+ * Yalnizca ayni klasordeki JSON ve CSV dosyalarini okur.
  *
- * NOT: Python backend'e hiç dokunulmaz. Bu dosya sadece okuma yapar.
+ * Action'lar:
+ *   ?action=durum
+ *   ?action=csv&limit=50
+ *   ?action=panel&limit=30
+ *   ?action=csv_indir
  */
 
-// ─── Güvenlik: sadece aynı sunucudan gelen isteklere izin ver ─────────────────
-// İhtiyaç duyarsanız aşağıdaki satırı kaldırabilirsiniz.
-header('Access-Control-Allow-Origin: same-origin');
+declare(strict_types=1);
+
+header('Cross-Origin-Resource-Policy: same-origin');
 header('X-Content-Type-Options: nosniff');
 
 $action = $_GET['action'] ?? 'durum';
-
-// ─── Dosya yolları ────────────────────────────────────────────────────────────
 $JSON_DOSYA = __DIR__ . '/canli_durum.json';
-$CSV_DOSYA  = __DIR__ . '/kantar_raporu.csv';
+$CSV_DOSYA = __DIR__ . '/kantar_raporu.csv';
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ACTION: durum — canli_durum.json'ı oku ve döndür
-// ═══════════════════════════════════════════════════════════════════════════════
-if ($action === 'durum') {
+function json_yanit(array $payload, int $status = 200): void
+{
+    http_response_code($status);
     header('Content-Type: application/json; charset=utf-8');
     header('Cache-Control: no-store, no-cache, must-revalidate');
     header('Pragma: no-cache');
-
-    if (!file_exists($JSON_DOSYA)) {
-        http_response_code(404);
-        echo json_encode([
-            'hata' => 'canli_durum.json bulunamadı',
-            'yol'  => $JSON_DOSYA,
-        ], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    $icerik = file_get_contents($JSON_DOSYA);
-    if ($icerik === false) {
-        http_response_code(500);
-        echo json_encode(['hata' => 'Dosya okunamadı'], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    $veri = json_decode($icerik, true);
-    if (json_last_error() !== JSON_ERROR_NONE) {
-        http_response_code(500);
-        echo json_encode([
-            'hata'        => 'JSON parse hatası',
-            'json_hata'   => json_last_error_msg(),
-        ], JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    // Sunucu zaman damgası ekle (client-side gecikme tespiti için)
-    $veri['_sunucu_zaman'] = date('Y-m-d\TH:i:s');
-    $veri['_dosya_mtime']  = date('Y-m-d\TH:i:s', filemtime($JSON_DOSYA));
-
-    echo json_encode($veri, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
     exit;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ACTION: csv — kantar_raporu.csv'den son N kaydı JSON olarak döndür
-// ═══════════════════════════════════════════════════════════════════════════════
-if ($action === 'csv') {
-    header('Content-Type: application/json; charset=utf-8');
-    header('Cache-Control: no-store, no-cache, must-revalidate');
+function trim_bom(string $value): string
+{
+    return preg_replace('/^\xEF\xBB\xBF/', '', $value) ?? $value;
+}
 
-    $limit = min(100, max(1, intval($_GET['limit'] ?? 50)));
+function tarih_iso(?int $timestamp): ?string
+{
+    return $timestamp ? date('Y-m-d\TH:i:s', $timestamp) : null;
+}
 
-    if (!file_exists($CSV_DOSYA)) {
-        http_response_code(404);
-        echo json_encode(['hata' => 'kantar_raporu.csv bulunamadı'], JSON_UNESCAPED_UNICODE);
-        exit;
+function parse_float($value): ?float
+{
+    if ($value === null) {
+        return null;
+    }
+    $value = trim((string) $value);
+    if ($value === '') {
+        return null;
+    }
+    $value = str_replace(',', '.', $value);
+    return is_numeric($value) ? (float) $value : null;
+}
+
+function durum_bos(): array
+{
+    return [
+        'son_guncelleme' => null,
+        'kantar_kg' => null,
+        'kantar_sabit' => false,
+        'seans_kilitli' => false,
+        'plaka_buffer' => null,
+        'plaka_buffer_detay' => null,
+        'fps' => null,
+        'yakalama_fps' => null,
+        'son_kayit' => null,
+        'son_10' => [],
+        'sistem' => [
+            'surum' => null,
+            'mimari' => 'Loose Coupling',
+            'kanallar' => ['canli_durum.json', 'kantar_raporu.csv', 'canli_kare.jpg'],
+            'simulasyon_modu' => null,
+            'ocr_backend' => null,
+            'ocr_fallback' => null,
+            'ocr_kare_atlama' => null,
+            'canli_kare_aralik' => null,
+            'calisiyor' => false,
+        ],
+    ];
+}
+
+function durum_oku(string $jsonDosya, bool $strict = true): array
+{
+    if (!is_file($jsonDosya)) {
+        if ($strict) {
+            json_yanit([
+                'hata' => 'canli_durum.json bulunamadi',
+                'yol' => $jsonDosya,
+            ], 404);
+        }
+        $bos = durum_bos();
+        $bos['_sunucu_zaman'] = date('Y-m-d\TH:i:s');
+        $bos['_dosya_mtime'] = null;
+        $bos['_durum_yasi_saniye'] = null;
+        return $bos;
     }
 
-    $fp = fopen($CSV_DOSYA, 'r');
+    $icerik = file_get_contents($jsonDosya);
+    if ($icerik === false) {
+        if ($strict) {
+            json_yanit(['hata' => 'canli_durum.json okunamadi'], 500);
+        }
+        $bos = durum_bos();
+        $bos['_sunucu_zaman'] = date('Y-m-d\TH:i:s');
+        $bos['_dosya_mtime'] = tarih_iso(@filemtime($jsonDosya) ?: null);
+        $bos['_durum_yasi_saniye'] = null;
+        return $bos;
+    }
+
+    $veri = json_decode($icerik, true);
+    if (!is_array($veri)) {
+        if ($strict) {
+            json_yanit([
+                'hata' => 'JSON parse hatasi',
+                'json_hata' => json_last_error_msg(),
+            ], 500);
+        }
+        $veri = [];
+    }
+
+    $veri = array_replace_recursive(durum_bos(), $veri);
+    $veri['_sunucu_zaman'] = date('Y-m-d\TH:i:s');
+    $veri['_dosya_mtime'] = tarih_iso(@filemtime($jsonDosya) ?: null);
+
+    $yas = null;
+    if (!empty($veri['son_guncelleme'])) {
+        $ts = strtotime((string) $veri['son_guncelleme']);
+        if ($ts !== false) {
+            $yas = max(0, time() - $ts);
+        }
+    }
+    $veri['_durum_yasi_saniye'] = $yas;
+
+    return $veri;
+}
+
+function csv_baslik_key(string $value): string
+{
+    $value = trim_bom(trim($value));
+    $value = strtolower($value);
+    $value = strtr($value, [
+        'i' => 'i',
+        'ı' => 'i',
+        'ğ' => 'g',
+        'ü' => 'u',
+        'ş' => 's',
+        'ö' => 'o',
+        'ç' => 'c',
+        '(' => '',
+        ')' => '',
+        '[' => '',
+        ']' => '',
+        '{' => '',
+        '}' => '',
+        '-' => '',
+        '_' => '',
+        ' ' => '',
+        '/' => '',
+        '\\' => '',
+        '.' => '',
+    ]);
+    return preg_replace('/[^a-z0-9]/', '', $value) ?? '';
+}
+
+function kayit_bos(): array
+{
+    return [
+        'plaka' => '',
+        'durum' => '',
+        'giris_tarih' => '',
+        'giris_saat' => '',
+        'giris_agirlik' => null,
+        'cikis_tarih' => '',
+        'cikis_saat' => '',
+        'cikis_agirlik' => null,
+        'net_agirlik' => null,
+        'guven' => null,
+        'operator' => '',
+        'firma_adi' => '',
+        'sofor_adi' => '',
+        'sofor_tel' => '',
+        'malzeme_cinsi' => '',
+        'irsaliye_no' => '',
+    ];
+}
+
+function normalize_assoc(array $assoc): array
+{
+    $kayit = kayit_bos();
+    $kayit['plaka'] = trim((string) ($assoc['plaka'] ?? ''));
+    $kayit['durum'] = strtoupper(trim((string) ($assoc['durum'] ?? ($assoc['tip'] ?? ''))));
+    $kayit['giris_tarih'] = trim((string) ($assoc['giristarih'] ?? ($assoc['tarih'] ?? '')));
+    $kayit['giris_saat'] = trim((string) ($assoc['girissaat'] ?? ($assoc['saat'] ?? '')));
+    $kayit['giris_agirlik'] = parse_float($assoc['girisagirlikkg'] ?? ($assoc['agirlik'] ?? null));
+    $kayit['cikis_tarih'] = trim((string) ($assoc['cikistarih'] ?? ''));
+    $kayit['cikis_saat'] = trim((string) ($assoc['cikissaat'] ?? ''));
+    $kayit['cikis_agirlik'] = parse_float($assoc['cikisagirlikkg'] ?? null);
+    $kayit['net_agirlik'] = parse_float($assoc['netagirlikkg'] ?? null);
+    $kayit['guven'] = parse_float($assoc['guven'] ?? null);
+    $kayit['operator'] = trim((string) ($assoc['operator'] ?? ''));
+    $kayit['firma_adi'] = trim((string) ($assoc['firmaadi'] ?? ''));
+    $kayit['sofor_adi'] = trim((string) ($assoc['soforadi'] ?? ''));
+    $kayit['sofor_tel'] = trim((string) ($assoc['sofortel'] ?? ''));
+    $kayit['malzeme_cinsi'] = trim((string) ($assoc['malzemecinsi'] ?? ''));
+    $kayit['irsaliye_no'] = trim((string) ($assoc['irsaliyeno'] ?? ''));
+    return $kayit;
+}
+
+function normalize_row(array $headerKeys, array $row): ?array
+{
+    $row = array_map(static function ($value) {
+        return is_string($value) ? trim_bom(trim($value)) : $value;
+    }, $row);
+
+    $row = array_values(array_filter($row, static function ($value) {
+        return $value !== null;
+    }));
+
+    if (count($row) === 0) {
+        return null;
+    }
+
+    if ($headerKeys && count($row) === count($headerKeys)) {
+        $assoc = array_combine($headerKeys, $row);
+        if (is_array($assoc)) {
+            return normalize_assoc($assoc);
+        }
+    }
+
+    $count = count($row);
+    if ($count >= 16) {
+        return [
+            'plaka' => trim((string) $row[0]),
+            'durum' => strtoupper(trim((string) $row[1])),
+            'giris_tarih' => trim((string) $row[2]),
+            'giris_saat' => trim((string) $row[3]),
+            'giris_agirlik' => parse_float($row[4]),
+            'cikis_tarih' => trim((string) $row[5]),
+            'cikis_saat' => trim((string) $row[6]),
+            'cikis_agirlik' => parse_float($row[7]),
+            'net_agirlik' => parse_float($row[8]),
+            'guven' => parse_float($row[9]),
+            'operator' => trim((string) $row[10]),
+            'firma_adi' => trim((string) $row[11]),
+            'sofor_adi' => trim((string) $row[12]),
+            'sofor_tel' => trim((string) $row[13]),
+            'malzeme_cinsi' => trim((string) $row[14]),
+            'irsaliye_no' => trim((string) $row[15]),
+        ];
+    }
+
+    if ($count >= 11) {
+        return [
+            'plaka' => trim((string) $row[0]),
+            'durum' => strtoupper(trim((string) $row[1])),
+            'giris_tarih' => trim((string) $row[2]),
+            'giris_saat' => trim((string) $row[3]),
+            'giris_agirlik' => parse_float($row[4]),
+            'cikis_tarih' => trim((string) $row[5]),
+            'cikis_saat' => trim((string) $row[6]),
+            'cikis_agirlik' => parse_float($row[7]),
+            'net_agirlik' => parse_float($row[8]),
+            'guven' => parse_float($row[9]),
+            'operator' => trim((string) $row[10]),
+            'firma_adi' => '',
+            'sofor_adi' => '',
+            'sofor_tel' => '',
+            'malzeme_cinsi' => '',
+            'irsaliye_no' => '',
+        ];
+    }
+
+    if ($count >= 6) {
+        $tip = strtoupper(trim((string) $row[3]));
+        return [
+            'plaka' => trim((string) $row[2]),
+            'durum' => $tip,
+            'giris_tarih' => trim((string) $row[0]),
+            'giris_saat' => trim((string) $row[1]),
+            'giris_agirlik' => null,
+            'cikis_tarih' => '',
+            'cikis_saat' => '',
+            'cikis_agirlik' => null,
+            'net_agirlik' => null,
+            'guven' => parse_float($row[4]),
+            'operator' => trim((string) $row[5]),
+            'firma_adi' => '',
+            'sofor_adi' => '',
+            'sofor_tel' => '',
+            'malzeme_cinsi' => '',
+            'irsaliye_no' => '',
+        ];
+    }
+
+    return null;
+}
+
+function csv_ozet(array $kayitlar): array
+{
+    $bugun = date('Y-m-d');
+    $birSaatOnce = time() - 3600;
+    $bugunKayit = 0;
+    $sonSaatKayit = 0;
+    $aktifSeans = 0;
+    $tamamlanan = 0;
+    $guvenToplam = 0.0;
+    $guvenAdet = 0;
+
+    foreach ($kayitlar as $kayit) {
+        $durum = strtoupper((string) ($kayit['durum'] ?? ''));
+        $tarih = (string) ($kayit['giris_tarih'] ?? '');
+        $saat = (string) ($kayit['giris_saat'] ?? '');
+
+        if ($tarih === $bugun) {
+            $bugunKayit++;
+        }
+
+        $ts = strtotime(trim($tarih . ' ' . $saat));
+        if ($ts !== false && $ts >= $birSaatOnce) {
+            $sonSaatKayit++;
+        }
+
+        if ($durum === 'ICERIDE' || $durum === 'GIRIS') {
+            $aktifSeans++;
+        }
+        if ($durum === 'TAMAMLANDI' || $durum === 'CIKIS') {
+            $tamamlanan++;
+        }
+
+        if (isset($kayit['guven']) && $kayit['guven'] !== null) {
+            $guvenToplam += (float) $kayit['guven'];
+            $guvenAdet++;
+        }
+    }
+
+    return [
+        'bugun_kayit' => $bugunKayit,
+        'son_saat_kayit' => $sonSaatKayit,
+        'aktif_seans' => $aktifSeans,
+        'tamamlanan' => $tamamlanan,
+        'ortalama_guven' => $guvenAdet > 0 ? round($guvenToplam / $guvenAdet, 3) : null,
+        'ortalama_guven_yuzde' => $guvenAdet > 0 ? (int) round(($guvenToplam / $guvenAdet) * 100) : null,
+    ];
+}
+
+function csv_oku(string $csvDosya, int $limit = 50, bool $strict = true): array
+{
+    $bos = [
+        'toplam' => 0,
+        'limit' => $limit,
+        'kayitlar' => [],
+        'ozet' => csv_ozet([]),
+        '_dosya_mtime' => null,
+    ];
+
+    if (!is_file($csvDosya)) {
+        if ($strict) {
+            json_yanit(['hata' => 'kantar_raporu.csv bulunamadi'], 404);
+        }
+        return $bos;
+    }
+
+    $ornek = file($csvDosya, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+    if ($ornek === false || count($ornek) === 0) {
+        return $bos;
+    }
+
+    $ilkSatir = trim_bom((string) $ornek[0]);
+    $delimiter = substr_count($ilkSatir, ';') >= substr_count($ilkSatir, ',') ? ';' : ',';
+
+    $fp = fopen($csvDosya, 'r');
     if (!$fp) {
-        http_response_code(500);
-        echo json_encode(['hata' => 'CSV okunamadı'], JSON_UNESCAPED_UNICODE);
-        exit;
+        if ($strict) {
+            json_yanit(['hata' => 'CSV okunamadi'], 500);
+        }
+        return $bos;
     }
 
-    $baslik = fgetcsv($fp);
-    $tumSatirlar = [];
+    $header = fgetcsv($fp, 0, $delimiter);
+    $header = is_array($header) ? array_map('csv_baslik_key', $header) : [];
+    $tumKayitlar = [];
 
-    while (($satir = fgetcsv($fp)) !== false) {
-        if ($baslik && count($satir) === count($baslik)) {
-            $tumSatirlar[] = array_combine($baslik, $satir);
-        } else {
-            $tumSatirlar[] = $satir;
+    while (($row = fgetcsv($fp, 0, $delimiter)) !== false) {
+        $normalized = normalize_row($header, $row);
+        if ($normalized !== null && $normalized['plaka'] !== '') {
+            $tumKayitlar[] = $normalized;
         }
     }
     fclose($fp);
 
-    $toplam   = count($tumSatirlar);
-    $sonKayitlar = array_reverse(array_slice($tumSatirlar, -$limit));
-
-    echo json_encode([
-        'toplam'       => $toplam,
-        'limit'        => $limit,
-        'baslik'       => $baslik,
-        'kayitlar'     => $sonKayitlar,
-        '_sunucu_zaman' => date('Y-m-d\TH:i:s'),
-    ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-    exit;
+    return [
+        'toplam' => count($tumKayitlar),
+        'limit' => $limit,
+        'kayitlar' => array_reverse(array_slice($tumKayitlar, -$limit)),
+        'ozet' => csv_ozet($tumKayitlar),
+        '_dosya_mtime' => tarih_iso(@filemtime($csvDosya) ?: null),
+    ];
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// ACTION: csv_indir — CSV dosyasını tarayıcıya indirir
-// ═══════════════════════════════════════════════════════════════════════════════
+$limit = min(200, max(1, (int) ($_GET['limit'] ?? 30)));
+
+if ($action === 'durum') {
+    json_yanit(durum_oku($JSON_DOSYA, true));
+}
+
+if ($action === 'csv') {
+    json_yanit(csv_oku($CSV_DOSYA, $limit, true));
+}
+
+if ($action === 'panel') {
+    $durum = durum_oku($JSON_DOSYA, false);
+    $csv = csv_oku($CSV_DOSYA, $limit, false);
+    json_yanit([
+        'durum' => $durum,
+        'toplam' => $csv['toplam'],
+        'limit' => $csv['limit'],
+        'kayitlar' => $csv['kayitlar'],
+        'ozet' => $csv['ozet'],
+        '_sunucu_zaman' => date('Y-m-d\TH:i:s'),
+        '_durum_dosya_mtime' => $durum['_dosya_mtime'] ?? null,
+        '_csv_dosya_mtime' => $csv['_dosya_mtime'],
+    ]);
+}
+
 if ($action === 'csv_indir') {
-    if (!file_exists($CSV_DOSYA)) {
+    if (!is_file($CSV_DOSYA)) {
         http_response_code(404);
-        echo 'kantar_raporu.csv bulunamadı';
+        echo 'kantar_raporu.csv bulunamadi';
         exit;
     }
 
@@ -126,25 +436,17 @@ if ($action === 'csv_indir') {
     header('Content-Disposition: attachment; filename="' . $dosyaAdi . '"');
     header('Content-Length: ' . filesize($CSV_DOSYA));
     header('Cache-Control: no-store');
-
-    // UTF-8 BOM ekle (Excel Türkçe karakter uyumu için)
-    echo "\xEF\xBB\xBF";
     readfile($CSV_DOSYA);
     exit;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Bilinmeyen action
-// ═══════════════════════════════════════════════════════════════════════════════
-http_response_code(400);
-header('Content-Type: application/json; charset=utf-8');
-echo json_encode([
-    'hata'            => 'Geçersiz action parametresi',
-    'gecerli_actionlar' => ['durum', 'csv', 'csv_indir'],
-    'kullanim'        => [
-        'Canlı durum' => 'api_canli.php?action=durum',
-        'CSV JSON'    => 'api_canli.php?action=csv&limit=50',
-        'CSV indir'   => 'api_canli.php?action=csv_indir',
+json_yanit([
+    'hata' => 'Gecersiz action parametresi',
+    'gecerli_actionlar' => ['durum', 'csv', 'panel', 'csv_indir'],
+    'kullanim' => [
+        'Canli durum' => 'api_canli.php?action=durum',
+        'CSV JSON' => 'api_canli.php?action=csv&limit=50',
+        'Tek istek panel' => 'api_canli.php?action=panel&limit=30',
+        'CSV indir' => 'api_canli.php?action=csv_indir',
     ],
-], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
-exit;
+], 400);

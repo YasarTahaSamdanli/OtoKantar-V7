@@ -347,10 +347,16 @@ class PlakaCozucu:
             self._primary = _EasyBackend(diller, gpu)
         else:
             raise RuntimeError("Hiçbir OCR backend bulunamadı (PaddleOCR veya EasyOCR gerekli).")
+        self.primary_backend_adi = type(self._primary).__name__.lstrip("_").replace("Backend", "")
 
         self._fallback: Optional[_OcrBackend] = None
         if _PADDLE_AVAILABLE and _EASY_AVAILABLE:
             self._fallback = _EasyBackend(diller, gpu)
+        self.fallback_backend_adi = (
+            type(self._fallback).__name__.lstrip("_").replace("Backend", "")
+            if self._fallback is not None
+            else None
+        )
 
     # ------------------------------------------------------------------
     # Geometry helpers

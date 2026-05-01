@@ -44,6 +44,7 @@ _CONFIG_VARSAYILAN = {
     "DB_DOSYA": "otokantar.db",
     "CANLI_KARE_DOSYA": "canli_kare.jpg",
     "CANLI_KARE_ARALIK": 5,
+    "CANLI_DURUM_YAZIM_ARALIK": 0.5,
     "KARE_KUYRUK_BOYUTU": 2,
     "OCR_WORKER_KUYRUK": 4,
     "PLATE_WEIGHTS_URL": (
