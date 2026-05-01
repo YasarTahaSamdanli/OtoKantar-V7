@@ -1,13 +1,13 @@
 {
-  "son_guncelleme": "2026-05-01T23:30:26.565479",
-  "kantar_kg": 42000.0,
+  "son_guncelleme": "2026-05-02T00:03:52.080941",
+  "kantar_kg": 12000.0,
   "kantar_sabit": true,
   "seans_kilitli": false,
   "plaka_buffer": null,
   "plaka_buffer_detay": null,
   "aktif_bbox": null,
-  "fps": 15.9,
-  "yakalama_fps": 30.3,
+  "fps": 13.4,
+  "yakalama_fps": 25.6,
   "son_kayit": null,
   "son_10": [],
   "sistem": {
