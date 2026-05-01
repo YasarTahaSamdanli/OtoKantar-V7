@@ -158,7 +158,9 @@ class OtoKantar:
         try:
             db_baglanti = sqlite3.connect(CONFIG.get("DB_DOSYA", "otokantar.db"))
             satirlar = db_baglanti.execute("SELECT plaka FROM kayitli_araclar").fetchall()
-            self.dogrulama.bilinen_plakalar = set(r[0] for r in satirlar)
+            self.dogrulama.bilinen_plakalar = self.dogrulama.hazirla_bilinen_plakalar(
+                [r[0] for r in satirlar]
+            )
             db_baglanti.close()
             log.info(f"Oto-Düzeltme Aktif: Veritabanından {len(self.dogrulama.bilinen_plakalar)} araç hafızaya alındı.")
         except Exception as e:
@@ -285,6 +287,20 @@ class OtoKantar:
             },
         }
 
+    def _atomik_degistir(self, tmp: Path, hedef: Path, deneme: int = 5) -> None:
+        son_hata = None
+        for _ in range(max(1, deneme)):
+            try:
+                tmp.replace(hedef)
+                return
+            except OSError as e:
+                if getattr(e, "winerror", None) not in {5, 32}:
+                    raise
+                son_hata = e
+                time.sleep(0.05)
+        if son_hata is not None:
+            raise son_hata
+
     def _canli_durum_yaz(
         self,
         guncel_kg: float,
@@ -304,7 +320,7 @@ class OtoKantar:
             hedef.parent.mkdir(parents=True, exist_ok=True)
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
-            tmp.replace(hedef)
+            self._atomik_degistir(tmp, hedef)
             self._son_canli_durum_yazimi = simdi
         except Exception as e:
             log.warning("Canlı durum JSON yazılamadı: %s", e)
@@ -550,7 +566,7 @@ class OtoKantar:
         tmp   = hedef.with_suffix(".tmp.jpg")
         try:
             cv2.imwrite(str(tmp), kare)
-            tmp.replace(hedef)          # POSIX'te atomik; Windows'ta da çalışır
+            self._atomik_degistir(tmp, hedef)
         except Exception as e:
             log.warning("Canlı kare yazılamadı: %s", e)
             try:

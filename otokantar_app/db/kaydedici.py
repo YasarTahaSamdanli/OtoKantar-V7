@@ -1,6 +1,7 @@
 import csv
 import json
 import queue
+import re
 import sqlite3
 import threading
 import time
@@ -9,12 +10,29 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from otokantar_app.config import _HARF_DUZELTME, _RAKAM_DUZELTME
 from otokantar_app.logger import log
 from otokantar_app.models import PlakaKayit
 
 
 class KantarKaydedici:
     _RETRY_GECIKME = [0.5, 1.0, 2.0]
+    _PLAKA_REGEX = re.compile(r"^(0[1-9]|[1-7][0-9]|8[0-1])[A-Z]{1,3}\d{2,4}$")
+    _ALNUM_DISI = re.compile(r"[^A-Z0-9]+")
+    _TR_HARF_MAP = str.maketrans({
+        "C": "C",
+        "G": "G",
+        "I": "I",
+        "O": "O",
+        "S": "S",
+        "U": "U",
+        "Ç": "C",
+        "Ğ": "G",
+        "İ": "I",
+        "Ö": "O",
+        "Ş": "S",
+        "Ü": "U",
+    })
 
     def __init__(self, csv_dosya: str, json_dosya: str, db_dosya: str):
         self.csv_dosya = csv_dosya
@@ -34,6 +52,46 @@ class KantarKaydedici:
     # ------------------------------------------------------------------
     # ŞEMA KURULUM & MİGRASYON
     # ------------------------------------------------------------------
+    def _plaka_temizle(self, plaka: str) -> str:
+        plaka = (plaka or "").upper().translate(self._TR_HARF_MAP)
+        return self._ALNUM_DISI.sub("", plaka)
+
+    def _plaka_harf_blok_duzelt(self, metin: str) -> str:
+        return "".join(_HARF_DUZELTME.get(ch, ch) for ch in metin)
+
+    def _plaka_rakam_blok_duzelt(self, metin: str) -> str:
+        return "".join(_RAKAM_DUZELTME.get(ch, ch) for ch in metin)
+
+    def _plaka_normalize(self, plaka: str) -> str:
+        ham = self._plaka_temizle(plaka)
+        if self._PLAKA_REGEX.match(ham):
+            return ham
+
+        adaylar = []
+        for harf_uzunlugu in range(1, 4):
+            rakam_uzunlugu = len(ham) - 2 - harf_uzunlugu
+            if rakam_uzunlugu < 2 or rakam_uzunlugu > 4:
+                continue
+
+            il_kodu_ham = ham[:2]
+            harf_ham = ham[2:2 + harf_uzunlugu]
+            rakam_ham = ham[2 + harf_uzunlugu:]
+            aday = (
+                f"{self._plaka_rakam_blok_duzelt(il_kodu_ham)}"
+                f"{self._plaka_harf_blok_duzelt(harf_ham)}"
+                f"{self._plaka_rakam_blok_duzelt(rakam_ham)}"
+            )
+            if not self._PLAKA_REGEX.match(aday):
+                continue
+            degisim_sayisi = sum(1 for once, sonra in zip(ham, aday) if once != sonra)
+            adaylar.append((degisim_sayisi, harf_uzunlugu, aday))
+
+        if not adaylar:
+            return ham
+
+        adaylar.sort(key=lambda item: (item[0], item[1] != 2, item[1] != 3, item[1]))
+        return adaylar[0][2]
+
     def _db_kur_sema(self):
         con = sqlite3.connect(self.db_dosya, timeout=10)
         try:
@@ -161,7 +219,14 @@ class KantarKaydedici:
         con = sqlite3.connect(self.db_dosya, timeout=10)
         try:
             row = con.execute("SELECT 1 FROM kara_liste WHERE plaka = ? LIMIT 1", (plaka,)).fetchone()
-            return row is not None
+            if row is not None:
+                return True
+
+            hedef = self._plaka_normalize(plaka)
+            for (kayitli_plaka,) in con.execute("SELECT plaka FROM kara_liste"):
+                if self._plaka_normalize(kayitli_plaka) == hedef:
+                    return True
+            return False
         except Exception as e:
             log.warning("Kara liste sorgulanırken hata: %s", e)
             return False
@@ -183,7 +248,22 @@ class KantarKaydedici:
                 "SELECT firma_adi, sofor_adi, sofor_tel FROM kayitli_araclar WHERE plaka = ? LIMIT 1",
                 (plaka,),
             ).fetchone()
-            return dict(row) if row else None
+            if row:
+                return dict(row)
+
+            hedef = self._plaka_normalize(plaka)
+            satirlar = con.execute(
+                "SELECT plaka, firma_adi, sofor_adi, sofor_tel FROM kayitli_araclar"
+            ).fetchall()
+            for kayit in satirlar:
+                if self._plaka_normalize(kayit["plaka"]) == hedef:
+                    log.info("Arac sicili normalize fallback ile eslesti: %s -> %s", plaka, kayit["plaka"])
+                    return {
+                        "firma_adi": kayit["firma_adi"],
+                        "sofor_adi": kayit["sofor_adi"],
+                        "sofor_tel": kayit["sofor_tel"],
+                    }
+            return None
         except Exception as e:
             log.warning("Araç bilgisi getirme hatası (%s): %s", plaka, e)
             return None
@@ -266,7 +346,18 @@ class KantarKaydedici:
                 "SELECT * FROM gecis_raporlari WHERE plaka = ? AND durum = 'ICERIDE' ORDER BY id DESC LIMIT 1",
                 (plaka,),
             ).fetchone()
-            return dict(row) if row is not None else None
+            if row is not None:
+                return dict(row)
+
+            hedef = self._plaka_normalize(plaka)
+            satirlar = con.execute(
+                "SELECT * FROM gecis_raporlari WHERE durum = 'ICERIDE' ORDER BY id DESC"
+            ).fetchall()
+            for kayit in satirlar:
+                if self._plaka_normalize(kayit["plaka"]) == hedef:
+                    log.info("Acik seans normalize fallback ile eslesti: %s -> %s", plaka, kayit["plaka"])
+                    return dict(kayit)
+            return None
         finally:
             con.close()
 

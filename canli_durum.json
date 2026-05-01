@@ -1,44 +1,28 @@
 {
-  "son_guncelleme": "2026-04-16T17:53:23.779412",
-  "son_kayit": {
-    "plaka": "34J1M82",
-    "giris_tarih": "2026-04-16",
-    "giris_saat": "17:53:09",
-    "giris_agirlik": 12000.0,
-    "guven": 0.0,
-    "cikis_tarih": "2026-04-16",
-    "cikis_saat": "17:53:23",
-    "cikis_agirlik": 42000.0,
-    "net_agirlik": 30000.0,
-    "durum": "TAMAMLANDI",
-    "operator": "AUTO"
-  },
-  "son_10": [
-    {
-      "plaka": "34J1M82",
-      "giris_tarih": "2026-04-16",
-      "giris_saat": "17:53:09",
-      "giris_agirlik": 12000.0,
-      "guven": 0.0,
-      "cikis_tarih": null,
-      "cikis_saat": null,
-      "cikis_agirlik": null,
-      "net_agirlik": null,
-      "durum": "ICERIDE",
-      "operator": "AUTO"
-    },
-    {
-      "plaka": "34J1M82",
-      "giris_tarih": "2026-04-16",
-      "giris_saat": "17:53:09",
-      "giris_agirlik": 12000.0,
-      "guven": 0.0,
-      "cikis_tarih": "2026-04-16",
-      "cikis_saat": "17:53:23",
-      "cikis_agirlik": 42000.0,
-      "net_agirlik": 30000.0,
-      "durum": "TAMAMLANDI",
-      "operator": "AUTO"
-    }
-  ]
+  "son_guncelleme": "2026-05-01T23:30:26.565479",
+  "kantar_kg": 42000.0,
+  "kantar_sabit": true,
+  "seans_kilitli": false,
+  "plaka_buffer": null,
+  "plaka_buffer_detay": null,
+  "aktif_bbox": null,
+  "fps": 15.9,
+  "yakalama_fps": 30.3,
+  "son_kayit": null,
+  "son_10": [],
+  "sistem": {
+    "surum": "V12-LC",
+    "mimari": "Loose Coupling",
+    "kanallar": [
+      "canli_durum.json",
+      "kantar_raporu.csv",
+      "canli_kare.jpg"
+    ],
+    "simulasyon_modu": true,
+    "ocr_backend": "Easy",
+    "ocr_fallback": null,
+    "ocr_kare_atlama": 3,
+    "canli_kare_aralik": 5,
+    "calisiyor": false
+  }
 }
