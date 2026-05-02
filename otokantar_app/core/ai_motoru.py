@@ -23,6 +23,7 @@ OCR Strategy (CPU-optimised):
 
 from __future__ import annotations
 
+import os
 import queue
 import re
 import threading
@@ -33,6 +34,11 @@ from typing import Optional
 import cv2
 import numpy as np
 import torch
+
+# Paddle (özellikle Windows + CPU) bazı sürümlerde oneDNN/PIR executor ile çökebiliyor.
+# Bu bayraklar, import *öncesi* set edilmezse etkisiz kalır.
+os.environ.setdefault("FLAGS_enable_pir_in_executor", "0")
+os.environ.setdefault("FLAGS_use_mkldnn", "0")
 
 try:
     from paddleocr import PaddleOCR
@@ -62,10 +68,10 @@ _CONFIG_DEFAULTS: dict = {
     "ASPECT_RATIO_MAX": 6.5,
     # --- preprocessing toggles ---
     "PREP_GAMMA": True,
-    "PREP_BILATERAL": True,
+    "PREP_BILATERAL": False,          # OCR için tehlikeli — kapalı bırak
     "PREP_CLAHE": True,
-    "PREP_SHARPEN": True,
-    "PREP_ADAPTIVE": True,
+    "PREP_SHARPEN": False,            # karıncalanmanın baş sorumlusu — kapalı
+    "PREP_ADAPTIVE": False,           # içi boş harflerin baş sorumlusu — kapalı; Otsu yeterli
     "PREP_PERSPECTIVE": True,
     "PREP_SUPERRES": False,          # requires Real-ESRGAN weights
     "PREP_DESKEW": True,
@@ -83,9 +89,9 @@ _CONFIG_DEFAULTS: dict = {
     # --- sharpen ---
     "SHARPEN_AMOUNT": 1.5,
     "SHARPEN_SIGMA": 1.0,
-    # --- adaptive threshold ---
-    "ADAPTIVE_BLOCK": 15,
-    "ADAPTIVE_C": 8,
+    # --- adaptive threshold (yalnızca PREP_ADAPTIVE=True ise aktif) ---
+    "ADAPTIVE_BLOCK": 51,             # büyük blok → harflerin içi dolar; tek sayı olmalı
+    "ADAPTIVE_C": 4,                  # düşük C → daha az boşaltma
     # --- morphology ---
     "MORPH_KAPAT": True,
     "MORPH_KERNEL": (3, 3),
@@ -192,17 +198,38 @@ class _PaddleBackend(_OcrBackend):
     """PaddleOCR — primary backend, best accuracy for Turkish plates."""
 
     def __init__(self, gpu: bool) -> None:
-        self._reader = PaddleOCR(
+        self._broken = False
+        # paddleocr sürümleri arasında bazı parametreler değişebiliyor (örn. show_log)
+        kwargs = dict(
             use_angle_cls=False,
             lang="en",
-            use_gpu=gpu and torch.cuda.is_available(),
-            show_log=False,
         )
+        try:
+            self._reader = PaddleOCR(**kwargs, show_log=False)
+        except ValueError as e:
+            if "Unknown argument: show_log" not in str(e):
+                raise
+            self._reader = PaddleOCR(**kwargs)
         log.info("PaddleOCR hazır (gpu=%s)", gpu)
 
     def oku(self, gray: np.ndarray) -> tuple[str, float]:
+        if self._broken:
+            raise RuntimeError("PaddleOCR devre dışı (önceki hata nedeniyle).")
         bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-        sonuc = self._reader.ocr(bgr, cls=False)
+        try:
+            sonuc = self._reader.ocr(bgr, cls=False)
+        except TypeError as e:
+            # bazı paddleocr sürümlerinde `ocr(..., cls=...)` desteklenmez
+            if "unexpected keyword argument 'cls'" not in str(e):
+                raise
+            try:
+                sonuc = self._reader.ocr(bgr)
+            except Exception:
+                self._broken = True
+                raise
+        except Exception:
+            self._broken = True
+            raise
         if not sonuc or not sonuc[0]:
             return "", 0.0
         parcalar, confs = [], []
@@ -462,19 +489,27 @@ class PlakaCozucu:
         grayscale image ready for OCR, or None on failure.
 
         Pipeline:
-          1.  Bottom-strip crop (remove dirt / bolt shadows)
+          1.  Bottom-strip crop   (kirlilik / cıvata gölgelerini at)
           2.  2× resize
-          3.  Gamma correction  (dark images only)
-          4.  Perspective correction  (optional)
-          5.  Super-resolution hook  (optional, off by default)
-          6.  Convert to gray
-          7.  Bilateral filter  (bright/reflective plates)
-          8.  Deskew  (optional)
+          3.  Gamma düzeltme      (yalnızca karanlık görüntülerde)
+          4.  Perspektif düzeltme (opsiyonel)
+          5.  Super-resolution    (opsiyonel, varsayılan kapalı)
+          6.  Gri tonlamaya çevir
+          7.  Bilateral filtre    (opsiyonel, varsayılan KAPALI — OCR için riskli)
+          8.  Deskew              (opsiyonel)
           9.  CLAHE
-          10. Gaussian blur
-          11. Sharpening  (unsharp mask)
-          12. Dual thresholding  (Otsu vs Adaptive — best chosen)
-          13. Morphological closing
+          10. Gaussian blur       (hafif yumuşatma)
+          11. Keskinleştirme      (opsiyonel, EŞIKLEMEDEN ÖNCE ve hafif — PREP_SHARPEN=True ise)
+          12. Otsu eşikleme       (birincil; dolgu harfler için en güvenilir)
+              └─ Adaptif eşikleme (opsiyonel, PREP_ADAPTIVE=True ise; ADAPTIVE_BLOCK≥35 kullan)
+          13. Median blur (3×3)   (tuz-biber karıncalanmasını yok et)
+          14. Morfolojik kapama   (küçük boşlukları doldur)
+
+        Tasarım kararları:
+          • PREP_ADAPTIVE=False  → Otsu tek başına; içi dolu, temiz harfler.
+          • PREP_SHARPEN=False   → Keskinleştirme gürültüyü büyütür; kapalı bırak.
+          • PREP_BILATERAL=False → Bilateral OCR için tehlikelidir; kapalı bırak.
+          • medianBlur(3)        → Eşikleme sonrası karıncalanmayı temizler.
         """
         if bgr is None or bgr.size == 0:
             return None
@@ -504,7 +539,8 @@ class PlakaCozucu:
         # 6. Gray
         gri = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
 
-        # 7. Bilateral filter (only on bright/reflective plates)
+        # 7. Bilateral filtre — yalnızca parlak/yansımalı plakalarda; OCR için risklidir.
+        #    Varsayılan: PREP_BILATERAL=False.  Açmak istersen BILATERAL_ESIK'i dikkatlice ayarla.
         if _cfg("PREP_BILATERAL"):
             p95 = float(np.percentile(gri, 95))
             if p95 > int(_cfg("BILATERAL_ESIK")):
@@ -523,14 +559,18 @@ class PlakaCozucu:
         if _cfg("PREP_CLAHE"):
             gri = self._clahe.apply(gri)
 
-        # 10. Gaussian blur
+        # 10. Gaussian blur — hafif yumuşatma; eşikleme öncesi gürültüyü azaltır
         blur = cv2.GaussianBlur(gri, (3, 3), 0)
 
-        # 11. Sharpen
+        # 11. Keskinleştirme — eşiklemeden ÖNCE ve hafifçe uygula.
+        #     NOT: Bu adım gürültü içeren görüntülerde karıncalanmayı artırır.
+        #     Varsayılan: PREP_SHARPEN=False.  Açmak istersen SHARPEN_AMOUNT'u düşür (≤1.0).
         if _cfg("PREP_SHARPEN"):
             blur = _sharpen(blur)
 
-        # 12. Dual thresholding — pick version with more foreground detail
+        # 12. Eşikleme — birincil yöntem Otsu; harflerin içi dolu, temiz çıktı verir.
+        #     Adaptif eşikleme (PREP_ADAPTIVE=True) yalnızca çok düzensiz aydınlatmada dene.
+        #     Açmak istersen ADAPTIVE_BLOCK≥35 (tek sayı) ve ADAPTIVE_C≤4 kullan.
         _, otsu = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         binary = otsu
         if _cfg("PREP_ADAPTIVE"):
@@ -542,9 +582,13 @@ class PlakaCozucu:
                 int(_cfg("ADAPTIVE_BLOCK")),
                 int(_cfg("ADAPTIVE_C")),
             )
+            # Daha fazla ön plan detayı içeren versiyonu seç
             binary = adaptive if adaptive.mean() > otsu.mean() else otsu
 
-        # 13. Morphological closing
+        # 13. Median blur (3×3) — tuz-biber karıncalanmasını yok et; eşikleme hemen sonrası
+        binary = cv2.medianBlur(binary, 3)
+
+        # 14. Morfolojik kapama — kalan küçük boşlukları doldur
         if _cfg("MORPH_KAPAT"):
             k = cv2.getStructuringElement(cv2.MORPH_RECT, tuple(_cfg("MORPH_KERNEL")))
             binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, k, iterations=1)
@@ -570,7 +614,13 @@ class PlakaCozucu:
         min_conf = float(_cfg("OCR_MIN_CONF"))
 
         # --- Pass 1: original ---
-        metin1, conf1 = self._primary.oku(binary)
+        try:
+            metin1, conf1 = self._primary.oku(binary)
+            primary_ok_1 = True
+        except Exception as e:
+            log.warning("PaddleOCR çalıştırılamadı; fallback OCR kullanılacak. (%s)", e)
+            metin1, conf1 = "", 0.0
+            primary_ok_1 = False
 
         # Early exit: high-confidence valid plate on first pass
         if conf1 >= ikinci_esik and PLAKA_REGEX.search(metin1):
@@ -578,7 +628,14 @@ class PlakaCozucu:
 
         # --- Pass 2: inverted (only when needed) ---
         inverted = cv2.bitwise_not(binary)
-        metin2, conf2 = self._primary.oku(inverted)
+        if primary_ok_1:
+            try:
+                metin2, conf2 = self._primary.oku(inverted)
+            except Exception as e:
+                log.warning("PaddleOCR (inverted) çalıştırılamadı; pass-1 sonucu kullanılacak. (%s)", e)
+                metin2, conf2 = "", 0.0
+        else:
+            metin2, conf2 = "", 0.0
 
         # Pick the better of the two primary passes
         def _skor(m: str, c: float) -> float:
@@ -588,6 +645,12 @@ class PlakaCozucu:
             best_metin, best_conf = metin2, conf2
         else:
             best_metin, best_conf = metin1, conf1
+
+        # If primary backend couldn't run at all, go straight to fallback (if present).
+        if not primary_ok_1 and self._fallback is not None:
+            fb1_m, fb1_c = self._fallback.oku(binary)
+            fb2_m, fb2_c = self._fallback.oku(inverted)
+            return (fb2_m, fb2_c) if _skor(fb2_m, fb2_c) > _skor(fb1_m, fb1_c) else (fb1_m, fb1_c)
 
         # --- Fallback backend (only if primary result is still insufficient) ---
         if self._fallback is not None and best_conf < min_conf:
