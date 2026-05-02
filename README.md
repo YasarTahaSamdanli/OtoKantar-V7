@@ -1,72 +1,73 @@
-# OtoKantar V7
+## OtoKantar V7
 
-OtoKantar V7; plaka tanıma, kantar otomasyonu ve canlı dashboard içeren bir araç tartım sistemidir.
-Python servisi plaka/kantar akışını yönetir, verileri MySQL'e yazar. Web arayüzü (`index.php`) canlı durumu `api_canli.php` üzerinden izler.
+OtoKantar V7, **canlı kantar paneli** ve **admin kullanıcı yönetimi** içeren Laravel 12 tabanlı uygulamadır. Proje, eski (legacy) sistemde kullanılan bazı URL'leri yeni Laravel endpoint'lerine yönlendirerek kademeli geçişi destekler.
 
-## Ozellikler
+### Gereksinimler
 
-- YOLOv8 + OCR tabanlı plaka tespiti
-- RS232 kantar okuma (Ermet / Tolpa protokol desteği)
-- MySQL tabanlı geçiş kayıtları (`araclar`, `gecisler`)
-- PHP dashboard (`index.php`) ve canlı API (`api_canli.php`)
-- CSV ve JSON yedek/uyumluluk akışı (`kantar_raporu.csv`, `canli_durum.json`)
+- PHP **8.2+**
+- Composer
+- Node.js + npm
+- MySQL/MariaDB
 
-## Proje Yapisi
+### Kurulum (tek komut)
 
-```text
-OtoKantar_V7/
-├── otokantar_app/          # Python uygulama kodu
-├── index.php               # Dashboard UI
-├── api_canli.php           # Dashboard veri API'si (MySQL + fallback)
-├── config.json             # Runtime konfigürasyon
-├── requirements.txt        # Python bağımlılıkları
-├── captures/               # Araç görüntüleri (runtime output)
-└── canli_durum.json        # Canlı durum (runtime output)
-```
-
-## Gereksinimler
-
-- Python 3.10+
-- XAMPP (Apache + MySQL)
-- MySQL veritabanı: `otokantar`
-
-## Kurulum
-
-1) Bağımlılıkları yükleyin:
+Bu repo `composer.json` içinde hazır script'lerle gelir:
 
 ```bash
-pip install -r requirements.txt
+composer setup
 ```
 
-2) MySQL'i hazırlayın (XAMPP):
+Bu script sırasıyla: `composer install`, `.env` oluşturma, `key:generate`, migrate, `npm install` ve `npm run build` çalıştırır.
 
-- Host: `localhost`
-- User: `root`
-- Password: ``
-- Database: `otokantar`
-
-3) Uygulamayı çalıştırın:
+### Geliştirme modunda çalıştırma
 
 ```bash
-python -m otokantar_app.main
+composer dev
 ```
 
-4) Dashboard:
+Bu komut aynı anda Laravel server, queue listener, log izleme ve Vite dev server'ı başlatır.
 
-```text
-http://localhost/OtoKantar_V7/index.php
-```
+### Legacy veri kaynağı (canlı panel)
 
-## Notlar
+Canlı panel endpoint'leri `DB::connection('legacy')` ile legacy MySQL bağlantısını kullanır. `.env` içinde şu değişkenleri ayarlayın:
 
-- `api_canli.php` önce `canli_durum.json` okur, yoksa DB'den fallback durum üretir.
-- Kayıtlardaki ağırlık/net değerleri MySQL'de yoksa JSON/CSV uyumluluk katmanından eşleştirilir.
-- Runtime çıktıları (`captures`, `canli_durum.json`, `kantar_raporu.csv`, loglar) `.gitignore` ile dışarıda tutulur.
+- `LEGACY_DB_HOST`
+- `LEGACY_DB_PORT`
+- `LEGACY_DB_DATABASE`
+- `LEGACY_DB_USERNAME`
+- `LEGACY_DB_PASSWORD`
 
-## Opsiyonel
+### Legacy kaynak kod / yedekler
 
-Windows'ta yazıcı desteği kullanılacaksa:
+- `legacy_python/`: Eski Python servis kodları (web tarafıyla karışmasın diye ayrı tutulur).
+- `legacy_backup/`: Eski PHP entrypoint'leri ve çeşitli legacy çıktılar (referans/yedek amaçlı).
+
+### URL'ler
+
+- **Canlı panel (UI)**: `/canli` (login gerekir)
+- **Canlı API**: `/canli/api?action=panel|durum&limit=40`
+- **CSV indir**: `/canli/csv`
+- **Anlık kare**: `/canli/kare`
+
+Legacy yönlendirmeleri `routes/web.php` içinde tanımlıdır:
+
+- `/api_canli.php` → `/canli/api`
+- `/canli_kare.jpg` → `/canli/kare`
+- `/index.php` → `/canli`
+
+### Admin kullanıcı
+
+Admin middleware `role:admin` ile korunur (örn. `/admin/users`).
+
+Varsayılan admin seed'i:
 
 ```bash
-pip install pywin32
+php artisan db:seed --class=Database\\Seeders\\AdminUserSeeder
 ```
+
+Seed varsayılan olarak şu kullanıcıyı oluşturur/günceller:
+
+- Email: `admin@example.com`
+- Şifre: `ChangeMe123!`
+
+> Üretimde mutlaka değiştirin.
