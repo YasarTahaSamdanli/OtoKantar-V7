@@ -1,13 +1,13 @@
 {
-  "son_guncelleme": "2026-05-02T00:03:52.080941",
-  "kantar_kg": 12000.0,
+  "son_guncelleme": "2026-05-02T18:36:31.605339",
+  "kantar_kg": 0.0,
   "kantar_sabit": true,
   "seans_kilitli": false,
   "plaka_buffer": null,
   "plaka_buffer_detay": null,
   "aktif_bbox": null,
-  "fps": 13.4,
-  "yakalama_fps": 25.6,
+  "fps": 29.9,
+  "yakalama_fps": 30.4,
   "son_kayit": null,
   "son_10": [],
   "sistem": {
@@ -19,8 +19,8 @@
       "canli_kare.jpg"
     ],
     "simulasyon_modu": true,
-    "ocr_backend": "Easy",
-    "ocr_fallback": null,
+    "ocr_backend": "Paddle",
+    "ocr_fallback": "Easy",
     "ocr_kare_atlama": 3,
     "canli_kare_aralik": 5,
     "calisiyor": false

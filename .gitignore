@@ -58,8 +58,6 @@ cover/
 # Django stuff:
 *.log
 local_settings.py
-db.sqlite3
-db.sqlite3-journal
 
 # Flask stuff:
 instance/
@@ -205,3 +203,19 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# OtoKantar runtime outputs
+canli_durum.json
+canli_kare.jpg
+kantar_raporu.csv
+kantar_fisi.txt
+otokantar.log
+captures/*.jpg
+captures/*.jpeg
+captures/*.png
+!captures/.gitkeep
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3

@@ -1,9 +1,6 @@
 import json
-import sqlite3
-from dataclasses import asdict
-from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,6 +8,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from otokantar_app.config import CONFIG, PLAKA_REGEX
+from otokantar_app.db.mysql_manager import MySQLDBManager
 from otokantar_app.logger import log
 
 app = FastAPI(title="OtoKantar V11 API")
@@ -37,12 +35,8 @@ def sistem_referansi_ata(sistem) -> None:
 
 
 def _db_baglantisi_kur():
-    """Veritabanına WAL modunda güvenli bağlantı açar."""
-    db_yol = _PROJE_KOKU / CONFIG.get("DB_DOSYA", "otokantar.db")
-    con = sqlite3.connect(db_yol, timeout=10)
-    con.row_factory = sqlite3.Row
-    con.execute("PRAGMA journal_mode=WAL;")
-    return con
+    """MySQL yöneticisi döndürür."""
+    return MySQLDBManager.from_config(CONFIG)
 
 
 def _canli_json_dosyadan_oku() -> dict:
@@ -81,17 +75,12 @@ def api_canli_durum():
 
 @app.get("/api/son-kayitlar")
 def api_son_kayitlar():
-    """Son 50 geçiş kaydını doğrudan veritabanından çeker."""
+    """Son 50 geçiş kaydını MySQL'den çeker."""
     try:
-        with _db_baglantisi_kur() as con:
-            rows = con.execute(
-                "SELECT * FROM gecis_raporlari ORDER BY id DESC LIMIT 50"
-            ).fetchall()
-            return [dict(r) for r in rows]
+        db = _db_baglantisi_kur()
+        return db.son_gecisler(50)
     except Exception as e:
         log.error(f"Son kayıtlar DB hatası: {e}")
-        if sistem_referansi and hasattr(sistem_referansi.kaydedici, "son_kayitlar"):
-            return [asdict(k) for k in sistem_referansi.kaydedici.son_kayitlar]
         return []
 
 
@@ -101,11 +90,10 @@ class KaraListeEkleIstek(BaseModel):
 
 @app.get("/api/kara-liste")
 def api_kara_liste_listele():
-    """Veritabanındaki güncel kara listeyi döner."""
+    """MySQL'deki güncel kara listeyi döner."""
     try:
-        with _db_baglantisi_kur() as con:
-            rows = con.execute("SELECT plaka FROM kara_liste ORDER BY id DESC").fetchall()
-            return {"kara_liste": [r["plaka"] for r in rows]}
+        db = _db_baglantisi_kur()
+        return {"kara_liste": db.kara_liste_listele()}
     except Exception as e:
         log.error(f"Kara liste listeleme hatası: {e}")
         return {"kara_liste": []}
@@ -113,18 +101,15 @@ def api_kara_liste_listele():
 
 @app.post("/api/kara-liste")
 def api_kara_liste_ekle(istek: KaraListeEkleIstek):
-    """Veritabanına yeni yasaklı plaka ekler."""
+    """MySQL veritabanına yeni yasaklı plaka ekler."""
     plaka = istek.plaka.strip().upper()
     if not PLAKA_REGEX.fullmatch(plaka):
         raise HTTPException(422, f"Geçersiz Türk plaka formatı: '{plaka}'")
     try:
-        with _db_baglantisi_kur() as con:
-            con.execute("INSERT INTO kara_liste (plaka) VALUES (?)", (plaka,))
-            con.commit()
+        db = _db_baglantisi_kur()
+        db.kara_liste_guncelle(plaka, True)
         log.info("Kara listeye yeni plaka eklendi (API): %s", plaka)
         return {"mesaj": "Başarılı", "plaka": plaka}
-    except sqlite3.IntegrityError:
-        raise HTTPException(409, f"'{plaka}' zaten kara listede mevcut.")
     except Exception as e:
         log.error(f"Kara liste ekleme hatası: {e}")
         raise HTTPException(500, "Veritabanına yazılırken bir hata oluştu.")
@@ -132,12 +117,11 @@ def api_kara_liste_ekle(istek: KaraListeEkleIstek):
 
 @app.delete("/api/kara-liste/{plaka}")
 def api_kara_liste_sil(plaka: str):
-    """Veritabanından plaka yasaklamasını kaldırır."""
+    """MySQL veritabanından plaka yasaklamasını kaldırır."""
     plaka = plaka.strip().upper()
     try:
-        with _db_baglantisi_kur() as con:
-            con.execute("DELETE FROM kara_liste WHERE plaka = ?", (plaka,))
-            con.commit()
+        db = _db_baglantisi_kur()
+        db.kara_liste_guncelle(plaka, False)
         return {"mesaj": "Silindi", "plaka": plaka}
     except Exception as e:
         log.error(f"Kara liste silme hatası: {e}")
@@ -150,26 +134,16 @@ def api_kara_liste_sil(plaka: str):
 
 @app.get("/api/arac/{plaka}")
 def api_arac_bilgi_getir(plaka: str):
-    """
-    Verilen plakaya ait kayıtlı şoför / firma bilgisini döner.
-    Araç daha önce hiç kaydedilmemişse 404 yerine boş alan döner,
-    böylece frontend kolayca ayırt edebilir.
-    """
+    """Verilen plakanın MySQL araç kaydını döner."""
     plaka = plaka.strip().upper()
     try:
-        with _db_baglantisi_kur() as con:
-            row = con.execute(
-                "SELECT firma_adi, sofor_adi, sofor_tel FROM kayitli_araclar WHERE plaka = ? LIMIT 1",
-                (plaka,),
-            ).fetchone()
-        if row is None:
-            return {"plaka": plaka, "kayitli": False, "firma_adi": None, "sofor_adi": None, "sofor_tel": None}
+        db = _db_baglantisi_kur()
+        arac_id, kara_liste = db.upsert_arac(plaka)
         return {
             "plaka": plaka,
             "kayitli": True,
-            "firma_adi": row["firma_adi"],
-            "sofor_adi": row["sofor_adi"],
-            "sofor_tel": row["sofor_tel"],
+            "id": arac_id,
+            "kara_liste": kara_liste,
         }
     except Exception as e:
         log.error("Araç bilgisi getirme hatası (%s): %s", plaka, e)
@@ -193,22 +167,12 @@ def api_arac_guncelle(istek: AracGuncelleIstek):
     if not PLAKA_REGEX.fullmatch(plaka):
         raise HTTPException(422, f"Geçersiz Türk plaka formatı: '{plaka}'")
     if istek.firma_adi is None and istek.sofor_adi is None and istek.sofor_tel is None:
-        raise HTTPException(422, "En az bir alan (firma_adi, sofor_adi, sofor_tel) gönderilmelidir.")
+        raise HTTPException(422, "MySQL şemasında sadece plaka/kara_liste mevcut.")
     try:
-        with _db_baglantisi_kur() as con:
-            con.execute(
-                "INSERT OR IGNORE INTO kayitli_araclar (plaka, ilk_kayit_tarihi) VALUES (?, ?)",
-                (plaka, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
-            )
-            if istek.firma_adi is not None:
-                con.execute("UPDATE kayitli_araclar SET firma_adi=? WHERE plaka=?", (istek.firma_adi, plaka))
-            if istek.sofor_adi is not None:
-                con.execute("UPDATE kayitli_araclar SET sofor_adi=? WHERE plaka=?", (istek.sofor_adi, plaka))
-            if istek.sofor_tel is not None:
-                con.execute("UPDATE kayitli_araclar SET sofor_tel=? WHERE plaka=?", (istek.sofor_tel, plaka))
-            con.commit()
-        log.info("Araç sicil API ile güncellendi: %s | firma=%s | şoför=%s", plaka, istek.firma_adi, istek.sofor_adi)
-        return {"mesaj": "Araç sicili güncellendi.", "plaka": plaka}
+        db = _db_baglantisi_kur()
+        arac_id, _ = db.upsert_arac(plaka)
+        log.info("Araç sicil API ile güncellendi (yalnız plaka): %s", plaka)
+        return {"mesaj": "Araç kaydı güncellendi.", "plaka": plaka, "id": arac_id}
     except Exception as e:
         log.error("Araç güncelleme hatası (%s): %s", plaka, e)
         raise HTTPException(500, "Veritabanı hatası.")
@@ -230,35 +194,13 @@ def api_gecis_ek_veri_gir(istek: EkVeriIstek):
     if not plaka:
         raise HTTPException(422, "Plaka zorunludur.")
     if istek.malzeme_cinsi is None and istek.irsaliye_no is None:
-        raise HTTPException(422, "En az bir alan (malzeme_cinsi, irsaliye_no) gönderilmelidir.")
+        raise HTTPException(422, "En az bir alan gönderilmelidir.")
     try:
-        with _db_baglantisi_kur() as con:
-            # Aktif seans var mı kontrol et
-            row = con.execute(
-                "SELECT id FROM gecis_raporlari WHERE plaka=? AND durum='ICERIDE' ORDER BY id DESC LIMIT 1",
-                (plaka,),
-            ).fetchone()
-            if row is None:
-                raise HTTPException(404, f"'{plaka}' için aktif (ICERIDE) seans bulunamadı.")
-
-            updates: list[str] = []
-            params: list = []
-            if istek.malzeme_cinsi is not None:
-                updates.append("malzeme_cinsi=?")
-                params.append(istek.malzeme_cinsi)
-            if istek.irsaliye_no is not None:
-                updates.append("irsaliye_no=?")
-                params.append(istek.irsaliye_no)
-            params.append(row["id"])
-
-            con.execute(
-                f"UPDATE gecis_raporlari SET {', '.join(updates)} WHERE id=?",
-                params,
-            )
-            con.commit()
-        log.info("Aktif seans ek veri (API): %s | malzeme=%s | irsaliye=%s",
-                 plaka, istek.malzeme_cinsi, istek.irsaliye_no)
-        return {"mesaj": "Ek veri kaydedildi.", "plaka": plaka}
+        log.info(
+            "Ek veri endpoint çağrıldı fakat MySQL şeması bu alanları tutmuyor: %s",
+            plaka,
+        )
+        return {"mesaj": "MySQL şemasında ek veri alanı yok.", "plaka": plaka}
     except HTTPException:
         raise
     except Exception as e:

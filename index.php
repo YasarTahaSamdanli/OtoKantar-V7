@@ -1,3 +1,35 @@
+<?php
+declare(strict_types=1);
+
+function h(string $value): string
+{
+    return htmlspecialchars($value, ENT_QUOTES, 'UTF-8');
+}
+
+function render_head(string $title, string $badge): void
+{
+    echo '<div class="head">';
+    echo '<div class="title">' . h($title) . '</div>';
+    echo '<div class="badge">' . h($badge) . '</div>';
+    echo '</div>';
+}
+
+$metricCards = [
+    ['title' => 'Bugun kayit', 'valueId' => 'm1', 'value' => '0', 'valueClass' => 'acc', 'subId' => 'm1s', 'sub' => 'MySQL tabanli gunluk toplam'],
+    ['title' => 'Aktif seans', 'valueId' => 'm2', 'value' => '0', 'valueClass' => '', 'subId' => 'm2s', 'sub' => 'tamamlanan seans: 0'],
+    ['title' => 'Ortalama guven', 'valueId' => 'm3', 'value' => '--', 'valueClass' => 'warn', 'subId' => '', 'sub' => '% OCR skoru'],
+    ['title' => 'Son 1 saat', 'valueId' => 'm4', 'value' => '0', 'valueClass' => '', 'subId' => '', 'sub' => 'kayit hareketi'],
+];
+
+$systemInfoItems = [
+    ['label' => 'AI yigin', 'value' => 'YOLOv8 + OCR', 'id' => 'ai'],
+    ['label' => 'Calisma modu', 'value' => 'Bekleniyor', 'id' => 'mode'],
+    ['label' => 'Esik', 'value' => '4 / canli durum dosyasi', 'id' => 'esik'],
+    ['label' => 'Rapor', 'value' => 'MySQL / otokantar', 'id' => ''],
+    ['label' => 'OCR kare atlama', 'value' => 'Dinamik', 'id' => 'ocr'],
+    ['label' => 'Mimari', 'value' => 'MySQL + JSON + JPG', 'id' => 'arch'],
+];
+?>
 <!doctype html>
 <html lang="tr">
 <head>
@@ -13,6 +45,7 @@ header{position:sticky;top:0;z-index:20;display:flex;justify-content:space-betwe
 .pill{display:inline-flex;align-items:center;gap:.55rem;padding:.42rem .82rem;border-radius:999px;border:1px solid rgba(33,209,159,.3);background:var(--acc2);color:var(--acc);font:11px var(--mono);letter-spacing:.08em;text-transform:uppercase}.dot{width:.45rem;height:.45rem;border-radius:50%;background:currentColor}
 .side{display:flex;align-items:center;gap:.9rem}.clock{font-size:.76rem}
 main{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1rem;padding:1.2rem}.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:1rem;box-shadow:0 20px 48px rgba(0,0,0,.24)}.hero{grid-column:1/-1;display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;background:linear-gradient(135deg,rgba(24,31,43,.96),rgba(18,25,35,.94));border-color:rgba(33,209,159,.16)}
+.view-switch{display:flex;gap:.6rem;padding:1rem 1.2rem 0 1.2rem;flex-wrap:wrap}.view-btn{padding:.55rem .95rem;border-radius:999px;border:1px solid var(--line2);background:rgba(255,255,255,.02);color:var(--muted);font:11px var(--mono);letter-spacing:.08em;text-transform:uppercase;cursor:pointer}.view-btn.active{background:var(--acc2);border-color:rgba(33,209,159,.3);color:var(--acc)}.tab-panel{display:none}.tab-panel.active{display:grid}
 .grow{flex:1 1 320px}.eyebrow,.title,.info-k{font-size:.67rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}.weight{font:700 clamp(2.1rem,5vw,3.4rem) var(--mono);line-height:.95;color:var(--acc);margin-top:.45rem}.status-text{margin-top:.55rem}.hero-grid{display:grid;gap:.7rem;min-width:240px}.panel{padding:.8rem .9rem;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.02)}.panel .v,.metric-v{font:600 1.25rem var(--mono);margin-top:.35rem}
 .metric-v.acc{color:var(--acc)}.metric-v.warn{color:var(--warn)}.metric-s{margin-top:.35rem;font:11px var(--mono);color:var(--muted)}.bar{margin-top:.7rem;height:4px;background:rgba(255,255,255,.08);border-radius:99px;overflow:hidden}.bar>span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--acc),var(--warn));transition:width 1s linear}
 .span2{grid-column:span 2}.span4{grid-column:1/-1}.frame{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:14px;background:#091018;border:1px solid var(--line);display:block}.note{margin-top:.65rem;font:11px var(--mono);color:var(--muted)}
@@ -34,14 +67,20 @@ table{width:100%;border-collapse:collapse}th{padding:.45rem .72rem;text-align:le
 <header>
   <div class="brand">
     <div class="mark"><svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="1.1" y="5" width="13.8" height="6.8" rx="1.4" stroke="#21d19f" stroke-width="1.2"/><circle cx="4.2" cy="11.3" r="1.3" fill="#21d19f"/><circle cx="11.8" cy="11.3" r="1.3" fill="#21d19f"/><path d="M4.4 5V3.7C4.4 2.76 5.16 2 6.1 2H9.9C10.84 2 11.6 2.76 11.6 3.7V5" stroke="#21d19f" stroke-width="1.1"/></svg></div>
-    <div><h1>OtoKantar</h1><p>Loose Coupling paneli | JSON + CSV + JPG</p></div>
+    <div><h1>OtoKantar</h1><p>Canli panel | MySQL + JSON durum + JPG</p></div>
   </div>
   <div class="side">
     <div class="pill" id="pill"><span class="dot"></span><span id="pill-text">BEKLENIYOR</span></div>
     <div class="clock" id="clock">--:--:--</div>
   </div>
 </header>
-<main>
+<div class="view-switch">
+  <button class="view-btn active" type="button" data-tab="genel">Genel</button>
+  <button class="view-btn" type="button" data-tab="canli">Canli</button>
+  <button class="view-btn" type="button" data-tab="kayitlar">Kayitlar</button>
+</div>
+
+<main class="tab-panel active" data-panel="genel">
   <section class="card hero">
     <div class="grow">
       <div class="eyebrow">Anlik kantar</div>
@@ -54,50 +93,528 @@ table{width:100%;border-collapse:collapse}th{padding:.45rem .72rem;text-align:le
       <div class="panel"><div class="title">Canli veri yasi</div><div class="v" id="fresh">--</div><div class="metric-s" id="fresh-sub">guncelleme bekleniyor</div></div>
     </div>
   </section>
-  <section class="card"><div class="title">Bugun kayit</div><div class="metric-v acc" id="m1">0</div><div class="metric-s" id="m1s">CSV tabanli gunluk toplam</div></section>
-  <section class="card"><div class="title">Aktif seans</div><div class="metric-v" id="m2">0</div><div class="metric-s" id="m2s">tamamlanan seans: 0</div></section>
-  <section class="card"><div class="title">Ortalama guven</div><div class="metric-v warn" id="m3">--</div><div class="metric-s">% OCR skoru</div></section>
-  <section class="card"><div class="title">Son 1 saat</div><div class="metric-v" id="m4">0</div><div class="metric-s">kayit hareketi</div></section>
-  <section class="card span2"><div class="head"><div class="title">Canli kare</div><div class="badge">canli_kare.jpg</div></div><img class="frame" id="cam" src="" alt="Canli kare"><div class="note" id="cam-note">Kamera karesi bekleniyor...</div></section>
-  <section class="card span2"><div class="head"><div class="title">Aktif tespit</div><div class="badge">dogrulama</div></div><div class="plate" id="plate"><b class="empty">BEKLENIYOR</b></div><div class="track"><div class="seg" id="vd1"></div><div class="seg" id="vd2"></div><div class="seg" id="vd3"></div><div class="seg" id="vd4"></div></div><div class="verify" id="verify">Dogrulama bekleniyor</div><div class="btns"><button class="btn" id="refresh" type="button">Simdi yenile</button><button class="btn primary" id="demo" type="button">Demo modu</button><a class="btn" href="api_canli.php?action=csv_indir" id="csv">CSV indir</a></div></section>
-  <section class="card span2"><div class="head"><div class="title">Panel olay akisi</div><div class="badge" id="log-count">0 satir</div></div><div class="log" id="log"></div></section>
-  <section class="card span2"><div class="head"><div class="title">Sistem bilgisi</div><div class="badge">uretim paneli</div></div><div class="info-grid"><div><div class="info-k">AI yigin</div><div class="info-v" id="ai">YOLOv8 + OCR</div></div><div><div class="info-k">Calisma modu</div><div class="info-v" id="mode">Bekleniyor</div></div><div><div class="info-k">Esik</div><div class="info-v" id="esik">4 / canli durum dosyasi</div></div><div><div class="info-k">Rapor</div><div class="info-v">kantar_raporu.csv</div></div><div><div class="info-k">OCR kare atlama</div><div class="info-v" id="ocr">Dinamik</div></div><div><div class="info-k">Mimari</div><div class="info-v" id="arch">JSON + CSV + JPG</div></div></div><div class="mini-chart" id="chart"></div></section>
+  <?php foreach ($metricCards as $card): ?>
+  <section class="card">
+    <div class="title"><?= h($card['title']) ?></div>
+    <div class="metric-v<?= $card['valueClass'] !== '' ? ' ' . h($card['valueClass']) : '' ?>" id="<?= h($card['valueId']) ?>"><?= h($card['value']) ?></div>
+    <?php if ($card['subId'] !== ''): ?>
+      <div class="metric-s" id="<?= h($card['subId']) ?>"><?= h($card['sub']) ?></div>
+    <?php else: ?>
+      <div class="metric-s"><?= h($card['sub']) ?></div>
+    <?php endif; ?>
+  </section>
+  <?php endforeach; ?>
+</main>
+
+<main class="tab-panel" data-panel="canli">
+  <section class="card span2">
+    <?php render_head('Canli kare', 'canli_kare.jpg'); ?>
+    <img class="frame" id="cam" src="" alt="Canli kare">
+    <div class="note" id="cam-note">Kamera karesi bekleniyor...</div>
+  </section>
+
+  <section class="card span2">
+    <?php render_head('Aktif tespit', 'dogrulama'); ?>
+    <div class="plate" id="plate"><b class="empty">BEKLENIYOR</b></div>
+    <div class="track"><div class="seg" id="vd1"></div><div class="seg" id="vd2"></div><div class="seg" id="vd3"></div><div class="seg" id="vd4"></div></div>
+    <div class="verify" id="verify">Dogrulama bekleniyor</div>
+    <div class="btns"><button class="btn" id="refresh" type="button">Simdi yenile</button><button class="btn primary" id="demo" type="button">Demo modu</button><a class="btn" href="api_canli.php?action=csv_indir" id="csv">CSV indir</a></div>
+  </section>
+
+  <section class="card span2">
+    <div class="head"><div class="title">Panel olay akisi</div><div class="badge" id="log-count">0 satir</div></div>
+    <div class="log" id="log"></div>
+  </section>
+</main>
+
+<main class="tab-panel" data-panel="kayitlar">
+  <section class="card span2">
+    <?php render_head('Sistem bilgisi', 'uretim paneli'); ?>
+    <div class="info-grid">
+      <?php foreach ($systemInfoItems as $item): ?>
+      <div>
+        <div class="info-k"><?= h($item['label']) ?></div>
+        <?php if ($item['id'] !== ''): ?>
+          <div class="info-v" id="<?= h($item['id']) ?>"><?= h($item['value']) ?></div>
+        <?php else: ?>
+          <div class="info-v"><?= h($item['value']) ?></div>
+        <?php endif; ?>
+      </div>
+      <?php endforeach; ?>
+    </div>
+    <div class="mini-chart" id="chart"></div>
+  </section>
   <section class="card span4"><div class="head"><div class="title">Son kayitlar</div><div class="badge" id="table-count">0 kayit</div></div><table><thead><tr><th>Plaka</th><th>Agirlik / Net</th><th>Tarih</th><th>Saat</th><th>Tip</th><th>Guven</th></tr></thead><tbody id="tbody"><tr><td class="empty-row" colspan="6">Henuz kayit yok. Sistem dosya akisina baglanmayi bekliyor.</td></tr></tbody></table></section>
 </main>
 <script>
-const PLATES=['06ABC123','34TR574','35ZK882','16BRS61','41KLM99','27FRT20','06ANK80','34ED5728','24TR123','79SAA001'],POLL=1000,CAM=1400,ESIK=4,MAXLOG=80;
-let records=[],bars=new Array(12).fill(0),total=0,lastSig='',state='offline',lastUpdateMs=null,demoOn=false,demoInt=null,pollInt=null,camInt=null,demoPlate=null,demoStep=0;
-const $=id=>document.getElementById(id),num=v=>Number.isFinite(Number(v))?Number(v):null,kg=v=>num(v)===null?'--':num(v).toLocaleString('tr-TR',{maximumFractionDigits:1}),esc=s=>String(s??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'","&#39;");
-function now(){return new Date().toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit',second:'2-digit'})}
-function log(level,msg){const box=$('log'),row=document.createElement('div');row.className='row';row.innerHTML=`<span class="time">${now()}</span><span class="${esc(level)}">${esc(level.toUpperCase())}</span><span class="msg">${esc(msg)}</span>`;box.appendChild(row);while(box.children.length>MAXLOG)box.removeChild(box.firstChild);box.scrollTop=box.scrollHeight;$('log-count').textContent=`${box.children.length} satir`}
-function status(next){state=next;const pill=$('pill'),text=$('pill-text');const map={live:['CANLI','var(--acc)','rgba(33,209,159,.12)','rgba(33,209,159,.3)'],stale:['YAVAS','var(--warn)','rgba(243,179,65,.12)','rgba(243,179,65,.3)'],offline:['BEKLENIYOR','var(--muted)','rgba(255,255,255,.04)','rgba(255,255,255,.12)'],demo:['DEMO','var(--acc)','rgba(33,209,159,.18)','rgba(33,209,159,.36)']},s=map[next]||map.offline;pill.style.color=s[1];pill.style.background=s[2];pill.style.borderColor=s[3];text.textContent=s[0]}
-function updateFresh(sec){const n=num(sec);if(n===null){$('fresh').textContent='--';$('fresh-sub').textContent='guncelleme bekleniyor';$('stale-bar').style.width='0%';lastUpdateMs=null;return}lastUpdateMs=Date.now()-n*1000;$('fresh').textContent=`${Math.floor(n)} sn`;$('fresh-sub').textContent=n<=2?'dosya yeni guncellendi':'son canli durum yazimi';$('stale-bar').style.width=`${Math.min(100,(n/15)*100)}%`}
-function resetPlate(){$('plate').className='plate';$('plate').innerHTML='<b class="empty">BEKLENIYOR</b>';$('verify').textContent='Dogrulama bekleniyor';['vd1','vd2','vd3','vd4'].forEach(id=>$(id).className='seg')}
-function showPlate(text,step,done,msg){$('plate').className=`plate${done?' flash':''}`;$('plate').innerHTML=`<b>${esc(text)}</b>`;['vd1','vd2','vd3','vd4'].forEach((id,i)=>{const el=$(id);el.className='seg';if(i<step&&step<ESIK)el.classList.add('wait');else if(i<step)el.classList.add('on')});$('verify').textContent=msg||(done?'Kayit tamamlandi':`Dogrulaniyor: ${step} / ${ESIK}`)}
-function norm(r={}){const d=String(r.durum||r.tip||'ICERIDE').toUpperCase();const tip=d.includes('TAMAMLANDI')||d.includes('CIKIS')?'CIKIS':(d.includes('KARA')||d.includes('ALARM')?'ALARM':'GIRIS');return{plaka:String(r.plaka||'').trim(),tip,durum:d,giris_tarih:String(r.giris_tarih||r.tarih||'').trim(),giris_saat:String(r.giris_saat||r.saat||'').trim(),giris_agirlik:num(r.giris_agirlik),cikis_tarih:String(r.cikis_tarih||'').trim(),cikis_saat:String(r.cikis_saat||'').trim(),cikis_agirlik:num(r.cikis_agirlik),net_agirlik:num(r.net_agirlik),guven:num(r.guven)||0}};
-function stamp(r){return r&&r.plaka?[r.plaka,r.giris_tarih,r.giris_saat,r.tip].join('|'):''}
-function ts(r){const v=Date.parse(`${r.giris_tarih||''}T${r.giris_saat||''}`);return Number.isFinite(v)?v:null}
-function calcBars(){bars=new Array(12).fill(0);const nowMs=Date.now();records.forEach(r=>{const t=ts(r);if(t===null)return;const h=Math.floor((nowMs-t)/3600000);if(h>=0&&h<12)bars[11-h]+=1})}
-function drawChart(){const max=Math.max(...bars,1),h=new Date().getHours();$('chart').innerHTML=bars.map((v,i)=>`<div class="col"><span class="count">${v||''}</span><div class="stick ${i===11?'now':''}" style="height:${Math.max(4,Math.round(v/max*92))}px"></div><span class="label">${String(((h-11+i)+24)%24).padStart(2,'0')}</span></div>`).join('')}
-function drawTable(){$('table-count').textContent=`${total} kayit`;if(!records.length){$('tbody').innerHTML='<tr><td class="empty-row" colspan="6">Henuz kayit yok. Sistem dosya akisina baglanmayi bekliyor.</td></tr>';return}$('tbody').innerHTML=records.slice(0,15).map(r=>{const p=Math.max(0,Math.min(100,Math.round((r.guven||0)*100))),cls=p>=80?'':(p>=60?' mid':' low'),tag=r.tip==='CIKIS'?'cikis':(r.tip==='ALARM'?'alarm':'giris'),w=r.tip==='CIKIS'?(r.net_agirlik??r.cikis_agirlik??r.giris_agirlik):r.giris_agirlik,d=r.tip==='CIKIS'&&r.cikis_tarih?r.cikis_tarih:r.giris_tarih,s=r.tip==='CIKIS'&&r.cikis_saat?r.cikis_saat:r.giris_saat;return`<tr><td class="plate-td">${esc(r.plaka)}</td><td>${esc(kg(w))}</td><td>${esc(d||'--')}</td><td>${esc(s||'--')}</td><td><span class="tag ${tag}">${esc(r.tip)}</span></td><td><div class="conf"><div class="conf-track"><div class="conf-fill${cls}" style="width:${p}%"></div></div><span>%${p}</span></div></td></tr>`}).join('')}
-function setInfo(d){const s=d?.sistem||{},fb=s.ocr_fallback?` / ${s.ocr_fallback}`:'';$('ai').textContent=`YOLOv8 + ${s.ocr_backend||'OCR'}${fb}`;$('mode').textContent=s.simulasyon_modu?'SIMULASYON':'CANLI';$('ocr').textContent=s.ocr_kare_atlama?`Her ${s.ocr_kare_atlama}. kare`:'Dinamik';$('arch').textContent='JSON + CSV + JPG'}
-function setMetrics(sum,d){$('m1').textContent=String(Number(sum?.bugun_kayit??0));$('m1s').textContent=`${Number(sum?.son_saat_kayit??0)} kayit son 1 saatte`;$('m2').textContent=String(Number(sum?.aktif_seans??0));$('m2s').textContent=`tamamlanan seans: ${Number(sum?.tamamlanan??0)}`;$('m3').textContent=num(sum?.ortalama_guven_yuzde)===null?'--':`%${Number(sum.ortalama_guven_yuzde)}`;$('m4').textContent=String(Number(sum?.son_saat_kayit??0));updateFresh(d?._durum_yasi_saniye??null)}
-function setScale(d){const k=num(d?.kantar_kg),buf=d?.plaka_buffer_detay?.plaka||d?.plaka_buffer||'';$('buffer').textContent=buf||'--';if(k===null){$('kg').textContent='--';$('kg-status').textContent='Kantar verisi yok. Python sureci veya COM akisi bekleniyor.';return}$('kg').textContent=`${kg(k)} kg`;$('kg-status').textContent=d?.seans_kilitli?'Seans kilitli. Arac cikisi ve sifirlama guardi bekleniyor.':(d?.kantar_sabit?'Olcu sabit. Kantar karar vermeye hazir.':'Olcu degisiyor. Kantarin sabitlenmesi bekleniyor.')}
-function detectState(d){if(demoOn)return'demo';const y=num(d?._durum_yasi_saniye);if(y===null)return'offline';if(y<=2)return'live';if(y<=10)return'stale';return'offline'}
-function updateState(d){const next=detectState(d);if(next===state)return;status(next);if(next==='live')log('info','Canli veri akisi kuruldu: api_canli.php');else if(next==='stale')log('warn','Canli dosya akisi yavasladi');else if(next==='offline'&&!demoOn)log('warn','Canli veri yok, dosya akisi bekleniyor');else if(next==='demo')log('info','Demo modu aktif')}
-function latestEvent(d){if(!d?.son_kayit?.plaka)return false;const r=norm(d.son_kayit),sig=stamp(r);if(!sig||sig===lastSig)return false;lastSig=sig;const w=r.tip==='CIKIS'?(r.net_agirlik??r.cikis_agirlik??r.giris_agirlik):r.giris_agirlik;log('info',`Son kayit: ${r.plaka} / ${r.tip} / ${kg(w)} kg`);return true}
-function setDetection(d,newRec){const b=d?.plaka_buffer_detay||null,sk=d?.son_kayit?norm(d.son_kayit):null;if(b?.plaka){const step=d?.seans_kilitli?4:(d?.kantar_sabit?3:2),msg=d?.seans_kilitli?'Kayit kilitlendi, seans temizligi bekleniyor':(d?.kantar_sabit?'Plaka tamponlandi, agirlik karari bekleniyor':'Plaka goruldu, agirlik sabitleniyor');showPlate(b.plaka,step,newRec,msg);return}if(sk?.plaka){showPlate(sk.plaka,4,newRec,d?.seans_kilitli?'Son basarili okuma kilitli seans olarak tutuluyor':'Son basarili okuma');return}resetPlate()}
-function applyPanel(p){const d=p?.durum||{};records=Array.isArray(p?.kayitlar)?p.kayitlar.map(norm):[];total=Number(p?.toplam??records.length);calcBars();const newRec=latestEvent(d);updateState(d);setScale(d);setDetection(d,newRec);setMetrics(p?.ozet||{},d);setInfo(d);drawTable();drawChart()}
-async function poll(){if(demoOn)return;try{const r=await fetch(`api_canli.php?action=panel&limit=40&t=${Date.now()}`,{cache:'no-store'});if(!r.ok)throw new Error(`HTTP ${r.status}`);const p=await r.json();if(p?.hata)throw new Error(p.hata);applyPanel(p)}catch(e){if(state!=='offline'){status('offline');log('warn','Canli veri okunamadi, api_canli.php bekleniyor')}$('kg-status').textContent='Panel baglantisi bekleniyor. JSON veya CSV dosyasi guncellenmemis olabilir.'}}
-function refreshCam(){if(demoOn)return;const img=$('cam'),note=$('cam-note');let retry=false;img.onerror=()=>{if(!retry){retry=true;img.src=`canli_kare.jpg?t=${Date.now()}`;return}note.textContent='Canli kare yok. Otokantar calisinca canli_kare.jpg guncellenecek.'};img.onload=()=>{retry=false;note.textContent='Canli kare yenilendi. Tartidaki arac goruntusu izleniyor.'};img.src=`canli_kare.jpg?t=${Date.now()}`}
-function demoSummary(){const today=new Date().toISOString().slice(0,10),hourAgo=Date.now()-3600000,g=records.map(r=>r.guven).filter(v=>Number.isFinite(v));return{bugun_kayit:records.filter(r=>r.giris_tarih===today).length,son_saat_kayit:records.filter(r=>{const t=ts(r);return t!==null&&t>=hourAgo}).length,aktif_seans:records.filter(r=>r.tip==='GIRIS').length,tamamlanan:records.filter(r=>r.tip==='CIKIS').length,ortalama_guven_yuzde:g.length?Math.round(g.reduce((a,b)=>a+b,0)/g.length*100):null}}
-function addDemoRecord(plaka,guven,tip){const d=new Date(),tarih=d.toISOString().slice(0,10),saat=d.toTimeString().slice(0,8);records.unshift({plaka,tip,durum:tip,giris_tarih:tarih,giris_saat:saat,giris_agirlik:tip==='CIKIS'?12000:42000,cikis_tarih:tip==='CIKIS'?tarih:'',cikis_saat:tip==='CIKIS'?saat:'',cikis_agirlik:tip==='CIKIS'?42000:null,net_agirlik:tip==='CIKIS'?30000:null,guven});total+=1;calcBars();drawTable();drawChart();setMetrics(demoSummary(),{_durum_yasi_saniye:0});log('info',`Demo kaydi: ${plaka} / ${tip} / %${Math.round(guven*100)}`)}
-function demoTick(){const plaka=PLATES[Math.floor(Math.random()*PLATES.length)];if(demoPlate!==plaka){demoPlate=plaka;demoStep=0}demoStep+=1;showPlate(demoPlate,demoStep,false,demoStep>=3?'Demo plaka tamponlandi':`Demo dogrulama: ${demoStep} / ${ESIK}`);setScale({kantar_kg:demoStep>=3?42000:18000+demoStep*2800,kantar_sabit:demoStep>=3,plaka_buffer:demoStep>=2?demoPlate:null,plaka_buffer_detay:demoStep>=2?{plaka:demoPlate}:null,seans_kilitli:false});if(demoStep>=ESIK){const tip=Math.random()>.55?'CIKIS':'GIRIS',g=.68+Math.random()*.28;addDemoRecord(demoPlate,g,tip);demoPlate=null;demoStep=0;setTimeout(()=>{if(demoOn)resetPlate()},1600)}}
-function startDemo(){if(demoOn)return;demoOn=true;clearInterval(pollInt);clearInterval(camInt);clearInterval(demoInt);status('demo');$('demo').textContent='Canli moda don';$('cam-note').textContent='Demo modu aktif. Gercek kamera yerine simulasyon gosteriliyor.';log('info','Demo modu manuel olarak baslatildi');demoTick();demoInt=setInterval(demoTick,1000)}
-function stopDemo(){demoOn=false;clearInterval(demoInt);$('demo').textContent='Demo modu';status('offline');resetPlate();log('warn','Demo modu durduruldu, canli dosya akisina donuluyor');poll();refreshCam();pollInt=setInterval(poll,POLL);camInt=setInterval(refreshCam,CAM)}
-$('refresh').addEventListener('click',()=>{poll();refreshCam();log('info','Panel verisi manuel yenilendi')});$('demo').addEventListener('click',()=>demoOn?stopDemo():startDemo());$('csv').addEventListener('click',()=>log('info','CSV raporu indiriliyor'));
-setInterval(()=>{$('clock').textContent=now();if(lastUpdateMs!==null&&!demoOn)updateFresh((Date.now()-lastUpdateMs)/1000)},1000);
-resetPlate();drawChart();status('offline');log('info','OtoKantar paneli yuklendi');log('info','Kaynak: api_canli.php + canli_kare.jpg');poll();refreshCam();pollInt=setInterval(poll,POLL);camInt=setInterval(refreshCam,CAM);
+const Config = {
+  plates: ['06ABC123', '34TR574', '35ZK882', '16BRS61', '41KLM99', '27FRT20', '06ANK80', '34ED5728', '24TR123', '79SAA001'],
+  pollMs: 1000,
+  camMs: 1400,
+  verifyThreshold: 4,
+  maxLog: 80,
+  tableLimit: 15,
+  chartHours: 12,
+};
+
+const State = {
+  records: [],
+  bars: new Array(Config.chartHours).fill(0),
+  total: 0,
+  lastSignature: '',
+  status: 'offline',
+  lastUpdateMs: null,
+  demoOn: false,
+  demoPlate: null,
+  demoStep: 0,
+  intervals: {
+    poll: null,
+    cam: null,
+    demo: null,
+  },
+};
+
+const Utils = {
+  el(id) {
+    return document.getElementById(id);
+  },
+  now() {
+    return new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  },
+  toNum(value) {
+    return Number.isFinite(Number(value)) ? Number(value) : null;
+  },
+  kg(value) {
+    const n = this.toNum(value);
+    return n === null ? '--' : n.toLocaleString('tr-TR', { maximumFractionDigits: 1 });
+  },
+  escapeHtml(value) {
+    return String(value ?? '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
+  },
+  recordTs(record) {
+    const v = Date.parse(`${record.giris_tarih || ''}T${record.giris_saat || ''}`);
+    return Number.isFinite(v) ? v : null;
+  },
+  normalizeRecord(record = {}) {
+    const raw = String(record.durum || record.tip || 'ICERIDE').toUpperCase();
+    const tip = raw.includes('TAMAMLANDI') || raw.includes('CIKIS')
+      ? 'CIKIS'
+      : raw.includes('KARA') || raw.includes('ALARM')
+        ? 'ALARM'
+        : 'GIRIS';
+    return {
+      plaka: String(record.plaka || '').trim(),
+      tip,
+      durum: raw,
+      giris_tarih: String(record.giris_tarih || record.tarih || '').trim(),
+      giris_saat: String(record.giris_saat || record.saat || '').trim(),
+      giris_agirlik: this.toNum(record.giris_agirlik),
+      cikis_tarih: String(record.cikis_tarih || '').trim(),
+      cikis_saat: String(record.cikis_saat || '').trim(),
+      cikis_agirlik: this.toNum(record.cikis_agirlik),
+      net_agirlik: this.toNum(record.net_agirlik),
+      guven: this.toNum(record.guven) || 0,
+    };
+  },
+  recordStamp(record) {
+    if (!record || !record.plaka) return '';
+    return [record.plaka, record.giris_tarih, record.giris_saat, record.tip].join('|');
+  },
+};
+
+const UI = {
+  log(level, message) {
+    const box = Utils.el('log');
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML = `<span class="time">${Utils.now()}</span><span class="${Utils.escapeHtml(level)}">${Utils.escapeHtml(level.toUpperCase())}</span><span class="msg">${Utils.escapeHtml(message)}</span>`;
+    box.appendChild(row);
+    while (box.children.length > Config.maxLog) box.removeChild(box.firstChild);
+    box.scrollTop = box.scrollHeight;
+    Utils.el('log-count').textContent = `${box.children.length} satir`;
+  },
+  setStatus(next) {
+    State.status = next;
+    const map = {
+      live: ['CANLI', 'var(--acc)', 'rgba(33,209,159,.12)', 'rgba(33,209,159,.3)'],
+      stale: ['YAVAS', 'var(--warn)', 'rgba(243,179,65,.12)', 'rgba(243,179,65,.3)'],
+      offline: ['BEKLENIYOR', 'var(--muted)', 'rgba(255,255,255,.04)', 'rgba(255,255,255,.12)'],
+      demo: ['DEMO', 'var(--acc)', 'rgba(33,209,159,.18)', 'rgba(33,209,159,.36)'],
+    };
+    const s = map[next] || map.offline;
+    const pill = Utils.el('pill');
+    pill.style.color = s[1];
+    pill.style.background = s[2];
+    pill.style.borderColor = s[3];
+    Utils.el('pill-text').textContent = s[0];
+  },
+  updateFresh(seconds) {
+    const n = Utils.toNum(seconds);
+    if (n === null) {
+      Utils.el('fresh').textContent = '--';
+      Utils.el('fresh-sub').textContent = 'guncelleme bekleniyor';
+      Utils.el('stale-bar').style.width = '0%';
+      State.lastUpdateMs = null;
+      return;
+    }
+    State.lastUpdateMs = Date.now() - n * 1000;
+    Utils.el('fresh').textContent = `${Math.floor(n)} sn`;
+    Utils.el('fresh-sub').textContent = n <= 2 ? 'dosya yeni guncellendi' : 'son canli durum yazimi';
+    Utils.el('stale-bar').style.width = `${Math.min(100, (n / 15) * 100)}%`;
+  },
+  resetPlate() {
+    Utils.el('plate').className = 'plate';
+    Utils.el('plate').innerHTML = '<b class="empty">BEKLENIYOR</b>';
+    Utils.el('verify').textContent = 'Dogrulama bekleniyor';
+    ['vd1', 'vd2', 'vd3', 'vd4'].forEach((id) => (Utils.el(id).className = 'seg'));
+  },
+  showPlate(text, step, done, msg) {
+    Utils.el('plate').className = `plate${done ? ' flash' : ''}`;
+    Utils.el('plate').innerHTML = `<b>${Utils.escapeHtml(text)}</b>`;
+    ['vd1', 'vd2', 'vd3', 'vd4'].forEach((id, i) => {
+      const el = Utils.el(id);
+      el.className = 'seg';
+      if (i < step && step < Config.verifyThreshold) el.classList.add('wait');
+      else if (i < step) el.classList.add('on');
+    });
+    Utils.el('verify').textContent = msg || (done ? 'Kayit tamamlandi' : `Dogrulaniyor: ${step} / ${Config.verifyThreshold}`);
+  },
+  drawTable() {
+    Utils.el('table-count').textContent = `${State.total} kayit`;
+    if (!State.records.length) {
+      Utils.el('tbody').innerHTML = '<tr><td class="empty-row" colspan="6">Henuz kayit yok. Sistem dosya akisina baglanmayi bekliyor.</td></tr>';
+      return;
+    }
+    Utils.el('tbody').innerHTML = State.records.slice(0, Config.tableLimit).map((r) => {
+      const p = Math.max(0, Math.min(100, Math.round((r.guven || 0) * 100)));
+      const cls = p >= 80 ? '' : (p >= 60 ? ' mid' : ' low');
+      const tag = r.tip === 'CIKIS' ? 'cikis' : (r.tip === 'ALARM' ? 'alarm' : 'giris');
+      const weight = r.tip === 'CIKIS' ? (r.net_agirlik ?? r.cikis_agirlik ?? r.giris_agirlik) : r.giris_agirlik;
+      const date = r.tip === 'CIKIS' && r.cikis_tarih ? r.cikis_tarih : r.giris_tarih;
+      const time = r.tip === 'CIKIS' && r.cikis_saat ? r.cikis_saat : r.giris_saat;
+      return `<tr><td class="plate-td">${Utils.escapeHtml(r.plaka)}</td><td>${Utils.escapeHtml(Utils.kg(weight))}</td><td>${Utils.escapeHtml(date || '--')}</td><td>${Utils.escapeHtml(time || '--')}</td><td><span class="tag ${tag}">${Utils.escapeHtml(r.tip)}</span></td><td><div class="conf"><div class="conf-track"><div class="conf-fill${cls}" style="width:${p}%"></div></div><span>%${p}</span></div></td></tr>`;
+    }).join('');
+  },
+  drawChart() {
+    const max = Math.max(...State.bars, 1);
+    const hour = new Date().getHours();
+    Utils.el('chart').innerHTML = State.bars.map((v, i) => (
+      `<div class="col"><span class="count">${v || ''}</span><div class="stick ${i === 11 ? 'now' : ''}" style="height:${Math.max(4, Math.round((v / max) * 92))}px"></div><span class="label">${String(((hour - 11 + i) + 24) % 24).padStart(2, '0')}</span></div>`
+    )).join('');
+  },
+  setInfo(durum) {
+    const s = durum?.sistem || {};
+    const fallback = s.ocr_fallback ? ` / ${s.ocr_fallback}` : '';
+    Utils.el('ai').textContent = `YOLOv8 + ${s.ocr_backend || 'OCR'}${fallback}`;
+    Utils.el('mode').textContent = s.simulasyon_modu ? 'SIMULASYON' : 'CANLI';
+    Utils.el('ocr').textContent = s.ocr_kare_atlama ? `Her ${s.ocr_kare_atlama}. kare` : 'Dinamik';
+    Utils.el('arch').textContent = s?.mimari || 'MySQL + JSON + JPG';
+  },
+  setMetrics(summary, durum) {
+    Utils.el('m1').textContent = String(Number(summary?.bugun_kayit ?? 0));
+    Utils.el('m1s').textContent = `${Number(summary?.son_saat_kayit ?? 0)} kayit son 1 saatte`;
+    Utils.el('m2').textContent = String(Number(summary?.aktif_seans ?? 0));
+    Utils.el('m2s').textContent = `tamamlanan seans: ${Number(summary?.tamamlanan ?? 0)}`;
+    Utils.el('m3').textContent = Utils.toNum(summary?.ortalama_guven_yuzde) === null ? '--' : `%${Number(summary.ortalama_guven_yuzde)}`;
+    Utils.el('m4').textContent = String(Number(summary?.son_saat_kayit ?? 0));
+    this.updateFresh(durum?._durum_yasi_saniye ?? null);
+  },
+  setScale(durum) {
+    const k = Utils.toNum(durum?.kantar_kg);
+    const buffer = durum?.plaka_buffer_detay?.plaka || durum?.plaka_buffer || '';
+    Utils.el('buffer').textContent = buffer || '--';
+    if (k === null) {
+      Utils.el('kg').textContent = '--';
+      Utils.el('kg-status').textContent = 'Kantar verisi yok. Python sureci veya COM akisi bekleniyor.';
+      return;
+    }
+    Utils.el('kg').textContent = `${Utils.kg(k)} kg`;
+    Utils.el('kg-status').textContent = durum?.seans_kilitli
+      ? 'Seans kilitli. Arac cikisi ve sifirlama guardi bekleniyor.'
+      : (durum?.kantar_sabit
+        ? 'Olcu sabit. Kantar karar vermeye hazir.'
+        : 'Olcu degisiyor. Kantarin sabitlenmesi bekleniyor.');
+  },
+  refreshCam() {
+    if (State.demoOn) return;
+    const img = Utils.el('cam');
+    const note = Utils.el('cam-note');
+    let retry = false;
+    img.onerror = () => {
+      if (!retry) {
+        retry = true;
+        img.src = `canli_kare.jpg?t=${Date.now()}`;
+        return;
+      }
+      note.textContent = 'Canli kare yok. Otokantar calisinca canli_kare.jpg guncellenecek.';
+    };
+    img.onload = () => {
+      retry = false;
+      note.textContent = 'Canli kare yenilendi. Tartidaki arac goruntusu izleniyor.';
+    };
+    img.src = `canli_kare.jpg?t=${Date.now()}`;
+  },
+};
+
+const Store = {
+  calcBars() {
+    State.bars = new Array(Config.chartHours).fill(0);
+    const nowMs = Date.now();
+    State.records.forEach((record) => {
+      const ts = Utils.recordTs(record);
+      if (ts === null) return;
+      const h = Math.floor((nowMs - ts) / 3600000);
+      if (h >= 0 && h < Config.chartHours) State.bars[11 - h] += 1;
+    });
+  },
+};
+
+const Panel = {
+  detectState(durum) {
+    if (State.demoOn) return 'demo';
+    const age = Utils.toNum(durum?._durum_yasi_saniye);
+    if (age === null) return 'offline';
+    if (age <= 2) return 'live';
+    if (age <= 10) return 'stale';
+    return 'offline';
+  },
+  updateState(durum) {
+    const next = this.detectState(durum);
+    if (next === State.status) return;
+    UI.setStatus(next);
+    if (next === 'live') UI.log('info', 'Canli veri akisi kuruldu: api_canli.php');
+    else if (next === 'stale') UI.log('warn', 'Canli dosya akisi yavasladi');
+    else if (next === 'offline' && !State.demoOn) UI.log('warn', 'Canli veri yok, dosya akisi bekleniyor');
+    else if (next === 'demo') UI.log('info', 'Demo modu aktif');
+  },
+  latestEvent(durum) {
+    if (!durum?.son_kayit?.plaka) return false;
+    const record = Utils.normalizeRecord(durum.son_kayit);
+    const signature = Utils.recordStamp(record);
+    if (!signature || signature === State.lastSignature) return false;
+    State.lastSignature = signature;
+    const weight = record.tip === 'CIKIS'
+      ? (record.net_agirlik ?? record.cikis_agirlik ?? record.giris_agirlik)
+      : record.giris_agirlik;
+    UI.log('info', `Son kayit: ${record.plaka} / ${record.tip} / ${Utils.kg(weight)} kg`);
+    return true;
+  },
+  setDetection(durum, isNewRecord) {
+    const bufferDetail = durum?.plaka_buffer_detay || null;
+    const lastRecord = durum?.son_kayit ? Utils.normalizeRecord(durum.son_kayit) : null;
+    if (bufferDetail?.plaka) {
+      const step = durum?.seans_kilitli ? 4 : (durum?.kantar_sabit ? 3 : 2);
+      const message = durum?.seans_kilitli
+        ? 'Kayit kilitlendi, seans temizligi bekleniyor'
+        : (durum?.kantar_sabit
+          ? 'Plaka tamponlandi, agirlik karari bekleniyor'
+          : 'Plaka goruldu, agirlik sabitleniyor');
+      UI.showPlate(bufferDetail.plaka, step, isNewRecord, message);
+      return;
+    }
+    if (lastRecord?.plaka) {
+      UI.showPlate(
+        lastRecord.plaka,
+        4,
+        isNewRecord,
+        durum?.seans_kilitli
+          ? 'Son basarili okuma kilitli seans olarak tutuluyor'
+          : 'Son basarili okuma'
+      );
+      return;
+    }
+    UI.resetPlate();
+  },
+  apply(data) {
+    const durum = data?.durum || {};
+    State.records = Array.isArray(data?.kayitlar) ? data.kayitlar.map((r) => Utils.normalizeRecord(r)) : [];
+    State.total = Number(data?.toplam ?? State.records.length);
+    Store.calcBars();
+    const isNewRecord = this.latestEvent(durum);
+    this.updateState(durum);
+    UI.setScale(durum);
+    this.setDetection(durum, isNewRecord);
+    UI.setMetrics(data?.ozet || {}, durum);
+    UI.setInfo(durum);
+    UI.drawTable();
+    UI.drawChart();
+  },
+};
+
+const Api = {
+  async poll() {
+    if (State.demoOn) return;
+    try {
+      const r = await fetch(`api_canli.php?action=panel&limit=40&t=${Date.now()}`, { cache: 'no-store' });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const payload = await r.json();
+      if (payload?.hata) throw new Error(payload.hata);
+      Panel.apply(payload);
+    } catch (e) {
+      if (State.status !== 'offline') {
+        UI.setStatus('offline');
+        UI.log('warn', 'Canli veri okunamadi, api_canli.php bekleniyor');
+      }
+      Utils.el('kg-status').textContent = 'Panel baglantisi bekleniyor. MySQL veya durum kaynagi yanit vermiyor.';
+    }
+  },
+};
+
+const Demo = {
+  summary() {
+    const today = new Date().toISOString().slice(0, 10);
+    const hourAgo = Date.now() - 3600000;
+    const g = State.records.map((r) => r.guven).filter((v) => Number.isFinite(v));
+    return {
+      bugun_kayit: State.records.filter((r) => r.giris_tarih === today).length,
+      son_saat_kayit: State.records.filter((r) => {
+        const t = Utils.recordTs(r);
+        return t !== null && t >= hourAgo;
+      }).length,
+      aktif_seans: State.records.filter((r) => r.tip === 'GIRIS').length,
+      tamamlanan: State.records.filter((r) => r.tip === 'CIKIS').length,
+      ortalama_guven_yuzde: g.length ? Math.round((g.reduce((a, b) => a + b, 0) / g.length) * 100) : null,
+    };
+  },
+  addRecord(plaka, guven, tip) {
+    const d = new Date();
+    const tarih = d.toISOString().slice(0, 10);
+    const saat = d.toTimeString().slice(0, 8);
+    State.records.unshift({
+      plaka,
+      tip,
+      durum: tip,
+      giris_tarih: tarih,
+      giris_saat: saat,
+      giris_agirlik: tip === 'CIKIS' ? 12000 : 42000,
+      cikis_tarih: tip === 'CIKIS' ? tarih : '',
+      cikis_saat: tip === 'CIKIS' ? saat : '',
+      cikis_agirlik: tip === 'CIKIS' ? 42000 : null,
+      net_agirlik: tip === 'CIKIS' ? 30000 : null,
+      guven,
+    });
+    State.total += 1;
+    Store.calcBars();
+    UI.drawTable();
+    UI.drawChart();
+    UI.setMetrics(this.summary(), { _durum_yasi_saniye: 0 });
+    UI.log('info', `Demo kaydi: ${plaka} / ${tip} / %${Math.round(guven * 100)}`);
+  },
+  tick() {
+    const plaka = Config.plates[Math.floor(Math.random() * Config.plates.length)];
+    if (State.demoPlate !== plaka) {
+      State.demoPlate = plaka;
+      State.demoStep = 0;
+    }
+    State.demoStep += 1;
+    UI.showPlate(
+      State.demoPlate,
+      State.demoStep,
+      false,
+      State.demoStep >= 3
+        ? 'Demo plaka tamponlandi'
+        : `Demo dogrulama: ${State.demoStep} / ${Config.verifyThreshold}`
+    );
+    UI.setScale({
+      kantar_kg: State.demoStep >= 3 ? 42000 : 18000 + State.demoStep * 2800,
+      kantar_sabit: State.demoStep >= 3,
+      plaka_buffer: State.demoStep >= 2 ? State.demoPlate : null,
+      plaka_buffer_detay: State.demoStep >= 2 ? { plaka: State.demoPlate } : null,
+      seans_kilitli: false,
+    });
+    if (State.demoStep >= Config.verifyThreshold) {
+      const tip = Math.random() > 0.55 ? 'CIKIS' : 'GIRIS';
+      const guven = 0.68 + Math.random() * 0.28;
+      this.addRecord(State.demoPlate, guven, tip);
+      State.demoPlate = null;
+      State.demoStep = 0;
+      setTimeout(() => {
+        if (State.demoOn) UI.resetPlate();
+      }, 1600);
+    }
+  },
+  start() {
+    if (State.demoOn) return;
+    State.demoOn = true;
+    clearInterval(State.intervals.poll);
+    clearInterval(State.intervals.cam);
+    clearInterval(State.intervals.demo);
+    UI.setStatus('demo');
+    Utils.el('demo').textContent = 'Canli moda don';
+    Utils.el('cam-note').textContent = 'Demo modu aktif. Gercek kamera yerine simulasyon gosteriliyor.';
+    UI.log('info', 'Demo modu manuel olarak baslatildi');
+    this.tick();
+    State.intervals.demo = setInterval(() => this.tick(), 1000);
+  },
+  stop() {
+    State.demoOn = false;
+    clearInterval(State.intervals.demo);
+    Utils.el('demo').textContent = 'Demo modu';
+    UI.setStatus('offline');
+    UI.resetPlate();
+    UI.log('warn', 'Demo modu durduruldu, canli dosya akisina donuluyor');
+    Api.poll();
+    UI.refreshCam();
+    State.intervals.poll = setInterval(() => Api.poll(), Config.pollMs);
+    State.intervals.cam = setInterval(() => UI.refreshCam(), Config.camMs);
+  },
+};
+
+const App = {
+  bindTabs() {
+    const buttons = Array.from(document.querySelectorAll('[data-tab]'));
+    const panels = Array.from(document.querySelectorAll('[data-panel]'));
+    const activate = (tab) => {
+      buttons.forEach((btn) => btn.classList.toggle('active', btn.dataset.tab === tab));
+      panels.forEach((panel) => panel.classList.toggle('active', panel.dataset.panel === tab));
+    };
+    buttons.forEach((btn) => {
+      btn.addEventListener('click', () => activate(btn.dataset.tab));
+    });
+    activate('genel');
+  },
+  bindEvents() {
+    Utils.el('refresh').addEventListener('click', () => {
+      Api.poll();
+      UI.refreshCam();
+      UI.log('info', 'Panel verisi manuel yenilendi');
+    });
+    Utils.el('demo').addEventListener('click', () => {
+      if (State.demoOn) Demo.stop();
+      else Demo.start();
+    });
+    Utils.el('csv').addEventListener('click', () => UI.log('info', 'CSV raporu indiriliyor'));
+  },
+  startClock() {
+    setInterval(() => {
+      Utils.el('clock').textContent = Utils.now();
+      if (State.lastUpdateMs !== null && !State.demoOn) {
+        UI.updateFresh((Date.now() - State.lastUpdateMs) / 1000);
+      }
+    }, 1000);
+  },
+  init() {
+    this.bindTabs();
+    this.bindEvents();
+    this.startClock();
+    UI.resetPlate();
+    UI.drawChart();
+    UI.setStatus('offline');
+    UI.log('info', 'OtoKantar paneli yuklendi');
+    UI.log('info', 'Kaynak: MySQL + api_canli.php + canli_kare.jpg');
+    Api.poll();
+    UI.refreshCam();
+    State.intervals.poll = setInterval(() => Api.poll(), Config.pollMs);
+    State.intervals.cam = setInterval(() => UI.refreshCam(), Config.camMs);
+  },
+};
+
+App.init();
 </script>
 </body>
 </html>

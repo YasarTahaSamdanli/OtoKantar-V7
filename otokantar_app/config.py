@@ -41,7 +41,6 @@ _CONFIG_VARSAYILAN = {
     "CSV_DOSYA": "kantar_raporu.csv",
     "LOG_DOSYA": "otokantar.log",
     "JSON_CANLI": "canli_durum.json",
-    "DB_DOSYA": "otokantar.db",
     "CANLI_KARE_DOSYA": "canli_kare.jpg",
     "CANLI_KARE_ARALIK": 5,
     "CANLI_DURUM_YAZIM_ARALIK": 0.5,
@@ -71,6 +70,13 @@ _CONFIG_VARSAYILAN = {
     "CAPTURES_RETENTION_DAYS": 30,
     "FASTAPI_HOST": "0.0.0.0",
     "FASTAPI_PORT": 8000,
+    # --- MySQL (XAMPP) ---
+    "MYSQL_HOST": "127.0.0.1",
+    "MYSQL_PORT": 3306,
+    "MYSQL_USER": "root",
+    "MYSQL_PASS": "",
+    "MYSQL_DB": "otokantar",
+    "MYSQL_CONNECT_TIMEOUT": 5,
 }
 
 _TUPLE_ANAHTARLAR = {"MORPH_KERNEL", "CLAHE_GRID", "KANTAR_ROI_NORM"}

@@ -35,6 +35,7 @@ from otokantar_app.config import CONFIG
 from otokantar_app.core.ai_motoru import OcrWorker, PlakaCozucu, PlakaTespitci
 from otokantar_app.core.dogrulama import DogrulamaMotoru
 from otokantar_app.core.tracker import CentroidTracker
+from otokantar_app.db.mysql_manager import MySQLDBManager
 from otokantar_app.db.kaydedici import KantarKaydedici
 from otokantar_app.donanim.kantar import KantarOkuyucu
 from otokantar_app.donanim.yazici import FisYazdirici
@@ -105,8 +106,17 @@ class OtoKantar:
         self.kantar_okuyucu = KantarOkuyucu()
         self.fis_yazdirici  = FisYazdirici()
         self.kaydedici      = KantarKaydedici(
-            CONFIG["CSV_DOSYA"], CONFIG["JSON_CANLI"], CONFIG["DB_DOSYA"]
+            CONFIG["CSV_DOSYA"], CONFIG["JSON_CANLI"]
         )
+        try:
+            self.mysql_db = MySQLDBManager.from_config(CONFIG)
+            log.info(
+                "MySQL hazır: %s:%s / db=%s",
+                CONFIG.get("MYSQL_HOST"), CONFIG.get("MYSQL_PORT"), CONFIG.get("MYSQL_DB"),
+            )
+        except Exception as e:
+            self.mysql_db = None
+            log.warning("MySQL devre dışı (başlatılamadı): %s", e)
         self.cizici  = EkranCizici()
         self.tracker = CentroidTracker()
         self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
@@ -154,14 +164,10 @@ class OtoKantar:
         # ------------------------------------------------------------------
         self._io_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="SnapshotIO")
         # Veritabanındaki bilinen araçları doğrulamaya besle (Fuzzy Match İçin)
-        import sqlite3
         try:
-            db_baglanti = sqlite3.connect(CONFIG.get("DB_DOSYA", "otokantar.db"))
-            satirlar = db_baglanti.execute("SELECT plaka FROM kayitli_araclar").fetchall()
             self.dogrulama.bilinen_plakalar = self.dogrulama.hazirla_bilinen_plakalar(
-                [r[0] for r in satirlar]
+                self.mysql_db.tum_plakalar() if self.mysql_db is not None else []
             )
-            db_baglanti.close()
             log.info(f"Oto-Düzeltme Aktif: Veritabanından {len(self.dogrulama.bilinen_plakalar)} araç hafızaya alındı.")
         except Exception as e:
             log.warning("Oto-düzeltme için plakalar okunamadı: %s", e)
@@ -221,6 +227,12 @@ class OtoKantar:
         self._io_executor.submit(
             self._snapshot_kaydet, kare_kopya, plaka, etiket
         )
+
+        if self.mysql_db is not None:
+            try:
+                self.mysql_db.plaka_okundu(plaka=plaka, yon=etiket, guven=final_conf)
+            except Exception as e:
+                log.warning("MySQL geçiş kaydı yazılamadı (%s): %s", plaka, e)
 
         if _WINSOUND_OK:
             try:
