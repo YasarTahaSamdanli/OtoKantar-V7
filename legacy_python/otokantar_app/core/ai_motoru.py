@@ -110,6 +110,7 @@ _CONFIG_DEFAULTS: dict = {
     # --- OCR ---
     "OCR_IZIN_LISTESI": "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
     "OCR_MIN_CONF": 0.35,
+    "OCR_FALLBACK_ENABLED": False,
     # ↓ Threshold below which a second OCR pass (inverted) is triggered
     "OCR_IKINCI_GECIS_ESIK": 0.6,
     # --- worker ---
@@ -377,7 +378,7 @@ class PlakaCozucu:
         self.primary_backend_adi = type(self._primary).__name__.lstrip("_").replace("Backend", "")
 
         self._fallback: Optional[_OcrBackend] = None
-        if _PADDLE_AVAILABLE and _EASY_AVAILABLE:
+        if _cfg("OCR_FALLBACK_ENABLED") and _PADDLE_AVAILABLE and _EASY_AVAILABLE:
             self._fallback = _EasyBackend(diller, gpu)
         self.fallback_backend_adi = (
             type(self._fallback).__name__.lstrip("_").replace("Backend", "")

@@ -82,7 +82,14 @@ class OtoKantar:
         self._cfg_seans_sifir_bekleme = float(CONFIG["SEANS_SIFIR_BEKLEME"])
         self._cfg_plaka_buffer_ttl    = float(CONFIG["PLAKA_BUFFER_TTL"])
         self._cfg_ocr_kare_atlama     = int(CONFIG["OCR_KARE_ATLAMA"])
+        self._cfg_tespit_kare_atlama  = max(1, int(CONFIG.get("TESPIT_KARE_ATLAMA", 2)))
         self._cfg_canli_kare_aralik   = max(1, int(CONFIG["CANLI_KARE_ARALIK"]))
+        self._cfg_canli_kare_max_genislik = max(
+            160, int(CONFIG.get("CANLI_KARE_MAX_GENISLIK", 640))
+        )
+        self._cfg_canli_kare_jpeg_kalite = max(
+            35, min(95, int(CONFIG.get("CANLI_KARE_JPEG_KALITE", 70)))
+        )
         self._cfg_canli_kare_dosya    = str(CONFIG["CANLI_KARE_DOSYA"])
         self._cfg_canli_durum_dosya   = str(CONFIG["JSON_CANLI"])
         self._cfg_canli_durum_aralik  = max(
@@ -302,6 +309,7 @@ class OtoKantar:
                 "ocr_backend": getattr(self.cozucu, "primary_backend_adi", "OCR"),
                 "ocr_fallback": getattr(self.cozucu, "fallback_backend_adi", None),
                 "ocr_kare_atlama": self._cfg_ocr_kare_atlama,
+                "tespit_kare_atlama": self._cfg_tespit_kare_atlama,
                 "canli_kare_aralik": self._cfg_canli_kare_aralik,
                 "calisiyor": not self._cikis_istendi.is_set(),
             },
@@ -342,7 +350,7 @@ class OtoKantar:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
             self._atomik_degistir(tmp, hedef)
             self._son_canli_durum_yazimi = simdi
-            self.remote_sync.gonder(payload, self._cfg_canli_kare_dosya)
+            self.remote_sync.gonder(payload)
         except Exception as e:
             log.warning("Canlı durum JSON yazılamadı: %s", e)
             try:
@@ -587,7 +595,20 @@ class OtoKantar:
         hedef = Path(self._cfg_canli_kare_dosya)
         tmp   = hedef.with_suffix(".tmp.jpg")
         try:
-            cv2.imwrite(str(tmp), kare)
+            yayin_kare = kare
+            h, w = yayin_kare.shape[:2]
+            if w > self._cfg_canli_kare_max_genislik:
+                oran = self._cfg_canli_kare_max_genislik / float(w)
+                yayin_kare = cv2.resize(
+                    yayin_kare,
+                    (self._cfg_canli_kare_max_genislik, max(1, int(h * oran))),
+                    interpolation=cv2.INTER_AREA,
+                )
+            cv2.imwrite(
+                str(tmp),
+                yayin_kare,
+                [int(cv2.IMWRITE_JPEG_QUALITY), self._cfg_canli_kare_jpeg_kalite],
+            )
             self._atomik_degistir(tmp, hedef)
             self.remote_sync.gonder(image_path=hedef)
         except Exception as e:
@@ -792,8 +813,8 @@ class OtoKantar:
 
         self._ocr_sonuclarini_isle(kare, guncel_kg, agirlik_sabit, kare_w, kare_h)
 
-        # Plaka tespiti (her 2 karede bir)
-        if self._kare_sayaci % 2 == 0:
+        # Plaka tespiti belirli aralıklarla yapılır; ara karelerde son liste kullanılır.
+        if self._kare_sayaci % self._cfg_tespit_kare_atlama == 0:
             plaka_listesi = self.tespitci.plakalari_bul(kare)
             with self._plaka_listesi_lock:
                 self._son_plaka_listesi = plaka_listesi

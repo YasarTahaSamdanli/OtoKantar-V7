@@ -31,6 +31,7 @@ class RemoteCanliSync:
         self.min_interval = max(0.0, float(min_interval))
         self._last_submit = 0.0
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="RemoteCanliSync")
+        self._inflight = None
 
         if enabled and requests is None:
             self.enabled = False
@@ -47,11 +48,13 @@ class RemoteCanliSync:
         simdi = time.monotonic()
         if not zorla and (simdi - self._last_submit) < self.min_interval:
             return
+        if self._inflight is not None and not self._inflight.done():
+            return
         self._last_submit = simdi
 
         payload_copy = dict(payload or {})
         image = Path(image_path) if image_path else None
-        self._executor.submit(self._gonder_sync, payload_copy, image)
+        self._inflight = self._executor.submit(self._gonder_sync, payload_copy, image)
 
     def kapat(self) -> None:
         self._executor.shutdown(wait=False, cancel_futures=True)

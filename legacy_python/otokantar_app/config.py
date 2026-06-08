@@ -17,7 +17,9 @@ _CONFIG_VARSAYILAN = {
     "OCR_GPU": False,
     "OCR_DILLER": ["tr", "en"],
     "OCR_IZIN_LISTESI": "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
-    "OCR_KARE_ATLAMA": 3,
+    "OCR_KARE_ATLAMA": 8,
+    "OCR_FALLBACK_ENABLED": False,
+    "TESPIT_KARE_ATLAMA": 4,
     "MORPH_KAPAT": True,
     "MORPH_KERNEL": (3, 3),
     "ALT_KIRP_ORAN": 0.15,
@@ -43,10 +45,12 @@ _CONFIG_VARSAYILAN = {
     "LOG_DOSYA": "otokantar.log",
     "JSON_CANLI": "canli_durum.json",
     "CANLI_KARE_DOSYA": "canli_kare.jpg",
-    "CANLI_KARE_ARALIK": 5,
-    "CANLI_DURUM_YAZIM_ARALIK": 0.5,
-    "KARE_KUYRUK_BOYUTU": 2,
-    "OCR_WORKER_KUYRUK": 4,
+    "CANLI_KARE_ARALIK": 30,
+    "CANLI_KARE_MAX_GENISLIK": 640,
+    "CANLI_KARE_JPEG_KALITE": 55,
+    "CANLI_DURUM_YAZIM_ARALIK": 2.0,
+    "KARE_KUYRUK_BOYUTU": 1,
+    "OCR_WORKER_KUYRUK": 1,
     "PLATE_WEIGHTS_URL": (
         "https://raw.githubusercontent.com/Muhammad-Zeerak-Khan/"
         "Automatic-License-Plate-Recognition-using-YOLOv8/main/"
@@ -83,7 +87,7 @@ _CONFIG_VARSAYILAN = {
     "REMOTE_SYNC_URL": "",
     "REMOTE_SYNC_TOKEN": "",
     "REMOTE_SYNC_TIMEOUT": 4.0,
-    "REMOTE_SYNC_MIN_INTERVAL": 0.5,
+    "REMOTE_SYNC_MIN_INTERVAL": 2.0,
 }
 
 _TUPLE_ANAHTARLAR = {"MORPH_KERNEL", "CLAHE_GRID", "KANTAR_ROI_NORM"}
