@@ -30,6 +30,8 @@ services:
         value: pgsql
       - key: APP_KEY
         sync: false
+      - key: APP_KEY_BASE64
+        generateValue: true
       - key: APP_URL
         sync: false
       - key: DATABASE_URL
