@@ -39,6 +39,7 @@
 /legacy/kantar_raporu.csv
 /legacy_python/canli_durum.json
 /legacy_python/canli_kare.jpg
+/legacy_python/config.json
 /legacy_python/kantar_raporu.csv
 /legacy_python/otokantar.log
 /legacy_python/**/__pycache__/

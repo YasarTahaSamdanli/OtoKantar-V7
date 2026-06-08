@@ -42,6 +42,21 @@ Canlı panel endpoint'leri `DB::connection('legacy')` ile legacy MySQL bağlant�
 - `legacy_python/`: Eski Python servis kodları (web tarafıyla karışmasın diye ayrı tutulur).
 - `legacy_backup/`: Eski PHP entrypoint'leri ve çeşitli legacy çıktılar (referans/yedek amaçlı).
 
+### Legacy Python canlı sync
+
+Render canlı panelinin anlık kare/kilo verisi alması için Python uygulamasında remote sync açık olmalıdır.
+
+1. Render servisindeki `LIVE_INGEST_API_TOKEN` değerini ayarlayın.
+2. `legacy_python/config.example.json` dosyasını `legacy_python/config.json` olarak kopyalayın.
+3. `REMOTE_SYNC_TOKEN` değerini Render'daki `LIVE_INGEST_API_TOKEN` ile aynı yapın.
+4. Python uygulamasını şu komutla başlatın:
+
+```bash
+python legacy_python/Otokantar.py
+```
+
+Başlangıç logunda `Remote sync aktif: https://otokantar-v7.onrender.com/api/live-ingest` görünmelidir.
+
 ### URL'ler
 
 - **Canlı panel (UI)**: `/canli` (login gerekir)

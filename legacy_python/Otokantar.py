@@ -6,6 +6,11 @@ Web sunucusu acmaz; canli durum verisini ortak klasordeki
 JSON / CSV / JPG dosyalari uzerinden uretir.
 """
 
+import os
+from pathlib import Path
+
+os.chdir(Path(__file__).resolve().parent)
+
 from otokantar_app.main import OtoKantar
 
 

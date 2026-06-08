@@ -108,6 +108,19 @@ def _config_yukle(dosya: str = "config.json") -> dict:
         if anahtar in cfg and isinstance(cfg[anahtar], list):
             cfg[anahtar] = tuple(cfg[anahtar])
 
+    if "REMOTE_SYNC" in cfg:
+        deger = cfg["REMOTE_SYNC"]
+        if isinstance(deger, str):
+            cfg["REMOTE_SYNC_ENABLED"] = deger.strip().lower() in {"1", "true", "yes", "on"}
+        else:
+            cfg["REMOTE_SYNC_ENABLED"] = bool(deger)
+
+    if "RENDER_URL" in cfg:
+        url = str(cfg["RENDER_URL"]).strip().rstrip("/")
+        if url and not url.endswith("/api/live-ingest"):
+            url = f"{url}/api/live-ingest"
+        cfg["REMOTE_SYNC_URL"] = url
+
     for anahtar in (
         "REMOTE_SYNC_ENABLED",
         "REMOTE_SYNC_URL",
