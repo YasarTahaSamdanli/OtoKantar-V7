@@ -5,6 +5,7 @@ namespace App\Providers;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -22,6 +23,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        if (app()->isProduction()) {
+            URL::forceScheme('https');
+        }
+
         RateLimiter::for('canli-api', function (Request $request) {
             $key = $request->user()?->id ? ('u:'.$request->user()->id) : ('ip:'.$request->ip());
             return Limit::perMinute(120)->by($key);

@@ -35,4 +35,11 @@ return [
         ],
     ],
 
+    'legacy_runtime' => [
+        'path' => env(
+            'LEGACY_RUNTIME_PATH',
+            base_path(is_dir(base_path('legacy_python')) ? 'legacy_python' : 'legacy')
+        ),
+    ],
+
 ];

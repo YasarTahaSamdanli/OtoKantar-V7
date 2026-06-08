@@ -36,6 +36,13 @@
 /legacy/canli_durum.json
 /legacy/canli_kare.jpg
 /legacy/otokantar.log
+/legacy/kantar_raporu.csv
+/legacy_python/canli_durum.json
+/legacy_python/canli_kare.jpg
+/legacy_python/kantar_raporu.csv
+/legacy_python/otokantar.log
+/legacy_python/**/__pycache__/
+/legacy_python/**/*.pyc
 
 # AI / binary assets (keep in releases, not git)
 *.pt

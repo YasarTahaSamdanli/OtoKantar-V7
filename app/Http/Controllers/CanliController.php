@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Response;
 use PDO;
 use Throwable;
@@ -62,9 +63,15 @@ class CanliController extends Controller
                 'gecerli_actionlar' => ['durum', 'panel'],
             ], 400);
         } catch (Throwable $e) {
+            Log::error('Canli API hatasi', [
+                'action' => $action,
+                'limit' => $limit,
+                'exception' => $e,
+            ]);
+
             return response()->json([
                 'hata' => 'MySQL baglanti/sorgu hatasi',
-                'mesaj' => $e->getMessage(),
+                'mesaj' => 'Canli veri kaynagi su anda yanit vermiyor.',
             ], 500);
         }
     }
@@ -106,7 +113,8 @@ class CanliController extends Controller
                 'Cache-Control' => 'no-store',
             ]);
         } catch (Throwable $e) {
-            abort(500, $e->getMessage());
+            Log::error('Canli CSV olusturma hatasi', ['exception' => $e]);
+            abort(500, 'CSV raporu su anda olusturulamiyor.');
         }
     }
 
@@ -123,7 +131,9 @@ class CanliController extends Controller
 
     private function legacyPath(string $name): string
     {
-        return base_path('legacy'.DIRECTORY_SEPARATOR.$name);
+        $root = rtrim((string) config('services.legacy_runtime.path', base_path('legacy')), '\\/');
+
+        return $root.DIRECTORY_SEPARATOR.$name;
     }
 
     private function canliCacheKey(Request $request, string $action, int $limit): string
@@ -437,4 +447,3 @@ class CanliController extends Controller
         return $this->dbDurumFallback($pdo);
     }
 }
-

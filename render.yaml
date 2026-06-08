@@ -1,0 +1,42 @@
+services:
+  - type: web
+    name: otokantar-v7
+    runtime: docker
+    plan: free
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: false
+      - key: APP_TIMEZONE
+        value: Europe/Istanbul
+      - key: APP_LOCALE
+        value: tr
+      - key: APP_FALLBACK_LOCALE
+        value: tr
+      - key: ALLOW_PUBLIC_REGISTRATION
+        value: false
+      - key: RUN_MIGRATIONS
+        value: true
+      - key: ENSURE_ADMIN
+        value: true
+      - key: CACHE_STORE
+        value: database
+      - key: SESSION_DRIVER
+        value: database
+      - key: QUEUE_CONNECTION
+        value: database
+      - key: DB_CONNECTION
+        value: pgsql
+      - key: APP_KEY
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: ADMIN_NAME
+        value: Admin

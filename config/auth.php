@@ -114,4 +114,6 @@ return [
 
     'password_timeout' => env('AUTH_PASSWORD_TIMEOUT', 10800),
 
+    'allow_public_registration' => env('ALLOW_PUBLIC_REGISTRATION', false),
+
 ];
