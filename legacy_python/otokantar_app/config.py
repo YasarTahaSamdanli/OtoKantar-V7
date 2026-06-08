@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from pathlib import Path
 
@@ -77,6 +78,12 @@ _CONFIG_VARSAYILAN = {
     "MYSQL_PASS": "",
     "MYSQL_DB": "otokantar",
     "MYSQL_CONNECT_TIMEOUT": 5,
+    # --- Remote Laravel demo sync ---
+    "REMOTE_SYNC_ENABLED": False,
+    "REMOTE_SYNC_URL": "",
+    "REMOTE_SYNC_TOKEN": "",
+    "REMOTE_SYNC_TIMEOUT": 4.0,
+    "REMOTE_SYNC_MIN_INTERVAL": 0.5,
 }
 
 _TUPLE_ANAHTARLAR = {"MORPH_KERNEL", "CLAHE_GRID", "KANTAR_ROI_NORM"}
@@ -100,6 +107,23 @@ def _config_yukle(dosya: str = "config.json") -> dict:
     for anahtar in _TUPLE_ANAHTARLAR:
         if anahtar in cfg and isinstance(cfg[anahtar], list):
             cfg[anahtar] = tuple(cfg[anahtar])
+
+    for anahtar in (
+        "REMOTE_SYNC_ENABLED",
+        "REMOTE_SYNC_URL",
+        "REMOTE_SYNC_TOKEN",
+        "REMOTE_SYNC_TIMEOUT",
+        "REMOTE_SYNC_MIN_INTERVAL",
+    ):
+        if anahtar not in os.environ:
+            continue
+        deger = os.environ[anahtar]
+        if anahtar == "REMOTE_SYNC_ENABLED":
+            cfg[anahtar] = deger.strip().lower() in {"1", "true", "yes", "on"}
+        elif anahtar in {"REMOTE_SYNC_TIMEOUT", "REMOTE_SYNC_MIN_INTERVAL"}:
+            cfg[anahtar] = float(deger)
+        else:
+            cfg[anahtar] = deger
     return cfg
 
 

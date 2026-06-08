@@ -31,15 +31,27 @@ class CanliController extends Controller
                 return response()->json($cached);
             }
 
-            $pdo = DB::connection('legacy')->getPdo();
-
             if ($action === 'durum') {
-                $payload = $this->durumOkuVeyaFallback($pdo);
+                try {
+                    $payload = $this->durumOkuVeyaFallback(DB::connection('legacy')->getPdo());
+                } catch (Throwable) {
+                    $payload = $this->durumOkuVeyaFallback();
+                }
                 Cache::put($cacheKey, $payload, $ttlSeconds);
                 return response()->json($payload);
             }
 
             if ($action === 'panel') {
+                try {
+                    $pdo = DB::connection('legacy')->getPdo();
+                } catch (Throwable $e) {
+                    Log::warning('Legacy DB yok, JSON-only panel payload kullaniliyor', ['exception' => $e]);
+                    $payload = $this->jsonOnlyPanelPayload($limit);
+                    Cache::put($cacheKey, $payload, $ttlSeconds);
+
+                    return response()->json($payload);
+                }
+
                 $jsonIndex = $this->jsonAgirlikIndexiGetir($this->legacyPath('canli_durum.json'));
                 $csvIndex = $this->csvAgirlikIndexiGetir($this->legacyPath('kantar_raporu.csv'));
                 $kayitlar = $this->dbKayitlariGetir($pdo, $limit, $jsonIndex, $csvIndex);
@@ -132,8 +144,90 @@ class CanliController extends Controller
     private function legacyPath(string $name): string
     {
         $root = rtrim((string) config('services.legacy_runtime.path', base_path('legacy')), '\\/');
+        if (!$this->isAbsolutePath($root)) {
+            $root = base_path($root);
+        }
 
         return $root.DIRECTORY_SEPARATOR.$name;
+    }
+
+    private function isAbsolutePath(string $path): bool
+    {
+        return $path !== '' && (str_starts_with($path, '/') || preg_match('/^[A-Za-z]:[\/\\\\]/', $path) === 1);
+    }
+
+    private function jsonOnlyPanelPayload(int $limit): array
+    {
+        $durum = $this->durumOkuVeyaFallback();
+        $kayitlar = [];
+
+        if (isset($durum['son_10']) && is_array($durum['son_10'])) {
+            $kayitlar = array_slice(array_reverse($durum['son_10']), 0, $limit);
+        }
+
+        if ($kayitlar === [] && isset($durum['son_kayit']) && is_array($durum['son_kayit'])) {
+            $kayitlar = [$durum['son_kayit']];
+        }
+
+        return [
+            'durum' => $durum,
+            'toplam' => count($kayitlar),
+            'limit' => $limit,
+            'kayitlar' => $kayitlar,
+            'ozet' => $this->jsonOzetGetir($kayitlar),
+            '_sunucu_zaman' => date('Y-m-d\TH:i:s'),
+            '_demo_modu' => true,
+        ];
+    }
+
+    private function jsonOzetGetir(array $kayitlar): array
+    {
+        $today = date('Y-m-d');
+        $oneHourAgo = time() - 3600;
+        $todayCount = 0;
+        $lastHourCount = 0;
+        $completed = 0;
+        $active = 0;
+        $guven = [];
+
+        foreach ($kayitlar as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+
+            $date = (string) ($row['giris_tarih'] ?? $row['tarih'] ?? $row['cikis_tarih'] ?? '');
+            $time = (string) ($row['giris_saat'] ?? $row['saat'] ?? $row['cikis_saat'] ?? '');
+            $ts = strtotime(trim($date.' '.$time));
+            $tip = strtoupper((string) ($row['durum'] ?? $row['tip'] ?? ''));
+
+            if ($date === $today) {
+                $todayCount++;
+            }
+            if ($ts !== false && $ts >= $oneHourAgo) {
+                $lastHourCount++;
+            }
+            if ($tip === 'TAMAMLANDI' || $tip === 'CIKIS') {
+                $completed++;
+            } else {
+                $active++;
+            }
+
+            $parsedGuven = $this->parseGuven($row['guven'] ?? null);
+            if ($parsedGuven !== null) {
+                $guven[] = $parsedGuven;
+            }
+        }
+
+        $avg = $guven !== [] ? array_sum($guven) / count($guven) : null;
+
+        return [
+            'bugun_kayit' => $todayCount,
+            'son_saat_kayit' => $lastHourCount,
+            'aktif_seans' => $active,
+            'tamamlanan' => $completed,
+            'ortalama_guven' => $avg !== null ? round($avg, 3) : null,
+            'ortalama_guven_yuzde' => $avg !== null ? (int) round($avg * 100) : null,
+        ];
     }
 
     private function canliCacheKey(Request $request, string $action, int $limit): string
@@ -422,7 +516,7 @@ class CanliController extends Controller
         return $durum;
     }
 
-    private function durumOkuVeyaFallback(PDO $pdo): array
+    private function durumOkuVeyaFallback(?PDO $pdo = null): array
     {
         $jsonDurumDosya = $this->legacyPath('canli_durum.json');
 
@@ -444,6 +538,35 @@ class CanliController extends Controller
             }
         }
 
-        return $this->dbDurumFallback($pdo);
+        if ($pdo !== null) {
+            return $this->dbDurumFallback($pdo);
+        }
+
+        return [
+            'son_guncelleme' => null,
+            'kantar_kg' => null,
+            'kantar_sabit' => false,
+            'seans_kilitli' => false,
+            'plaka_buffer' => null,
+            'plaka_buffer_detay' => null,
+            'fps' => null,
+            'yakalama_fps' => null,
+            'son_kayit' => null,
+            'son_10' => [],
+            'sistem' => [
+                'surum' => 'V7',
+                'mimari' => 'JSON-only demo',
+                'kanallar' => ['remote ingest: canli_durum.json + canli_kare.jpg'],
+                'simulasyon_modu' => null,
+                'ocr_backend' => null,
+                'ocr_fallback' => null,
+                'ocr_kare_atlama' => null,
+                'canli_kare_aralik' => null,
+                'calisiyor' => false,
+            ],
+            '_sunucu_zaman' => date('Y-m-d\TH:i:s'),
+            '_dosya_mtime' => null,
+            '_durum_yasi_saniye' => null,
+        ];
     }
 }

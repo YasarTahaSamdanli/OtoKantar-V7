@@ -41,6 +41,7 @@ from otokantar_app.donanim.kantar import KantarOkuyucu
 from otokantar_app.donanim.yazici import FisYazdirici
 from otokantar_app.logger import periyodik_temizlik_baslat, eski_snapshot_temizle, log
 from otokantar_app.models import OcrGorevi, PlakaBuffer, PlakaKayit
+from otokantar_app.remote_sync import RemoteCanliSync
 from otokantar_app.utils.cizici import EkranCizici
 
 if platform.system() == "Windows":
@@ -86,6 +87,13 @@ class OtoKantar:
         self._cfg_canli_durum_dosya   = str(CONFIG["JSON_CANLI"])
         self._cfg_canli_durum_aralik  = max(
             0.2, float(CONFIG.get("CANLI_DURUM_YAZIM_ARALIK", 0.5))
+        )
+        self.remote_sync = RemoteCanliSync(
+            bool(CONFIG.get("REMOTE_SYNC_ENABLED", False)),
+            str(CONFIG.get("REMOTE_SYNC_URL", "")),
+            str(CONFIG.get("REMOTE_SYNC_TOKEN", "")),
+            float(CONFIG.get("REMOTE_SYNC_TIMEOUT", 4.0)),
+            float(CONFIG.get("REMOTE_SYNC_MIN_INTERVAL", 0.5)),
         )
 
         # Modeller
@@ -334,6 +342,7 @@ class OtoKantar:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
             self._atomik_degistir(tmp, hedef)
             self._son_canli_durum_yazimi = simdi
+            self.remote_sync.gonder(payload, self._cfg_canli_kare_dosya)
         except Exception as e:
             log.warning("Canlı durum JSON yazılamadı: %s", e)
             try:
@@ -381,6 +390,7 @@ class OtoKantar:
             self.kantar_okuyucu.sabit,
             zorla=True,
         )
+        self.remote_sync.kapat()
         self.kaydedici.kapat()
 
         cv2.destroyAllWindows()
@@ -579,6 +589,7 @@ class OtoKantar:
         try:
             cv2.imwrite(str(tmp), kare)
             self._atomik_degistir(tmp, hedef)
+            self.remote_sync.gonder(image_path=hedef)
         except Exception as e:
             log.warning("Canlı kare yazılamadı: %s", e)
             try:

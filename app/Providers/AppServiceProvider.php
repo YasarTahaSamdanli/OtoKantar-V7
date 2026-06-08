@@ -36,5 +36,9 @@ class AppServiceProvider extends ServiceProvider
             $key = $request->user()?->id ? ('u:'.$request->user()->id) : ('ip:'.$request->ip());
             return Limit::perMinute(240)->by($key);
         });
+
+        RateLimiter::for('live-ingest', function (Request $request) {
+            return Limit::perMinute(240)->by($request->ip());
+        });
     }
 }

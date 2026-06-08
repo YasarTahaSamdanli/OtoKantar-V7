@@ -38,8 +38,9 @@ return [
     'legacy_runtime' => [
         'path' => env(
             'LEGACY_RUNTIME_PATH',
-            base_path(is_dir(base_path('legacy_python')) ? 'legacy_python' : 'legacy')
+            storage_path('app/legacy_python')
         ),
+        'api_token' => env('LIVE_INGEST_API_TOKEN'),
     ],
 
 ];
