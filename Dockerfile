@@ -3,7 +3,7 @@ FROM composer:2 AS vendor
 WORKDIR /app
 
 COPY composer.json composer.lock ./
-RUN composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader --no-scripts
+RUN composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader --no-scripts --ignore-platform-reqs
 
 COPY . .
 RUN composer dump-autoload --optimize
@@ -20,7 +20,7 @@ FROM php:8.3-apache
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libpq-dev libzip-dev unzip \
-    && docker-php-ext-install pdo_mysql pdo_pgsql zip \
+    && docker-php-ext-install pdo_mysql pdo_pgsql zip bcmath \
     && a2enmod rewrite \
     && rm -rf /var/lib/apt/lists/*
 
