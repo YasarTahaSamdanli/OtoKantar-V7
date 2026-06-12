@@ -16,6 +16,7 @@ Kritik düzeltmeler:
  12. _kapat: _cikis_istendi ve dur_event birleştirildi
 """
 
+import hashlib
 import json
 import platform
 import queue
@@ -102,6 +103,8 @@ class OtoKantar:
             float(CONFIG.get("REMOTE_SYNC_TIMEOUT", 4.0)),
             float(CONFIG.get("REMOTE_SYNC_MIN_INTERVAL", 0.5)),
         )
+        self._remote_sync_event_cache: dict[str, float] = {}
+        self._remote_sync_event_cache_ttl = 45.0
 
         # Modeller
         self.tespitci    = PlakaTespitci(
@@ -315,6 +318,89 @@ class OtoKantar:
             },
         }
 
+    def _remote_sync_event_fingerprint(
+        self,
+        kind: str,
+        payload: Optional[dict] = None,
+        image_path: Optional[Path] = None,
+    ) -> str:
+        if kind == "durum" and payload is not None:
+            son_kayit = payload.get("son_kayit") or {}
+            ozet = {
+                "kind": kind,
+                "kantar_kg": payload.get("kantar_kg"),
+                "kantar_sabit": payload.get("kantar_sabit"),
+                "seans_kilitli": payload.get("seans_kilitli"),
+                "plaka_buffer": payload.get("plaka_buffer"),
+                "aktif_bbox": payload.get("aktif_bbox"),
+                "son_kayit": {
+                    "plaka": son_kayit.get("plaka"),
+                    "giris_tarih": son_kayit.get("giris_tarih"),
+                    "giris_saat": son_kayit.get("giris_saat"),
+                    "durum": son_kayit.get("durum"),
+                    "cikis_tarih": son_kayit.get("cikis_tarih"),
+                    "cikis_saat": son_kayit.get("cikis_saat"),
+                },
+            }
+        elif kind == "kare" and image_path is not None:
+            stat = image_path.stat()
+            ozet = {
+                "kind": kind,
+                "size": stat.st_size,
+                "mtime_ns": stat.st_mtime_ns,
+            }
+        else:
+            ozet = {"kind": kind}
+
+        raw = json.dumps(ozet, sort_keys=True, ensure_ascii=False)
+        return hashlib.sha256(raw.encode()).hexdigest()
+
+    def _remote_sync_may_send(self, fingerprint: str) -> bool:
+        simdi = time.monotonic()
+        ttl = self._remote_sync_event_cache_ttl
+        expired = [
+            key
+            for key, sent_at in self._remote_sync_event_cache.items()
+            if (simdi - sent_at) > ttl
+        ]
+        for key in expired:
+            del self._remote_sync_event_cache[key]
+        return fingerprint not in self._remote_sync_event_cache
+
+    def _remote_sync_mark_sent(self, fingerprint: str) -> None:
+        self._remote_sync_event_cache[fingerprint] = time.monotonic()
+
+    def _remote_sync_gonder_dedup(
+        self,
+        payload: Optional[dict] = None,
+        image_path: Optional[Path] = None,
+    ) -> None:
+        if payload is not None:
+            kind = "durum"
+        elif image_path is not None:
+            kind = "kare"
+        else:
+            return
+
+        fingerprint = self._remote_sync_event_fingerprint(
+            kind,
+            payload=payload,
+            image_path=image_path,
+        )
+        if not self._remote_sync_may_send(fingerprint):
+            log.debug("Remote sync duplicate atlandi: %s", fingerprint[:12])
+            return
+
+        event_id = f"{int(time.time())}-{fingerprint[:12]}"
+        on_success = lambda fp=fingerprint: self._remote_sync_mark_sent(fp)
+
+        if payload is not None:
+            outbound = dict(payload)
+            outbound["event_id"] = event_id
+            self.remote_sync.gonder(outbound, on_success=on_success)
+        else:
+            self.remote_sync.gonder(image_path=image_path, on_success=on_success)
+
     def _atomik_degistir(self, tmp: Path, hedef: Path, deneme: int = 5) -> None:
         son_hata = None
         for _ in range(max(1, deneme)):
@@ -350,7 +436,7 @@ class OtoKantar:
                 json.dump(payload, f, ensure_ascii=False, indent=2)
             self._atomik_degistir(tmp, hedef)
             self._son_canli_durum_yazimi = simdi
-            self.remote_sync.gonder(payload)
+            self._remote_sync_gonder_dedup(payload=payload)
         except Exception as e:
             log.warning("Canlı durum JSON yazılamadı: %s", e)
             try:
@@ -610,7 +696,7 @@ class OtoKantar:
                 [int(cv2.IMWRITE_JPEG_QUALITY), self._cfg_canli_kare_jpeg_kalite],
             )
             self._atomik_degistir(tmp, hedef)
-            self.remote_sync.gonder(image_path=hedef)
+            self._remote_sync_gonder_dedup(image_path=hedef)
         except Exception as e:
             log.warning("Canlı kare yazılamadı: %s", e)
             try:
