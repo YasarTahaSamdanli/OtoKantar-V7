@@ -10,7 +10,7 @@ Kritik düzeltmeler:
   6. _son_plaka_listesi Lock ile korundu
   7. plaka_hafizasi ve _plaka_buffer tüm erişimlerde Lock altında
   8. Snapshot IO ayrı thread'e taşındı (ana döngüyü bloklamıyor)
-  9. canli_kare_yaz atomik tmp→rename ile güvenli yapıldı
+  9. canli_kare_yaz debounce + hash dedup + arka plan IO ile stabilize
  10. CONFIG değerleri __init__'te bir kez okunup cache'lendi
  11. Logging: her çağrıda float() dönüşüm hatası önlendi
  12. _kapat: _cikis_istendi ve dur_event birleştirildi
@@ -85,6 +85,9 @@ class OtoKantar:
         self._cfg_ocr_kare_atlama     = int(CONFIG["OCR_KARE_ATLAMA"])
         self._cfg_tespit_kare_atlama  = max(1, int(CONFIG.get("TESPIT_KARE_ATLAMA", 2)))
         self._cfg_canli_kare_aralik   = max(1, int(CONFIG["CANLI_KARE_ARALIK"]))
+        self._cfg_canli_kare_min_interval = max(
+            0.1, min(2.0, float(CONFIG.get("CANLI_KARE_MIN_INTERVAL", 0.15)))
+        )
         self._cfg_canli_kare_max_genislik = max(
             160, int(CONFIG.get("CANLI_KARE_MAX_GENISLIK", 640))
         )
@@ -175,6 +178,10 @@ class OtoKantar:
         # _son_plaka_listesi'ne iki thread'den erişilmiyor; ancak
         # gelecekte tracker thread'e taşınırsa bu lock gerekecek.
         self._plaka_listesi_lock = threading.Lock()
+        self._canli_kare_io_lock = threading.Lock()
+        self._son_canli_kare_submit = 0.0
+        self._son_canli_kare_hash: Optional[str] = None
+        self._canli_kare_write_future = None
         self._son_canli_durum_yazimi = 0.0
 
         # ------------------------------------------------------------------
@@ -314,6 +321,7 @@ class OtoKantar:
                 "ocr_kare_atlama": self._cfg_ocr_kare_atlama,
                 "tespit_kare_atlama": self._cfg_tespit_kare_atlama,
                 "canli_kare_aralik": self._cfg_canli_kare_aralik,
+                "canli_kare_min_interval": self._cfg_canli_kare_min_interval,
                 "calisiyor": not self._cikis_istendi.is_set(),
             },
         }
@@ -670,39 +678,86 @@ class OtoKantar:
             log.debug("Kamera (üretici) serbest bırakıldı.")
 
     # -----------------------------------------------------------------------
-    # Canlı kare yazma — Atomik tmp → rename
-    # FIX #8: Doğrudan imwrite() kısmi-yazma riski yaratır.
-    # tmp dosyaya yaz, ardından atomik rename et.
+    # Canlı kare yazma — debounce + hash dedup + arka plan IO
+    # Ana döngü yalnızca hafif filtreleri çalıştırır; imencode/disk IO
+    # SnapshotIO thread-pool'unda yapılır.
     # -----------------------------------------------------------------------
+    def _canli_kare_yayin_kare(self, kare: np.ndarray) -> np.ndarray:
+        h, w = kare.shape[:2]
+        if w <= self._cfg_canli_kare_max_genislik:
+            return kare
+        oran = self._cfg_canli_kare_max_genislik / float(w)
+        return cv2.resize(
+            kare,
+            (self._cfg_canli_kare_max_genislik, max(1, int(h * oran))),
+            interpolation=cv2.INTER_AREA,
+        )
+
+    @staticmethod
+    def _canli_kare_icerik_hash(yayin_kare: np.ndarray) -> str:
+        return hashlib.md5(yayin_kare.tobytes(), usedforsecurity=False).hexdigest()
+
     def _canli_kare_yaz(self, kare: np.ndarray) -> None:
         self._canli_kare_sayac += 1
         if self._canli_kare_sayac % self._cfg_canli_kare_aralik != 0:
             return
+
+        simdi = time.monotonic()
+        if (simdi - self._son_canli_kare_submit) < self._cfg_canli_kare_min_interval:
+            return
+
+        future = self._canli_kare_write_future
+        if future is not None and not future.done():
+            return
+
+        yayin_kare = self._canli_kare_yayin_kare(kare)
+        kare_hash = self._canli_kare_icerik_hash(yayin_kare)
+        if kare_hash == self._son_canli_kare_hash:
+            return
+
+        self._son_canli_kare_submit = simdi
+        self._canli_kare_write_future = self._io_executor.submit(
+            self._canli_kare_diske_yaz,
+            yayin_kare.copy(),
+            kare_hash,
+        )
+
+    def _canli_kare_diske_yaz(self, yayin_kare: np.ndarray, kare_hash: str) -> None:
         hedef = Path(self._cfg_canli_kare_dosya)
-        tmp   = hedef.with_suffix(".tmp.jpg")
+        tmp = hedef.with_suffix(".tmp.jpg")
+        upload_path: Optional[Path] = None
         try:
-            yayin_kare = kare
-            h, w = yayin_kare.shape[:2]
-            if w > self._cfg_canli_kare_max_genislik:
-                oran = self._cfg_canli_kare_max_genislik / float(w)
-                yayin_kare = cv2.resize(
-                    yayin_kare,
-                    (self._cfg_canli_kare_max_genislik, max(1, int(h * oran))),
-                    interpolation=cv2.INTER_AREA,
-                )
-            cv2.imwrite(
-                str(tmp),
+            ok, buf = cv2.imencode(
+                ".jpg",
                 yayin_kare,
                 [int(cv2.IMWRITE_JPEG_QUALITY), self._cfg_canli_kare_jpeg_kalite],
             )
-            self._atomik_degistir(tmp, hedef)
-            self._remote_sync_gonder_dedup(image_path=hedef)
+            if not ok:
+                raise OSError("JPEG kodlama basarisiz")
+            jpeg_bytes = buf.tobytes()
+
+            with self._canli_kare_io_lock:
+                hedef.parent.mkdir(parents=True, exist_ok=True)
+                tmp.write_bytes(jpeg_bytes)
+                self._atomik_degistir(tmp, hedef)
+
+            upload_path = hedef.with_name(
+                f"{hedef.stem}.upload.{time.time_ns()}{hedef.suffix}"
+            )
+            upload_path.write_bytes(jpeg_bytes)
+            self._remote_sync_gonder_dedup(image_path=upload_path)
+            self._son_canli_kare_hash = kare_hash
         except Exception as e:
             log.warning("Canlı kare yazılamadı: %s", e)
             try:
                 tmp.unlink(missing_ok=True)
             except Exception:
                 pass
+            if upload_path is not None:
+                try:
+                    upload_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     # -----------------------------------------------------------------------
     # OCR sonuçlarını işle — Durum Lock altında güncelle
