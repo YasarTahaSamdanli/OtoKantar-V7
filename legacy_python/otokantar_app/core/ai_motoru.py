@@ -39,6 +39,7 @@ import torch
 # Bu bayraklar, import *öncesi* set edilmezse etkisiz kalır.
 os.environ.setdefault("FLAGS_enable_pir_in_executor", "0")
 os.environ.setdefault("FLAGS_use_mkldnn", "0")
+os.environ.setdefault("FLAGS_enable_onednn", "0")
 
 try:
     from paddleocr import PaddleOCR
@@ -110,7 +111,7 @@ _CONFIG_DEFAULTS: dict = {
     # --- OCR ---
     "OCR_IZIN_LISTESI": "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789",
     "OCR_MIN_CONF": 0.35,
-    "OCR_FALLBACK_ENABLED": False,
+    "OCR_FALLBACK_ENABLED": True,
     # ↓ Threshold below which a second OCR pass (inverted) is triggered
     "OCR_IKINCI_GECIS_ESIK": 0.6,
     # --- worker ---
@@ -200,9 +201,11 @@ class _PaddleBackend(_OcrBackend):
 
     def __init__(self, gpu: bool) -> None:
         self._broken = False
-        # paddleocr sürümleri arasında bazı parametreler değişebiliyor (örn. show_log)
+        self.calisiyor = False
         kwargs = dict(
-            use_angle_cls=False,
+            use_textline_orientation=False,
+            use_doc_orientation_classify=False,
+            use_doc_unwarping=False,
             lang="en",
         )
         try:
@@ -211,41 +214,94 @@ class _PaddleBackend(_OcrBackend):
             if "Unknown argument: show_log" not in str(e):
                 raise
             self._reader = PaddleOCR(**kwargs)
-        log.info("PaddleOCR hazır (gpu=%s)", gpu)
+        except TypeError:
+            self._reader = PaddleOCR(
+                use_angle_cls=False,
+                lang="en",
+            )
+        self.calisiyor = self._probe()
+        if self.calisiyor:
+            log.info("PaddleOCR hazır (gpu=%s)", gpu)
+        else:
+            log.warning("PaddleOCR bu sistemde inference yapamıyor.")
+
+    def _probe(self) -> bool:
+        img = np.ones((32, 100, 3), dtype=np.uint8) * 255
+        cv2.putText(img, "AB12", (5, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
+        try:
+            self._run_ocr(img)
+            return True
+        except Exception as exc:
+            log.warning("PaddleOCR probe başarısız: %s", exc)
+            self._broken = True
+            return False
+
+    def _run_ocr(self, bgr: np.ndarray):
+        if hasattr(self._reader, "predict"):
+            return self._reader.predict(bgr)
+        return self._reader.ocr(bgr)
+
+    @staticmethod
+    def _metin_cikar(sonuc) -> tuple[str, float]:
+        if not sonuc:
+            return "", 0.0
+
+        page = sonuc[0] if isinstance(sonuc, list) and sonuc else sonuc
+        min_conf = float(_cfg("OCR_MIN_CONF"))
+        parcalar: list[str] = []
+        confs: list[float] = []
+
+        rec_texts = None
+        rec_scores = None
+        if isinstance(page, dict):
+            rec_texts = page.get("rec_texts")
+            rec_scores = page.get("rec_scores")
+        else:
+            try:
+                rec_texts = page["rec_texts"]
+                rec_scores = page["rec_scores"]
+            except (KeyError, TypeError):
+                rec_texts = None
+
+        if rec_texts is not None:
+            scores = list(rec_scores or [])
+            for idx, metin in enumerate(rec_texts):
+                conf = float(scores[idx]) if idx < len(scores) else 0.0
+                if conf < min_conf:
+                    continue
+                temiz = re.sub(r"[^A-Z0-9]", "", str(metin).upper())
+                if temiz:
+                    parcalar.append(temiz)
+                    confs.append(conf)
+            if parcalar:
+                return "".join(parcalar), sum(confs) / len(confs)
+            return "", 0.0
+
+        if isinstance(page, list):
+            for line in page:
+                if not line or len(line) < 2:
+                    continue
+                metin, conf = line[1]
+                if conf < min_conf:
+                    continue
+                temiz = re.sub(r"[^A-Z0-9]", "", str(metin).upper())
+                if temiz:
+                    parcalar.append(temiz)
+                    confs.append(float(conf))
+            if parcalar:
+                return "".join(parcalar), sum(confs) / len(confs)
+        return "", 0.0
 
     def oku(self, gray: np.ndarray) -> tuple[str, float]:
         if self._broken:
             raise RuntimeError("PaddleOCR devre dışı (önceki hata nedeniyle).")
         bgr = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
         try:
-            sonuc = self._reader.ocr(bgr, cls=False)
-        except TypeError as e:
-            # bazı paddleocr sürümlerinde `ocr(..., cls=...)` desteklenmez
-            if "unexpected keyword argument 'cls'" not in str(e):
-                raise
-            try:
-                sonuc = self._reader.ocr(bgr)
-            except Exception:
-                self._broken = True
-                raise
+            sonuc = self._run_ocr(bgr)
         except Exception:
             self._broken = True
             raise
-        if not sonuc or not sonuc[0]:
-            return "", 0.0
-        parcalar, confs = [], []
-        min_conf = float(_cfg("OCR_MIN_CONF"))
-        for line in sonuc[0]:
-            metin, conf = line[1]
-            if conf < min_conf:
-                continue
-            temiz = re.sub(r"[^A-Z0-9]", "", str(metin).upper())
-            if temiz:
-                parcalar.append(temiz)
-                confs.append(float(conf))
-        if not parcalar:
-            return "", 0.0
-        return "".join(parcalar), sum(confs) / len(confs)
+        return self._metin_cikar(sonuc)
 
 
 class _EasyBackend(_OcrBackend):
@@ -361,30 +417,64 @@ class PlakaCozucu:
     def __init__(self, diller: list[str], gpu: bool, min_conf: float) -> None:
         self.min_conf = min_conf
         self._gpu = gpu
+        self._diller = diller
+        self._fallback_lock = threading.Lock()
         self._clahe = cv2.createCLAHE(
             clipLimit=float(_cfg("CLAHE_CLIP")),
             tileGridSize=tuple(_cfg("CLAHE_GRID")),
         )
 
-        # Build primary and fallback backends
-        # Primary: PaddleOCR (best accuracy)
-        # Fallback: EasyOCR (only triggered when primary is insufficient)
+        paddle_ok = False
         if _PADDLE_AVAILABLE:
-            self._primary: _OcrBackend = _PaddleBackend(gpu)
-        elif _EASY_AVAILABLE:
-            self._primary = _EasyBackend(diller, gpu)
-        else:
-            raise RuntimeError("Hiçbir OCR backend bulunamadı (PaddleOCR veya EasyOCR gerekli).")
+            paddle = _PaddleBackend(gpu)
+            if paddle.calisiyor:
+                self._primary: _OcrBackend = paddle
+                paddle_ok = True
+
+        if not paddle_ok:
+            if _EASY_AVAILABLE:
+                log.warning("EasyOCR birincil backend olarak kullanılacak.")
+                self._primary = _EasyBackend(diller, gpu)
+            elif _PADDLE_AVAILABLE:
+                raise RuntimeError(
+                    "PaddleOCR çalışmıyor ve EasyOCR yüklü değil. "
+                    "pip install easyocr ile kurun."
+                )
+            else:
+                raise RuntimeError("Hiçbir OCR backend bulunamadı (PaddleOCR veya EasyOCR gerekli).")
+
         self.primary_backend_adi = type(self._primary).__name__.lstrip("_").replace("Backend", "")
 
         self._fallback: Optional[_OcrBackend] = None
-        if _cfg("OCR_FALLBACK_ENABLED") and _PADDLE_AVAILABLE and _EASY_AVAILABLE:
+        if (
+            _cfg("OCR_FALLBACK_ENABLED")
+            and paddle_ok
+            and _EASY_AVAILABLE
+            and isinstance(self._primary, _PaddleBackend)
+        ):
             self._fallback = _EasyBackend(diller, gpu)
         self.fallback_backend_adi = (
             type(self._fallback).__name__.lstrip("_").replace("Backend", "")
             if self._fallback is not None
             else None
         )
+
+    def _ensure_fallback(self) -> Optional[_OcrBackend]:
+        if self._fallback is not None:
+            return self._fallback
+        if not _EASY_AVAILABLE:
+            return None
+        with self._fallback_lock:
+            if self._fallback is not None:
+                return self._fallback
+            try:
+                self._fallback = _EasyBackend(self._diller, self._gpu)
+                self.fallback_backend_adi = "Easy"
+                log.info("EasyOCR fallback devreye alındı.")
+            except Exception as exc:
+                log.error("EasyOCR fallback başlatılamadı: %s", exc)
+                return None
+        return self._fallback
 
     # ------------------------------------------------------------------
     # Geometry helpers
@@ -619,7 +709,7 @@ class PlakaCozucu:
             metin1, conf1 = self._primary.oku(binary)
             primary_ok_1 = True
         except Exception as e:
-            log.warning("PaddleOCR çalıştırılamadı; fallback OCR kullanılacak. (%s)", e)
+            log.warning("Birincil OCR çalıştırılamadı; fallback denenecek. (%s)", e)
             metin1, conf1 = "", 0.0
             primary_ok_1 = False
 
@@ -633,7 +723,7 @@ class PlakaCozucu:
             try:
                 metin2, conf2 = self._primary.oku(inverted)
             except Exception as e:
-                log.warning("PaddleOCR (inverted) çalıştırılamadı; pass-1 sonucu kullanılacak. (%s)", e)
+                log.warning("Birincil OCR (inverted) çalıştırılamadı; pass-1 sonucu kullanılacak. (%s)", e)
                 metin2, conf2 = "", 0.0
         else:
             metin2, conf2 = "", 0.0
@@ -648,18 +738,22 @@ class PlakaCozucu:
             best_metin, best_conf = metin1, conf1
 
         # If primary backend couldn't run at all, go straight to fallback (if present).
-        if not primary_ok_1 and self._fallback is not None:
-            fb1_m, fb1_c = self._fallback.oku(binary)
-            fb2_m, fb2_c = self._fallback.oku(inverted)
-            return (fb2_m, fb2_c) if _skor(fb2_m, fb2_c) > _skor(fb1_m, fb1_c) else (fb1_m, fb1_c)
+        if not primary_ok_1:
+            fb = self._ensure_fallback()
+            if fb is not None:
+                fb1_m, fb1_c = fb.oku(binary)
+                fb2_m, fb2_c = fb.oku(inverted)
+                return (fb2_m, fb2_c) if _skor(fb2_m, fb2_c) > _skor(fb1_m, fb1_c) else (fb1_m, fb1_c)
 
         # --- Fallback backend (only if primary result is still insufficient) ---
-        if self._fallback is not None and best_conf < min_conf:
-            fb_metin, fb_conf = self._fallback.oku(
-                binary if conf1 >= conf2 else inverted
-            )
-            if _skor(fb_metin, fb_conf) > _skor(best_metin, best_conf):
-                best_metin, best_conf = fb_metin, fb_conf
+        if best_conf < min_conf:
+            fb = self._ensure_fallback()
+            if fb is not None:
+                fb_metin, fb_conf = fb.oku(
+                    binary if conf1 >= conf2 else inverted
+                )
+                if _skor(fb_metin, fb_conf) > _skor(best_metin, best_conf):
+                    best_metin, best_conf = fb_metin, fb_conf
 
         return best_metin, best_conf
 
