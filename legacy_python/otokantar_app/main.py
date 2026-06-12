@@ -252,6 +252,13 @@ class OtoKantar:
         self._io_executor.submit(
             self._snapshot_kaydet, kare_kopya, plaka, etiket
         )
+        self._io_executor.submit(
+            self._olay_kare_gonder,
+            kare.copy(),
+            kayit,
+            etiket,
+            final_conf,
+        )
 
         if self.mysql_db is not None:
             try:
@@ -280,6 +287,62 @@ class OtoKantar:
             log.info("Snapshot: %s", snap)
         except Exception as e:
             log.warning("Snapshot yazılamadı: %s", e)
+
+    def _olay_kare_gonder(
+        self,
+        kare: np.ndarray,
+        kayit: PlakaKayit,
+        etiket: str,
+        final_conf: float,
+    ) -> None:
+        """Remote'a yalnizca GIRIS/CIKIS olay karesini gonderir."""
+        if not self.remote_sync.enabled:
+            return
+
+        hedef = Path(self._cfg_canli_kare_dosya)
+        upload_path = hedef.with_name(
+            f"{hedef.stem}.event.{kayit.plaka}.{etiket}.{time.time_ns()}{hedef.suffix}"
+        )
+        try:
+            yayin_kare = self._canli_kare_yayin_kare(kare)
+            ok, buf = cv2.imencode(
+                ".jpg",
+                yayin_kare,
+                [int(cv2.IMWRITE_JPEG_QUALITY), self._cfg_canli_kare_jpeg_kalite],
+            )
+            if not ok:
+                raise OSError("JPEG kodlama basarisiz")
+
+            upload_path.write_bytes(buf.tobytes())
+            payload = {
+                "event_type": etiket,
+                "event_id": (
+                    f"{kayit.plaka}-{etiket}-"
+                    f"{kayit.cikis_tarih or kayit.giris_tarih}-"
+                    f"{kayit.cikis_saat or kayit.giris_saat}"
+                ),
+                "son_kayit": asdict(kayit),
+                "guven": round(float(final_conf), 3),
+            }
+
+            def cleanup() -> None:
+                try:
+                    upload_path.unlink(missing_ok=True)
+                except Exception as e:
+                    log.debug("Remote event gecici kare silinemedi: %s", e)
+
+            self.remote_sync.gonder(
+                payload,
+                image_path=upload_path,
+                zorla=True,
+                on_success=cleanup,
+            )
+        except Exception as e:
+            log.warning("Olay karesi remote'a hazirlanamadi: %s", e)
+            try:
+                upload_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     def _canli_durum_payload(self, guncel_kg: float, agirlik_sabit: bool) -> dict:
         with self._durum_lock:
@@ -741,11 +804,6 @@ class OtoKantar:
                 tmp.write_bytes(jpeg_bytes)
                 self._atomik_degistir(tmp, hedef)
 
-            upload_path = hedef.with_name(
-                f"{hedef.stem}.upload.{time.time_ns()}{hedef.suffix}"
-            )
-            upload_path.write_bytes(jpeg_bytes)
-            self._remote_sync_gonder_dedup(image_path=upload_path)
             self._son_canli_kare_hash = kare_hash
         except Exception as e:
             log.warning("Canlı kare yazılamadı: %s", e)

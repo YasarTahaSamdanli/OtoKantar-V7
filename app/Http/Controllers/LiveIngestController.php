@@ -36,8 +36,14 @@ class LiveIngestController extends Controller
 
             $imageBytes = $this->extractImageBytes($request);
             if ($imageBytes !== null) {
-                $this->atomicWrite($root.DIRECTORY_SEPARATOR.'canli_kare.jpg', $imageBytes);
-                $wrote[] = 'canli_kare.jpg';
+                if ($this->isTransitionEvent($payload)) {
+                    $this->atomicWrite($root.DIRECTORY_SEPARATOR.'canli_kare.jpg', $imageBytes);
+                    $wrote[] = 'canli_kare.jpg';
+                } elseif ($payload === null) {
+                    return response()->json([
+                        'hata' => 'JPG yalnizca GIRIS/CIKIS event payload ile kabul edilir.',
+                    ], Response::HTTP_UNPROCESSABLE_ENTITY);
+                }
             }
 
             if ($wrote === []) {
@@ -118,6 +124,22 @@ class LiveIngestController extends Controller
         return null;
     }
 
+    private function isTransitionEvent(?array $payload): bool
+    {
+        if ($payload === null) {
+            return false;
+        }
+
+        $eventType = strtoupper(trim((string) (
+            $payload['event_type']
+            ?? $payload['olay_tipi']
+            ?? $payload['_event_type']
+            ?? ''
+        )));
+
+        return in_array($eventType, ['GIRIS', 'CIKIS'], true);
+    }
+
     private function atomicWrite(string $path, string $contents): void
     {
         $directory = dirname($path);
@@ -127,6 +149,24 @@ class LiveIngestController extends Controller
 
         $tmp = $path.'.'.Str::random(10).'.tmp';
         file_put_contents($tmp, $contents, LOCK_EX);
-        rename($tmp, $path);
+
+        for ($attempt = 0; $attempt < 5; $attempt++) {
+            if (@rename($tmp, $path)) {
+                return;
+            }
+
+            if (PHP_OS_FAMILY === 'Windows' && is_file($path)) {
+                @unlink($path);
+            }
+
+            usleep(50_000);
+        }
+
+        if (!@copy($tmp, $path)) {
+            @unlink($tmp);
+            throw new \RuntimeException('Dosya atomik olarak yazilamadi: '.$path);
+        }
+
+        @unlink($tmp);
     }
 }
