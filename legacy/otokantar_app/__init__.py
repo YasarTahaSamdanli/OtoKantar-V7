@@ -1,1 +1,0 @@
-# OtoKantar modular package
