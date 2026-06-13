@@ -28,6 +28,14 @@ class AuthenticatedSessionController extends Controller
 
         $request->session()->regenerate();
 
+        if (! $request->user()->isAdmin()) {
+            $request->session()->forget('url.intended');
+
+            return redirect()
+                ->route('profile.edit')
+                ->with('status', 'Bu hesap admin paneline yetkili degil.');
+        }
+
         return redirect()->intended(route('dashboard', absolute: false));
     }
 

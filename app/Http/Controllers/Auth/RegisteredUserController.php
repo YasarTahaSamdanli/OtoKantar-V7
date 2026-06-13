@@ -50,6 +50,8 @@ class RegisteredUserController extends Controller
 
         Auth::login($user);
 
-        return redirect(route('dashboard', absolute: false));
+        return redirect()
+            ->route('profile.edit')
+            ->with('status', 'Hesabiniz olusturuldu. Admin paneli icin admin yetkisi gerekir.');
     }
 }
