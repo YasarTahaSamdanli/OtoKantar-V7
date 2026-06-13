@@ -8,17 +8,26 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Response;
 use PDO;
+use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 use Throwable;
 
 class CanliController extends Controller
 {
-    public function view()
+    public function view(Request $request)
     {
+        if ($guard = $this->guardCanliAccess($request)) {
+            return $guard;
+        }
+
         return view('panel');
     }
 
     public function api(Request $request)
     {
+        if ($guard = $this->guardCanliAccess($request)) {
+            return $guard;
+        }
+
         $action = (string) $request->query('action', 'panel');
         $limit = min(200, max(1, (int) $request->query('limit', 40)));
 
@@ -88,8 +97,12 @@ class CanliController extends Controller
         }
     }
 
-    public function csv()
+    public function csv(Request $request)
     {
+        if ($guard = $this->guardCanliAccess($request)) {
+            return $guard;
+        }
+
         try {
             $pdo = DB::connection('legacy')->getPdo();
             $stmt = $pdo->query(
@@ -130,8 +143,12 @@ class CanliController extends Controller
         }
     }
 
-    public function kare()
+    public function kare(Request $request)
     {
+        if ($guard = $this->guardCanliAccess($request)) {
+            return $guard;
+        }
+
         $path = $this->legacyPath('canli_kare.jpg');
         abort_unless(is_file($path), 404);
 
@@ -139,6 +156,23 @@ class CanliController extends Controller
             'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
             'Pragma' => 'no-cache',
         ]);
+    }
+
+    private function guardCanliAccess(Request $request): ?SymfonyResponse
+    {
+        $user = $request->user();
+
+        if (!$user) {
+            return $request->expectsJson()
+                ? response()->json(['message' => 'Unauthenticated.'], 401)
+                : redirect()->guest(route('login'));
+        }
+
+        if ($user->role !== 'admin') {
+            abort(403);
+        }
+
+        return null;
     }
 
     private function legacyPath(string $name): string

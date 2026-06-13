@@ -1,7 +1,7 @@
 <x-app-layout>
     <x-slot name="header">
         <h2 class="font-semibold text-xl text-gray-800 leading-tight">
-            Yeni Çalışan Oluştur
+            Yeni Kullanici Olustur
         </h2>
     </x-slot>
 
@@ -25,14 +25,26 @@
                         </div>
 
                         <div>
-                            <x-input-label for="password" value="Şifre" />
+                            <x-input-label for="password" value="Sifre" />
                             <x-text-input id="password" name="password" type="password" class="mt-1 block w-full" required autocomplete="new-password" />
                             <x-input-error :messages="$errors->get('password')" class="mt-2" />
                         </div>
 
                         <div>
-                            <x-input-label for="password_confirmation" value="Şifre (Tekrar)" />
+                            <x-input-label for="password_confirmation" value="Sifre (Tekrar)" />
                             <x-text-input id="password_confirmation" name="password_confirmation" type="password" class="mt-1 block w-full" required autocomplete="new-password" />
+                        </div>
+
+                        <div>
+                            <x-input-label for="role" value="Rol" />
+                            <select id="role"
+                                    name="role"
+                                    class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                    required>
+                                <option value="employee" @selected(old('role', 'employee') === 'employee')>Calisan</option>
+                                <option value="admin" @selected(old('role') === 'admin')>Admin</option>
+                            </select>
+                            <x-input-error :messages="$errors->get('role')" class="mt-2" />
                         </div>
 
                         <div class="flex items-center justify-between gap-4">
@@ -40,7 +52,7 @@
                                 Geri
                             </a>
                             <x-primary-button>
-                                Oluştur
+                                Olustur
                             </x-primary-button>
                         </div>
                     </form>

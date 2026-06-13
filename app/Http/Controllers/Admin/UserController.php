@@ -28,15 +28,18 @@ class UserController extends Controller
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'string', 'lowercase', 'email', 'max:255', 'unique:'.User::class],
             'password' => ['required', 'confirmed', Password::defaults()],
+            'role' => ['required', 'string', 'in:admin,employee'],
         ]);
 
         User::create([
             'name' => $data['name'],
             'email' => $data['email'],
             'password' => Hash::make($data['password']),
-            'role' => 'employee',
+            'role' => $data['role'],
         ]);
 
-        return redirect()->route('admin.users.index');
+        return redirect()
+            ->route('admin.users.index')
+            ->with('status', 'Kullanici olusturuldu.');
     }
 }

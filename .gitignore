@@ -41,7 +41,9 @@
 /legacy_python/canli_kare.jpg
 /legacy_python/*.event.*.jpg
 /legacy_python/*.upload.*.jpg
+/legacy_python/captures/
 /legacy_python/config.json
+/legacy_python/kantar_fisi.txt
 /legacy_python/kantar_raporu.csv
 /legacy_python/otokantar.log
 /legacy_python/**/__pycache__/

@@ -1,7 +1,7 @@
 <x-app-layout>
     <x-slot name="header">
         <h2 class="font-semibold text-xl text-gray-800 leading-tight">
-            Kullanıcılar
+            Kullanicilar
         </h2>
     </x-slot>
 
@@ -9,13 +9,19 @@
         <div class="max-w-7xl mx-auto sm:px-6 lg:px-8">
             <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg">
                 <div class="p-6 text-gray-900">
+                    @if (session('status'))
+                        <div class="mb-4 rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+                            {{ session('status') }}
+                        </div>
+                    @endif
+
                     <div class="flex items-center justify-between gap-4">
                         <div class="text-sm text-gray-600">
-                            Çalışan hesaplarını buradan oluşturabilirsiniz.
+                            Admin ve calisan hesaplarini buradan yonetebilirsiniz.
                         </div>
                         <a href="{{ route('admin.users.create') }}"
                            class="inline-flex items-center rounded-md bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800">
-                            Yeni Çalışan
+                            Yeni Kullanici
                         </a>
                     </div>
 
@@ -27,7 +33,7 @@
                                 <th class="py-2 pr-4">Ad</th>
                                 <th class="py-2 pr-4">Email</th>
                                 <th class="py-2 pr-4">Rol</th>
-                                <th class="py-2 pr-4">Oluşturma</th>
+                                <th class="py-2 pr-4">Olusturma</th>
                             </tr>
                             </thead>
                             <tbody>
@@ -37,7 +43,7 @@
                                     <td class="py-2 pr-4">{{ $user->name }}</td>
                                     <td class="py-2 pr-4">{{ $user->email }}</td>
                                     <td class="py-2 pr-4">
-                                        <span class="inline-flex items-center rounded-full bg-gray-100 px-2 py-0.5 text-xs font-semibold text-gray-700">
+                                        <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold {{ $user->role === 'admin' ? 'bg-indigo-100 text-indigo-700' : 'bg-gray-100 text-gray-700' }}">
                                             {{ $user->role }}
                                         </span>
                                     </td>

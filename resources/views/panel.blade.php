@@ -11,7 +11,7 @@
         header{position:sticky;top:0;z-index:20;display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:1.1rem 1.4rem;background:rgba(10,14,20,.86);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
         .brand{display:flex;align-items:center;gap:.9rem}.mark{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:linear-gradient(135deg,rgba(33,209,159,.25),rgba(62,133,255,.18));border:1px solid rgba(33,209,159,.35)}.mark svg{width:18px;height:18px}.brand h1{font-size:1rem;letter-spacing:.08em;text-transform:uppercase}.brand p,.clock,.sub,.mini{font-family:var(--mono);color:var(--muted)}.brand p{font-size:.73rem;margin-top:.14rem}
         .pill{display:inline-flex;align-items:center;gap:.55rem;padding:.42rem .82rem;border-radius:999px;border:1px solid rgba(33,209,159,.3);background:var(--acc2);color:var(--acc);font:11px var(--mono);letter-spacing:.08em;text-transform:uppercase}.dot{width:.45rem;height:.45rem;border-radius:50%;background:currentColor}
-        .side{display:flex;align-items:center;gap:.9rem}.clock{font-size:.76rem}
+        .side{display:flex;align-items:center;gap:.9rem;flex-wrap:wrap}.clock{font-size:.76rem}.toplink{display:inline-flex;align-items:center;justify-content:center;padding:.42rem .72rem;border-radius:999px;border:1px solid var(--line2);color:var(--muted);text-decoration:none;font:11px var(--mono);letter-spacing:.08em;text-transform:uppercase}.toplink:hover{background:rgba(255,255,255,.04);color:var(--text)}
         main{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1rem;padding:1.2rem}.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:1rem;box-shadow:0 20px 48px rgba(0,0,0,.24)}.hero{grid-column:1/-1;display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;background:linear-gradient(135deg,rgba(24,31,43,.96),rgba(18,25,35,.94));border-color:rgba(33,209,159,.16)}
         .view-switch{display:flex;gap:.6rem;padding:1rem 1.2rem 0 1.2rem;flex-wrap:wrap}.view-btn{padding:.55rem .95rem;border-radius:999px;border:1px solid var(--line2);background:rgba(255,255,255,.02);color:var(--muted);font:11px var(--mono);letter-spacing:.08em;text-transform:uppercase;cursor:pointer}.view-btn.active{background:var(--acc2);border-color:rgba(33,209,159,.3);color:var(--acc)}.tab-panel{display:none}.tab-panel.active{display:grid}
         .grow{flex:1 1 320px}.eyebrow,.title,.info-k{font-size:.67rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}.weight{font:700 clamp(2.1rem,5vw,3.4rem) var(--mono);line-height:.95;color:var(--acc);margin-top:.45rem}.status-text{margin-top:.55rem}.hero-grid{display:grid;gap:.7rem;min-width:240px}.panel{padding:.8rem .9rem;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.02)}.panel .v,.metric-v{font:600 1.25rem var(--mono);margin-top:.35rem}
@@ -45,6 +45,8 @@
         <div><h1>OtoKantar</h1><p>Canli panel | MySQL + JSON durum + JPG</p></div>
     </div>
     <div class="side">
+        <a class="toplink" href="{{ route('dashboard') }}">Yonetim</a>
+        <a class="toplink" href="{{ route('admin.users.index') }}">Kullanicilar</a>
         <div class="pill" id="pill"><span class="dot"></span><span id="pill-text">BEKLENIYOR</span></div>
         <div class="clock" id="clock">--:--:--</div>
     </div>
@@ -575,4 +577,3 @@ App.init();
 </script>
 </body>
 </html>
-
