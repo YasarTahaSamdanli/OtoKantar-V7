@@ -144,7 +144,33 @@ class CanliController extends Controller
     private function canliCacheKey(Request $request, string $action, int $limit): string
     {
         $userPart = $request->user()?->id ? ('u:'.$request->user()->id) : ('ip:'.$request->ip());
-        $qs = (string) $request->getQueryString();
-        return 'canli:'.$userPart.':'.$action.':'.$limit.':'.sha1($qs);
+        $query = $this->cacheRelevantQuery($request);
+
+        return 'canli:'.$userPart.':'.$action.':'.$limit.':'.sha1(http_build_query($query, '', '&', PHP_QUERY_RFC3986));
+    }
+
+    private function cacheRelevantQuery(Request $request): array
+    {
+        $ignored = ['_', 'action', 'limit', 't', 'timestamp'];
+        $query = array_filter(
+            $request->query(),
+            fn (string $key): bool => !in_array(strtolower($key), $ignored, true),
+            ARRAY_FILTER_USE_KEY
+        );
+
+        $this->sortQueryRecursive($query);
+
+        return $query;
+    }
+
+    private function sortQueryRecursive(array &$query): void
+    {
+        ksort($query);
+
+        foreach ($query as &$value) {
+            if (is_array($value)) {
+                $this->sortQueryRecursive($value);
+            }
+        }
     }
 }

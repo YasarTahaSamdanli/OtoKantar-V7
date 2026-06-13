@@ -4,32 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>OtoKantar V7 | Canli Izleme</title>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Syne:wght@400;600;700&display=swap');
-        *{box-sizing:border-box;margin:0;padding:0}body{min-height:100vh;background:radial-gradient(circle at top right,rgba(33,209,159,.09),transparent 24%),linear-gradient(160deg,#0d1015,#151b25);color:#eef3f8;font:14px 'Syne',sans-serif}
-        :root{--bg:#111722;--card:rgba(24,31,43,.92);--line:rgba(255,255,255,.08);--line2:rgba(255,255,255,.15);--text:#eef3f8;--muted:#94a0b1;--dim:#5d6877;--acc:#21d19f;--acc2:rgba(33,209,159,.12);--warn:#f3b341;--warn2:rgba(243,179,65,.12);--danger:#ff6178;--danger2:rgba(255,97,120,.12);--mono:'JetBrains Mono',monospace}
-        header{position:sticky;top:0;z-index:20;display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:1.1rem 1.4rem;background:rgba(10,14,20,.86);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
-        .brand{display:flex;align-items:center;gap:.9rem}.mark{width:38px;height:38px;border-radius:12px;display:grid;place-items:center;background:linear-gradient(135deg,rgba(33,209,159,.25),rgba(62,133,255,.18));border:1px solid rgba(33,209,159,.35)}.mark svg{width:18px;height:18px}.brand h1{font-size:1rem;letter-spacing:.08em;text-transform:uppercase}.brand p,.clock,.sub,.mini{font-family:var(--mono);color:var(--muted)}.brand p{font-size:.73rem;margin-top:.14rem}
-        .pill{display:inline-flex;align-items:center;gap:.55rem;padding:.42rem .82rem;border-radius:999px;border:1px solid rgba(33,209,159,.3);background:var(--acc2);color:var(--acc);font:11px var(--mono);letter-spacing:.08em;text-transform:uppercase}.dot{width:.45rem;height:.45rem;border-radius:50%;background:currentColor}
-        .side{display:flex;align-items:center;gap:.9rem;flex-wrap:wrap}.clock{font-size:.76rem}.toplink{display:inline-flex;align-items:center;justify-content:center;padding:.42rem .72rem;border-radius:999px;border:1px solid var(--line2);color:var(--muted);text-decoration:none;font:11px var(--mono);letter-spacing:.08em;text-transform:uppercase}.toplink:hover{background:rgba(255,255,255,.04);color:var(--text)}
-        main{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1rem;padding:1.2rem}.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:1rem;box-shadow:0 20px 48px rgba(0,0,0,.24)}.hero{grid-column:1/-1;display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;background:linear-gradient(135deg,rgba(24,31,43,.96),rgba(18,25,35,.94));border-color:rgba(33,209,159,.16)}
-        .view-switch{display:flex;gap:.6rem;padding:1rem 1.2rem 0 1.2rem;flex-wrap:wrap}.view-btn{padding:.55rem .95rem;border-radius:999px;border:1px solid var(--line2);background:rgba(255,255,255,.02);color:var(--muted);font:11px var(--mono);letter-spacing:.08em;text-transform:uppercase;cursor:pointer}.view-btn.active{background:var(--acc2);border-color:rgba(33,209,159,.3);color:var(--acc)}.tab-panel{display:none}.tab-panel.active{display:grid}
-        .grow{flex:1 1 320px}.eyebrow,.title,.info-k{font-size:.67rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}.weight{font:700 clamp(2.1rem,5vw,3.4rem) var(--mono);line-height:.95;color:var(--acc);margin-top:.45rem}.status-text{margin-top:.55rem}.hero-grid{display:grid;gap:.7rem;min-width:240px}.panel{padding:.8rem .9rem;border:1px solid var(--line);border-radius:14px;background:rgba(255,255,255,.02)}.panel .v,.metric-v{font:600 1.25rem var(--mono);margin-top:.35rem}
-        .metric-v.acc{color:var(--acc)}.metric-v.warn{color:var(--warn)}.metric-s{margin-top:.35rem;font:11px var(--mono);color:var(--muted)}.bar{margin-top:.7rem;height:4px;background:rgba(255,255,255,.08);border-radius:99px;overflow:hidden}.bar>span{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--acc),var(--warn));transition:width 1s linear}
-        .span2{grid-column:span 2}.span4{grid-column:1/-1}.frame{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:14px;background:#091018;border:1px solid var(--line);display:block}.note{margin-top:.65rem;font:11px var(--mono);color:var(--muted)}
-        .plate{margin-top:.85rem;min-height:114px;border-radius:16px;display:grid;place-items:center;border:1px solid rgba(33,209,159,.18);background:linear-gradient(135deg,rgba(33,209,159,.08),rgba(255,255,255,.02))}.plate b{font:600 clamp(1.7rem,4vw,2.5rem) var(--mono);letter-spacing:.18em;color:var(--acc)}.plate .empty{color:var(--dim);font-size:1rem;letter-spacing:.12em}.flash{outline:2px solid rgba(33,209,159,.34)}
-        .track{display:flex;gap:.45rem;margin-top:.9rem}.seg{flex:1;height:5px;border-radius:99px;background:rgba(255,255,255,.08)}.seg.wait{background:var(--warn)}.seg.on{background:var(--acc)}.verify{margin-top:.55rem;text-align:center;font:11px var(--mono);color:var(--muted)}
-        .btns{display:flex;gap:.65rem;flex-wrap:wrap;margin-top:.95rem}.btn{flex:1 1 140px;display:inline-flex;justify-content:center;align-items:center;padding:.78rem .9rem;border-radius:12px;border:1px solid var(--line2);background:transparent;color:var(--muted);text-decoration:none;cursor:pointer;font:12px 'Syne',sans-serif}.btn:hover{background:rgba(255,255,255,.04);color:var(--text)}.btn.primary{background:var(--acc2);border-color:rgba(33,209,159,.28);color:var(--acc)}
-        .head{display:flex;justify-content:space-between;align-items:center;gap:.7rem;margin-bottom:.85rem}.badge{padding:.18rem .58rem;border-radius:999px;border:1px solid var(--line);background:rgba(255,255,255,.03);font:10px var(--mono);color:var(--muted)}
-        .log{height:210px;overflow:auto;border:1px solid var(--line);border-radius:14px;background:rgba(6,10,16,.42);padding:.7rem;display:flex;flex-direction:column;gap:.42rem}.row{display:grid;grid-template-columns:58px 48px 1fr;gap:.55rem;font:11px var(--mono)}.time{color:var(--dim)}.info{color:var(--acc)}.warn{color:var(--warn)}.error{color:var(--danger)}.msg{color:var(--muted)}
-        .mini-chart{height:118px;display:flex;align-items:flex-end;gap:.35rem;margin-top:.8rem;padding-top:.7rem;border-top:1px solid var(--line)}.col{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:.25rem;height:100%}.count,.label{font:10px var(--mono)}.count{color:var(--muted)}.label{color:var(--dim)}.stick{width:100%;min-height:4px;border-radius:8px 8px 0 0;background:rgba(33,209,159,.18);border-top:1px solid rgba(33,209,159,.28)}.stick.now{background:rgba(33,209,159,.28);border-color:var(--acc)}
-        .info-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.8rem 1rem}.info-v{font:11px var(--mono);color:var(--muted);margin-top:.28rem}
-        table{width:100%;border-collapse:collapse}th{padding:.45rem .72rem;text-align:left;font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);border-bottom:1px solid var(--line)}td{padding:.78rem .72rem;border-bottom:1px solid rgba(255,255,255,.05);font:11px var(--mono);color:var(--muted)}tr:last-child td{border-bottom:none}.plate-td{color:var(--text);font-size:12px;letter-spacing:.08em;font-weight:600}
-        .tag{display:inline-flex;align-items:center;padding:.2rem .55rem;border-radius:999px;font-size:10px;font-weight:600;letter-spacing:.08em}.giris{background:var(--acc2);color:var(--acc);border:1px solid rgba(33,209,159,.24)}.cikis{background:var(--warn2);color:var(--warn);border:1px solid rgba(243,179,65,.22)}.alarm{background:var(--danger2);color:var(--danger);border:1px solid rgba(255,97,120,.22)}
-        .conf{display:flex;align-items:center;gap:.42rem}.conf-track{width:68px;height:4px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden}.conf-fill{height:100%;background:var(--acc)}.conf-fill.mid{background:var(--warn)}.conf-fill.low{background:var(--danger)}.empty-row{padding:1.2rem .72rem;color:var(--dim)}
-        @media(max-width:1080px){main{grid-template-columns:repeat(2,minmax(0,1fr))}.span4,.hero{grid-column:1/-1}.span2{grid-column:span 2}}
-        @media(max-width:760px){header{flex-direction:column;align-items:flex-start}main{grid-template-columns:1fr;padding:1rem}.span2,.span4{grid-column:span 1}.info-grid{grid-template-columns:1fr}.row{grid-template-columns:54px 44px 1fr}}
-    </style>
+    @vite(['resources/css/panel.css'])
 </head>
 <body>
 <header>
@@ -55,9 +30,9 @@
 </header>
 
 <div class="view-switch">
-    <button class="view-btn active" type="button" data-tab="genel">Genel</button>
-    <button class="view-btn" type="button" data-tab="canli">Canli</button>
-    <button class="view-btn" type="button" data-tab="kayitlar">Kayitlar</button>
+    <x-panel.tab-button tab="genel" active>Genel</x-panel.tab-button>
+    <x-panel.tab-button tab="canli">Canli</x-panel.tab-button>
+    <x-panel.tab-button tab="kayitlar">Kayitlar</x-panel.tab-button>
 </div>
 
 <main class="tab-panel active" data-panel="genel">
@@ -69,42 +44,26 @@
             <div class="bar"><span id="stale-bar"></span></div>
         </div>
         <div class="hero-grid">
-            <div class="panel"><div class="title">Plaka tampon</div><div class="v" id="buffer">--</div></div>
-            <div class="panel"><div class="title">Canli veri yasi</div><div class="v" id="fresh">--</div><div class="metric-s" id="fresh-sub">guncelleme bekleniyor</div></div>
+            <x-panel.hero-stat title="Plaka tampon" value-id="buffer" />
+            <x-panel.hero-stat title="Canli veri yasi" value-id="fresh" subtitle="guncelleme bekleniyor" subtitle-id="fresh-sub" />
         </div>
     </section>
 
-    <section class="card">
-        <div class="title">Bugun kayit</div>
-        <div class="metric-v acc" id="m1">0</div>
-        <div class="metric-s" id="m1s">MySQL tabanli gunluk toplam</div>
-    </section>
-    <section class="card">
-        <div class="title">Aktif seans</div>
-        <div class="metric-v" id="m2">0</div>
-        <div class="metric-s" id="m2s">tamamlanan seans: 0</div>
-    </section>
-    <section class="card">
-        <div class="title">Ortalama guven</div>
-        <div class="metric-v warn" id="m3">--</div>
-        <div class="metric-s">% OCR skoru</div>
-    </section>
-    <section class="card">
-        <div class="title">Son 1 saat</div>
-        <div class="metric-v" id="m4">0</div>
-        <div class="metric-s">kayit hareketi</div>
-    </section>
+    <x-panel.metric-card title="Bugun kayit" value-id="m1" value-class="acc" subtitle="MySQL tabanli gunluk toplam" subtitle-id="m1s" />
+    <x-panel.metric-card title="Aktif seans" value-id="m2" subtitle="tamamlanan seans: 0" subtitle-id="m2s" />
+    <x-panel.metric-card title="Ortalama guven" value="--" value-id="m3" value-class="warn" subtitle="% OCR skoru" />
+    <x-panel.metric-card title="Son 1 saat" value-id="m4" subtitle="kayit hareketi" />
 </main>
 
 <main class="tab-panel" data-panel="canli">
     <section class="card span2">
-        <div class="head"><div class="title">Canli kare</div><div class="badge">/canli/kare</div></div>
+        <x-panel.card-head title="Canli kare" badge="/canli/kare" />
         <img class="frame" id="cam" src="" alt="Canli kare">
         <div class="note" id="cam-note">Kamera karesi bekleniyor...</div>
     </section>
 
     <section class="card span2">
-        <div class="head"><div class="title">Aktif tespit</div><div class="badge">dogrulama</div></div>
+        <x-panel.card-head title="Aktif tespit" badge="dogrulama" />
         <div class="plate" id="plate"><b class="empty">BEKLENIYOR</b></div>
         <div class="track"><div class="seg" id="vd1"></div><div class="seg" id="vd2"></div><div class="seg" id="vd3"></div><div class="seg" id="vd4"></div></div>
         <div class="verify" id="verify">Dogrulama bekleniyor</div>
@@ -116,26 +75,26 @@
     </section>
 
     <section class="card span2">
-        <div class="head"><div class="title">Panel olay akisi</div><div class="badge" id="log-count">0 satir</div></div>
+        <x-panel.card-head title="Panel olay akisi" badge="0 satir" badge-id="log-count" />
         <div class="log" id="log"></div>
     </section>
 </main>
 
 <main class="tab-panel" data-panel="kayitlar">
     <section class="card span2">
-        <div class="head"><div class="title">Sistem bilgisi</div><div class="badge">uretim paneli</div></div>
+        <x-panel.card-head title="Sistem bilgisi" badge="uretim paneli" />
         <div class="info-grid">
-            <div><div class="info-k">AI yigin</div><div class="info-v" id="ai">YOLOv8 + OCR</div></div>
-            <div><div class="info-k">Calisma modu</div><div class="info-v" id="mode">Bekleniyor</div></div>
-            <div><div class="info-k">Esik</div><div class="info-v" id="esik">4 / canli durum dosyasi</div></div>
-            <div><div class="info-k">Rapor</div><div class="info-v">MySQL / otokantar</div></div>
-            <div><div class="info-k">OCR kare atlama</div><div class="info-v" id="ocr">Dinamik</div></div>
-            <div><div class="info-k">Mimari</div><div class="info-v" id="arch">MySQL + JSON + JPG</div></div>
+            <x-panel.info-item label="AI yigin" value="YOLOv8 + OCR" value-id="ai" />
+            <x-panel.info-item label="Calisma modu" value="Bekleniyor" value-id="mode" />
+            <x-panel.info-item label="Esik" value="4 / canli durum dosyasi" value-id="esik" />
+            <x-panel.info-item label="Rapor" value="MySQL / otokantar" />
+            <x-panel.info-item label="OCR kare atlama" value="Dinamik" value-id="ocr" />
+            <x-panel.info-item label="Mimari" value="MySQL + JSON + JPG" value-id="arch" />
         </div>
         <div class="mini-chart" id="chart"></div>
     </section>
     <section class="card span4">
-        <div class="head"><div class="title">Son kayitlar</div><div class="badge" id="table-count">0 kayit</div></div>
+        <x-panel.card-head title="Son kayitlar" badge="0 kayit" badge-id="table-count" />
         <table>
             <thead><tr><th>Plaka</th><th>Agirlik / Net</th><th>Tarih</th><th>Saat</th><th>Tip</th><th>Guven</th></tr></thead>
             <tbody id="tbody"><tr><td class="empty-row" colspan="6">Henuz kayit yok. Sistem dosya akisina baglanmayi bekliyor.</td></tr></tbody>
@@ -265,28 +224,55 @@ const UI = {
     });
     Utils.el('verify').textContent = msg || (done ? 'Kayit tamamlandi' : `Dogrulaniyor: ${step} / ${Config.verifyThreshold}`);
   },
+  confidenceClass(percent) {
+    if (percent >= 80) return '';
+    return percent >= 60 ? ' mid' : ' low';
+  },
+  recordTag(tip) {
+    if (tip === 'CIKIS') return 'cikis';
+    return tip === 'ALARM' ? 'alarm' : 'giris';
+  },
+  recordWeight(record) {
+    return record.tip === 'CIKIS'
+      ? (record.net_agirlik ?? record.cikis_agirlik ?? record.giris_agirlik)
+      : record.giris_agirlik;
+  },
+  recordDateTime(record) {
+    return {
+      date: record.tip === 'CIKIS' && record.cikis_tarih ? record.cikis_tarih : record.giris_tarih,
+      time: record.tip === 'CIKIS' && record.cikis_saat ? record.cikis_saat : record.giris_saat,
+    };
+  },
+  emptyTableRow() {
+    return '<tr><td class="empty-row" colspan="6">Henuz kayit yok. Sistem dosya akisina baglanmayi bekliyor.</td></tr>';
+  },
+  renderRecordRow(record) {
+    const percent = Math.max(0, Math.min(100, Math.round((record.guven || 0) * 100)));
+    const { date, time } = this.recordDateTime(record);
+    return `<tr><td class="plate-td">${Utils.escapeHtml(record.plaka)}</td><td>${Utils.escapeHtml(Utils.kg(this.recordWeight(record)))}</td><td>${Utils.escapeHtml(date || '--')}</td><td>${Utils.escapeHtml(time || '--')}</td><td><span class="tag ${this.recordTag(record.tip)}">${Utils.escapeHtml(record.tip)}</span></td><td><div class="conf"><div class="conf-track"><div class="conf-fill${this.confidenceClass(percent)}" style="width:${percent}%"></div></div><span>%${percent}</span></div></td></tr>`;
+  },
+  renderChartColumn(value, index, max, hour) {
+    const height = Math.max(4, Math.round((value / max) * 92));
+    const label = String(((hour - 11 + index) + 24) % 24).padStart(2, '0');
+    return `<div class="col"><span class="count">${value || ''}</span><div class="stick ${index === 11 ? 'now' : ''}" style="height:${height}px"></div><span class="label">${label}</span></div>`;
+  },
   drawTable() {
     Utils.el('table-count').textContent = `${State.total} kayit`;
     if (!State.records.length) {
-      Utils.el('tbody').innerHTML = '<tr><td class="empty-row" colspan="6">Henuz kayit yok. Sistem dosya akisina baglanmayi bekliyor.</td></tr>';
+      Utils.el('tbody').innerHTML = this.emptyTableRow();
       return;
     }
-    Utils.el('tbody').innerHTML = State.records.slice(0, Config.tableLimit).map((r) => {
-      const p = Math.max(0, Math.min(100, Math.round((r.guven || 0) * 100)));
-      const cls = p >= 80 ? '' : (p >= 60 ? ' mid' : ' low');
-      const tag = r.tip === 'CIKIS' ? 'cikis' : (r.tip === 'ALARM' ? 'alarm' : 'giris');
-      const weight = r.tip === 'CIKIS' ? (r.net_agirlik ?? r.cikis_agirlik ?? r.giris_agirlik) : r.giris_agirlik;
-      const date = r.tip === 'CIKIS' && r.cikis_tarih ? r.cikis_tarih : r.giris_tarih;
-      const time = r.tip === 'CIKIS' && r.cikis_saat ? r.cikis_saat : r.giris_saat;
-      return `<tr><td class="plate-td">${Utils.escapeHtml(r.plaka)}</td><td>${Utils.escapeHtml(Utils.kg(weight))}</td><td>${Utils.escapeHtml(date || '--')}</td><td>${Utils.escapeHtml(time || '--')}</td><td><span class="tag ${tag}">${Utils.escapeHtml(r.tip)}</span></td><td><div class="conf"><div class="conf-track"><div class="conf-fill${cls}" style="width:${p}%"></div></div><span>%${p}</span></div></td></tr>`;
-    }).join('');
+    Utils.el('tbody').innerHTML = State.records
+      .slice(0, Config.tableLimit)
+      .map((record) => this.renderRecordRow(record))
+      .join('');
   },
   drawChart() {
     const max = Math.max(...State.bars, 1);
     const hour = new Date().getHours();
-    Utils.el('chart').innerHTML = State.bars.map((v, i) => (
-      `<div class="col"><span class="count">${v || ''}</span><div class="stick ${i === 11 ? 'now' : ''}" style="height:${Math.max(4, Math.round((v / max) * 92))}px"></div><span class="label">${String(((hour - 11 + i) + 24) % 24).padStart(2, '0')}</span></div>`
-    )).join('');
+    Utils.el('chart').innerHTML = State.bars
+      .map((value, index) => this.renderChartColumn(value, index, max, hour))
+      .join('');
   },
   setInfo(durum) {
     const s = durum?.sistem || {};
