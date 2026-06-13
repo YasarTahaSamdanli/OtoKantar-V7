@@ -1,55 +1,88 @@
 <x-app-layout>
     <x-slot name="header">
-        <h2 class="font-semibold text-xl text-gray-800 leading-tight">
-            Yonetim Paneli
-        </h2>
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+                <p class="text-xs font-semibold uppercase tracking-[.18em] text-emerald-300">OtoKantar V7</p>
+                <h2 class="mt-2 text-2xl font-semibold text-slate-100">
+                    Yonetim Paneli
+                </h2>
+            </div>
+            <div class="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-4 py-2 text-xs font-semibold uppercase tracking-[.14em] text-emerald-300">
+                Admin
+            </div>
+        </div>
     </x-slot>
 
-    <div class="py-12">
-        <div class="max-w-7xl mx-auto sm:px-6 lg:px-8">
-            <div class="grid gap-6 md:grid-cols-3">
+    <div class="min-h-[calc(100vh-8rem)] py-8">
+        <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+            <div class="grid gap-4 lg:grid-cols-3">
                 <a href="{{ route('canli.view') }}"
-                   class="block bg-white overflow-hidden shadow-sm sm:rounded-lg border border-gray-100 hover:border-gray-300 transition">
-                    <div class="p-6 text-gray-900">
-                        <div class="text-sm font-semibold text-gray-500 uppercase tracking-wide">Canli operasyon</div>
-                        <div class="mt-3 text-2xl font-semibold">Canli Panel</div>
-                        <p class="mt-2 text-sm text-gray-600">Kantar durumu, son gecisler, canli kare ve CSV raporuna gir.</p>
+                   class="group rounded-2xl border border-white/10 bg-[#181f2b]/95 p-6 shadow-[0_20px_48px_rgba(0,0,0,.24)] transition hover:border-emerald-400/30 hover:bg-[#1b2431]">
+                    <div class="flex items-start justify-between gap-4">
+                        <div>
+                            <div class="text-xs font-semibold uppercase tracking-[.16em] text-slate-500">Operasyon</div>
+                            <div class="mt-3 text-2xl font-semibold text-slate-100">Canli Panel</div>
+                        </div>
+                        <span class="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-xs text-emerald-300">Acilir</span>
                     </div>
+                    <p class="mt-4 text-sm leading-6 text-slate-400">Kantar durumu, canli kare, son gecisler ve CSV raporu.</p>
                 </a>
 
                 <a href="{{ route('admin.users.index') }}"
-                   class="block bg-white overflow-hidden shadow-sm sm:rounded-lg border border-gray-100 hover:border-gray-300 transition">
-                    <div class="p-6 text-gray-900">
-                        <div class="text-sm font-semibold text-gray-500 uppercase tracking-wide">Hesap yonetimi</div>
-                        <div class="mt-3 text-2xl font-semibold">Kullanicilar</div>
-                        <p class="mt-2 text-sm text-gray-600">Admin ve calisan hesaplarini listele, kimlerin giris yapabilecegini gor.</p>
+                   class="group rounded-2xl border border-white/10 bg-[#181f2b]/95 p-6 shadow-[0_20px_48px_rgba(0,0,0,.24)] transition hover:border-emerald-400/30 hover:bg-[#1b2431]">
+                    <div class="flex items-start justify-between gap-4">
+                        <div>
+                            <div class="text-xs font-semibold uppercase tracking-[.16em] text-slate-500">Yetki</div>
+                            <div class="mt-3 text-2xl font-semibold text-slate-100">Kullanicilar</div>
+                        </div>
+                        <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-300">Liste</span>
                     </div>
+                    <p class="mt-4 text-sm leading-6 text-slate-400">Admin ve calisan hesaplarini tek ekrandan kontrol et.</p>
                 </a>
 
                 <a href="{{ route('admin.users.create') }}"
-                   class="block bg-white overflow-hidden shadow-sm sm:rounded-lg border border-gray-100 hover:border-gray-300 transition">
-                    <div class="p-6 text-gray-900">
-                        <div class="text-sm font-semibold text-gray-500 uppercase tracking-wide">Yeni hesap</div>
-                        <div class="mt-3 text-2xl font-semibold">Kullanici Olustur</div>
-                        <p class="mt-2 text-sm text-gray-600">Yeni calisan veya yeni admin hesabi ac.</p>
+                   class="group rounded-2xl border border-white/10 bg-[#181f2b]/95 p-6 shadow-[0_20px_48px_rgba(0,0,0,.24)] transition hover:border-emerald-400/30 hover:bg-[#1b2431]">
+                    <div class="flex items-start justify-between gap-4">
+                        <div>
+                            <div class="text-xs font-semibold uppercase tracking-[.16em] text-slate-500">Hesap</div>
+                            <div class="mt-3 text-2xl font-semibold text-slate-100">Yeni Kullanici</div>
+                        </div>
+                        <span class="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-300">Form</span>
                     </div>
+                    <p class="mt-4 text-sm leading-6 text-slate-400">Yeni calisan veya yeni admin hesabi olustur.</p>
                 </a>
             </div>
 
-            <div class="mt-6 bg-white overflow-hidden shadow-sm sm:rounded-lg">
-                <div class="p-6 text-gray-900">
-                    <h3 class="text-lg font-semibold">Roller nasil calisir?</h3>
-                    <div class="mt-4 grid gap-4 md:grid-cols-2">
-                        <div class="rounded-md border border-gray-200 p-4">
-                            <div class="font-semibold">Admin</div>
-                            <p class="mt-1 text-sm text-gray-600">Canli paneli acar, kullanicilari gorur, yeni admin veya calisan olusturur.</p>
+            <div class="mt-6 grid gap-4 lg:grid-cols-2">
+                <section class="rounded-2xl border border-white/10 bg-[#181f2b]/95 p-6 shadow-[0_20px_48px_rgba(0,0,0,.24)]">
+                    <div class="text-xs font-semibold uppercase tracking-[.16em] text-slate-500">Roller</div>
+                    <div class="mt-4 space-y-3">
+                        <div class="flex items-start justify-between gap-4 rounded-xl border border-white/10 bg-white/[.03] p-4">
+                            <div>
+                                <div class="font-semibold text-slate-100">Admin</div>
+                                <p class="mt-1 text-sm text-slate-400">Canli paneli acar, kullanici olusturur ve hesaplari gorur.</p>
+                            </div>
+                            <span class="rounded-full bg-emerald-400/10 px-3 py-1 text-xs text-emerald-300">aktif</span>
                         </div>
-                        <div class="rounded-md border border-gray-200 p-4">
-                            <div class="font-semibold">Calisan</div>
-                            <p class="mt-1 text-sm text-gray-600">Su an canli panel ve yonetim alanlari admin rolune kapali oldugu icin calisan hesaplari giriste yetkisiz kalir.</p>
+                        <div class="flex items-start justify-between gap-4 rounded-xl border border-white/10 bg-white/[.03] p-4">
+                            <div>
+                                <div class="font-semibold text-slate-100">Calisan</div>
+                                <p class="mt-1 text-sm text-slate-400">Su an panel ve yonetim ekranlari admin rolune kapali.</p>
+                            </div>
+                            <span class="rounded-full bg-white/5 px-3 py-1 text-xs text-slate-400">sinirli</span>
                         </div>
                     </div>
-                </div>
+                </section>
+
+                <section class="rounded-2xl border border-white/10 bg-[#181f2b]/95 p-6 shadow-[0_20px_48px_rgba(0,0,0,.24)]">
+                    <div class="text-xs font-semibold uppercase tracking-[.16em] text-slate-500">Kisa yollar</div>
+                    <div class="mt-4 grid gap-3 sm:grid-cols-2">
+                        <a href="{{ route('admin.users.create') }}" class="rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-3 text-sm font-semibold text-emerald-200 hover:bg-emerald-400/15">Admin ekle</a>
+                        <a href="{{ route('canli.csv') }}" class="rounded-xl border border-white/10 bg-white/[.03] px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-white/[.06]">CSV indir</a>
+                        <a href="{{ route('profile.edit') }}" class="rounded-xl border border-white/10 bg-white/[.03] px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-white/[.06]">Profil</a>
+                        <a href="{{ route('canli.view') }}" class="rounded-xl border border-white/10 bg-white/[.03] px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-white/[.06]">Canli izle</a>
+                    </div>
+                </section>
             </div>
         </div>
     </div>
