@@ -31,20 +31,33 @@ class CanliAuthTest extends TestCase
             ->assertRedirect(route('login', absolute: false));
     }
 
-    public function test_non_admin_user_cannot_open_canli_panel(): void
+    public function test_employee_user_can_open_canli_panel_but_not_admin_pages(): void
+    {
+        $user = User::factory()->create(['role' => 'employee']);
+
+        $this->actingAs($user)
+            ->get('/')
+            ->assertRedirect(route('canli.view', absolute: false));
+
+        $this->actingAs($user)
+            ->get('/canli')
+            ->assertOk();
+
+        $this->actingAs($user)
+            ->get('/dashboard')
+            ->assertForbidden();
+
+        $this->actingAs($user)
+            ->get('/admin/users')
+            ->assertForbidden();
+    }
+
+    public function test_unknown_role_cannot_open_canli_panel(): void
     {
         $user = User::factory()->create(['role' => 'user']);
 
         $this->actingAs($user)
-            ->get('/')
-            ->assertForbidden();
-
-        $this->actingAs($user)
             ->get('/canli')
-            ->assertForbidden();
-
-        $this->actingAs($user)
-            ->get('/dashboard')
             ->assertForbidden();
     }
 

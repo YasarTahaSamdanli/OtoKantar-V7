@@ -168,7 +168,7 @@ class CanliController extends Controller
                 : redirect()->guest(route('login'));
         }
 
-        if ($user->role !== 'admin') {
+        if (!in_array($user->role, ['admin', 'employee'], true)) {
             abort(403);
         }
 

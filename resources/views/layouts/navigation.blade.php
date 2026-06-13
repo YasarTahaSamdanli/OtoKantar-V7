@@ -2,7 +2,7 @@
     <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div class="flex min-h-16 items-center justify-between gap-4 py-3">
             <div class="flex items-center gap-5">
-                <a href="{{ Auth::user()->isAdmin() ? route('dashboard') : route('profile.edit') }}" class="flex items-center gap-3">
+                <a href="{{ Auth::user()->isAdmin() ? route('dashboard') : route('canli.view') }}" class="flex items-center gap-3">
                     <span class="grid h-10 w-10 place-items-center rounded-2xl border border-emerald-400/30 bg-emerald-400/10 text-emerald-300">
                         <x-application-logo class="h-5 w-5 fill-current" />
                     </span>
@@ -12,19 +12,21 @@
                     </span>
                 </a>
 
-                @if (Auth::user()->isAdmin())
-                    <div class="hidden items-center gap-2 lg:flex">
+                <div class="hidden items-center gap-2 lg:flex">
+                    @if (Auth::user()->isAdmin())
                         <x-nav-link :href="route('dashboard')" :active="request()->routeIs('dashboard')">
                             Yonetim
                         </x-nav-link>
-                        <x-nav-link :href="route('canli.view')" :active="request()->routeIs('canli.*')">
-                            Canli Panel
-                        </x-nav-link>
+                    @endif
+                    <x-nav-link :href="route('canli.view')" :active="request()->routeIs('canli.*')">
+                        Canli Panel
+                    </x-nav-link>
+                    @if (Auth::user()->isAdmin())
                         <x-nav-link :href="route('admin.users.index')" :active="request()->routeIs('admin.users.*')">
                             Kullanicilar
                         </x-nav-link>
-                    </div>
-                @endif
+                    @endif
+                </div>
             </div>
 
             <div class="hidden items-center gap-3 sm:flex">
@@ -71,19 +73,21 @@
     </div>
 
     <div :class="{'block': open, 'hidden': ! open}" class="hidden border-t border-white/10 bg-[#0f151f] lg:hidden">
-        @if (Auth::user()->isAdmin())
-            <div class="space-y-1 py-2">
+        <div class="space-y-1 py-2">
+            @if (Auth::user()->isAdmin())
                 <x-responsive-nav-link :href="route('dashboard')" :active="request()->routeIs('dashboard')">
                     Yonetim
                 </x-responsive-nav-link>
-                <x-responsive-nav-link :href="route('canli.view')" :active="request()->routeIs('canli.*')">
-                    Canli Panel
-                </x-responsive-nav-link>
+            @endif
+            <x-responsive-nav-link :href="route('canli.view')" :active="request()->routeIs('canli.*')">
+                Canli Panel
+            </x-responsive-nav-link>
+            @if (Auth::user()->isAdmin())
                 <x-responsive-nav-link :href="route('admin.users.index')" :active="request()->routeIs('admin.users.*')">
                     Kullanicilar
                 </x-responsive-nav-link>
-            </div>
-        @endif
+            @endif
+        </div>
 
         <div class="border-t border-white/10 px-4 py-4">
             <div class="font-semibold text-slate-200">{{ Auth::user()->name }}</div>

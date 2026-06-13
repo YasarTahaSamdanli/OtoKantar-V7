@@ -6,14 +6,12 @@ use App\Http\Controllers\CanliController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
-Route::middleware(['auth', 'role:admin'])->group(function () {
+Route::middleware(['auth', 'role:admin,employee'])->group(function () {
     Route::get('/', function () {
-        return redirect()->route('dashboard');
+        return auth()->user()->isAdmin()
+            ? redirect()->route('dashboard')
+            : redirect()->route('canli.view');
     });
-
-    Route::get('/dashboard', function () {
-        return view('dashboard');
-    })->middleware('verified')->name('dashboard');
 
     // Legacy entrypoints (old PHP URLs) -> new protected Laravel routes
     Route::get('/index.php', fn () => redirect()->route('canli.view'));
@@ -36,6 +34,12 @@ Route::middleware(['auth', 'role:admin'])->group(function () {
     Route::get('/canli/api', [CanliController::class, 'api'])->middleware('throttle:canli-api')->name('canli.api');
     Route::get('/canli/csv', [CanliController::class, 'csv'])->name('canli.csv');
     Route::get('/canli/kare', [CanliController::class, 'kare'])->middleware('throttle:canli-kare')->name('canli.kare');
+});
+
+Route::middleware(['auth', 'role:admin'])->group(function () {
+    Route::get('/dashboard', function () {
+        return view('dashboard');
+    })->middleware('verified')->name('dashboard');
 });
 
 Route::middleware('auth')->group(function () {

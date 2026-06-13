@@ -51,7 +51,7 @@ class RegisteredUserController extends Controller
         Auth::login($user);
 
         return redirect()
-            ->route('profile.edit')
-            ->with('status', 'Hesabiniz olusturuldu. Admin paneli icin admin yetkisi gerekir.');
+            ->route('canli.view')
+            ->with('status', 'Hesabiniz olusturuldu. Canli panele yonlendirildiniz.');
     }
 }

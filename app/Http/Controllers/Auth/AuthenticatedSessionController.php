@@ -32,8 +32,8 @@ class AuthenticatedSessionController extends Controller
             $request->session()->forget('url.intended');
 
             return redirect()
-                ->route('profile.edit')
-                ->with('status', 'Bu hesap admin paneline yetkili degil.');
+                ->route('canli.view')
+                ->with('status', 'Canli panele yonlendirildiniz.');
         }
 
         return redirect()->intended(route('dashboard', absolute: false));

@@ -45,8 +45,10 @@
         <div><h1>OtoKantar</h1><p>Canli panel | MySQL + JSON durum + JPG</p></div>
     </div>
     <div class="side">
-        <a class="toplink" href="{{ route('dashboard') }}">Yonetim</a>
-        <a class="toplink" href="{{ route('admin.users.index') }}">Kullanicilar</a>
+        @if (Auth::user()->isAdmin())
+            <a class="toplink" href="{{ route('dashboard') }}">Yonetim</a>
+            <a class="toplink" href="{{ route('admin.users.index') }}">Kullanicilar</a>
+        @endif
         <div class="pill" id="pill"><span class="dot"></span><span id="pill-text">BEKLENIYOR</span></div>
         <div class="clock" id="clock">--:--:--</div>
     </div>
