@@ -180,8 +180,13 @@ class PlakaTespitci:
             ar_max = float(_cfg("ASPECT_RATIO_MAX"))
             if not (ar_min <= ar <= ar_max):
                 continue
+            log.debug(
+                "bbox tespit edildi bbox=(%.1f,%.1f,%.1f,%.1f) conf=%.3f class=%s aspect=%.2f",
+                x1, y1, x2, y2, conf, cls_name or cls_id, ar,
+            )
             cikti.append((x1, y1, x2, y2, conf))
         cikti.sort(key=lambda t: t[4], reverse=True)
+        log.debug("bbox tespit ozeti adet=%d frame_shape=%s", len(cikti), tuple(bgr.shape[:2]))
         return cikti
 
 
@@ -786,15 +791,26 @@ class PlakaCozucu:
             TespitSonucu with raw plate text and confidence.
             Decision (accept/reject) is made downstream in dogrulama.py.
         """
+        log.debug("OCR crop alindi crop_shape=%s", tuple(bgr_roi.shape[:2]) if bgr_roi is not None else None)
         binary = self._roi_hazirla(bgr_roi)
         if binary is None:
+            log.debug("OCR crop hazirlanamadi crop_shape=%s", tuple(bgr_roi.shape[:2]) if bgr_roi is not None else None)
             return TespitSonucu(bbox=(), ham_metin="", plaka=None, guven=0.0)
 
         ham, ocr_conf = self._ocr_calistir(binary)
+        log.debug(
+            "OCR sonucu ham=%r guven=%.3f prepared_shape=%s",
+            ham, float(ocr_conf), tuple(binary.shape[:2]),
+        )
         eslesen = PLAKA_REGEX.search(ham)
+        log.debug("dogrulama oncesi plaka ham=%r regex_match=%s", ham, bool(eslesen))
         if eslesen:
             il, harf, rakam = eslesen.group(1), eslesen.group(2), eslesen.group(3)
             plaka = self._plaka_duzelt(il, harf, rakam)
+            log.debug(
+                "dogrulama sonrasi plaka ham=%r normalize=%s uzunluk_gecerli=%s",
+                ham, plaka, self._uzunluk_gecerli(plaka),
+            )
             if self._uzunluk_gecerli(plaka):
                 return TespitSonucu(
                     bbox=(),
@@ -803,6 +819,7 @@ class PlakaCozucu:
                     guven=float(ocr_conf),
                     gecerli=True,
                 )
+        log.debug("dogrulama sonrasi plaka ham=%r normalize=None gecerli=False", ham)
         return TespitSonucu(bbox=(), ham_metin=ham, plaka=None, guven=0.0)
 
     def coz_batch(self, roi_listesi: list[np.ndarray]) -> list[TespitSonucu]:
@@ -847,8 +864,23 @@ class OcrWorker(threading.Thread):
         """Enqueue a task. Returns False if the queue is full (back-pressure)."""
         try:
             self._giris_kuyrugu.put_nowait(gorev)
+            log.debug(
+                "OCR worker queue boyutu=%d/%d arac_id=%s bbox=%s crop_shape=%s",
+                self._giris_kuyrugu.qsize(),
+                self._giris_kuyrugu.maxsize,
+                gorev.arac_id,
+                gorev.bbox,
+                tuple(gorev.roi_bgr.shape[:2]),
+            )
             return True
         except queue.Full:
+            log.debug(
+                "OCR worker queue overflow boyutu=%d/%d arac_id=%s bbox=%s",
+                self._giris_kuyrugu.qsize(),
+                self._giris_kuyrugu.maxsize,
+                gorev.arac_id,
+                gorev.bbox,
+            )
             return False
 
     def gorevi_gonder_bekle(self, gorev: OcrGorevi, timeout: float = 0.1) -> bool:
@@ -871,6 +903,7 @@ class OcrWorker(threading.Thread):
 
     def durdur(self) -> None:
         """Signal the worker to stop gracefully."""
+        log.debug("thread stop istendi thread=%s", self.name)
         self._dur.set()
         try:
             self._giris_kuyrugu.put_nowait(None)
@@ -883,7 +916,22 @@ class OcrWorker(threading.Thread):
 
     def _isle(self, gorev: OcrGorevi) -> None:
         """Process one task and push raw result to the output queue."""
+        log.debug(
+            "OCR isle basladi arac_id=%s bbox=%s crop_shape=%s yolo_conf=%.3f",
+            gorev.arac_id,
+            gorev.bbox,
+            tuple(gorev.roi_bgr.shape[:2]),
+            float(gorev.yolo_conf),
+        )
         sonuc = self._cozucu.coz(gorev.roi_bgr)
+        log.debug(
+            "OCR isle bitti arac_id=%s ham=%r plaka=%s guven=%.3f gecerli=%s",
+            gorev.arac_id,
+            sonuc.ham_metin,
+            sonuc.plaka,
+            float(sonuc.guven or 0.0),
+            sonuc.gecerli,
+        )
         try:
             self._cikis_kuyrugu.put_nowait((gorev.arac_id, sonuc, gorev.yolo_conf, gorev.bbox))
         except queue.Full:
@@ -891,6 +939,12 @@ class OcrWorker(threading.Thread):
 
     def run(self) -> None:
         log.info("OcrWorker başlatıldı.")
+        log.debug(
+            "thread start thread=%s giris_max=%d cikis_max=%d",
+            self.name,
+            self._giris_kuyrugu.maxsize,
+            self._cikis_kuyrugu.maxsize,
+        )
         while not self._dur.is_set():
             try:
                 gorev = self._giris_kuyrugu.get(timeout=1.0)

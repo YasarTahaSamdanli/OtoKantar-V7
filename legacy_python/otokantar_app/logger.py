@@ -1,5 +1,6 @@
 import logging
 import logging.handlers
+import os
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -8,13 +9,23 @@ from typing import Optional
 from otokantar_app.config import CONFIG
 
 
+def debug_log_aktif_mi() -> bool:
+    deger = os.getenv("DEBUG_LOG", str(CONFIG.get("DEBUG_LOG", "")))
+    return str(deger).strip().lower() in {"1", "true", "yes", "on", "debug"}
+
+
+class _DebugLogFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return record.levelno > logging.DEBUG or debug_log_aktif_mi()
+
+
 def _logger_kur(log_dosya: str) -> logging.Logger:
     logger = logging.getLogger("OtoKantar")
     if logger.handlers:
         return logger
     logger.setLevel(logging.DEBUG)
     fmt = logging.Formatter(
-        "%(asctime)s [%(levelname)s] %(message)s",
+        "%(asctime)s [%(module)s] [%(levelname)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     fh = logging.handlers.RotatingFileHandler(
@@ -25,9 +36,11 @@ def _logger_kur(log_dosya: str) -> logging.Logger:
     )
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(fmt)
+    fh.addFilter(_DebugLogFilter())
     ch = logging.StreamHandler()
-    ch.setLevel(logging.INFO)
+    ch.setLevel(logging.DEBUG if debug_log_aktif_mi() else logging.INFO)
     ch.setFormatter(fmt)
+    ch.addFilter(_DebugLogFilter())
     logger.addHandler(fh)
     logger.addHandler(ch)
     return logger
