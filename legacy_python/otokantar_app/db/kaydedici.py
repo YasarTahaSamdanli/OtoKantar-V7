@@ -40,6 +40,7 @@ class KantarKaydedici:
         self._acik_seanslar: dict[str, dict] = {}
         self.mysql = MySQLDBManager.from_config(CONFIG)
         self._csv_baslik_yaz()
+        self._csvden_durum_yukle()
         log.info("KantarKaydedici MySQL modu aktif.")
 
     def _plaka_temizle(self, plaka: str) -> str:
@@ -89,10 +90,10 @@ class KantarKaydedici:
             log.warning("Kara liste sorgulanırken hata: %s", e)
             return False
     def acik_seans_getir(self, plaka: str) -> Optional[dict]:
-        return self._acik_seanslar.get(plaka.strip().upper())
+        return self._acik_seanslar.get(self._plaka_normalize(plaka))
 
     def giris_kaydet(self, plaka: str, agirlik: float) -> PlakaKayit:
-        plaka = plaka.strip().upper()
+        plaka = self._plaka_normalize(plaka)
         simdi = datetime.now()
 
         kayit = PlakaKayit(
@@ -113,7 +114,7 @@ class KantarKaydedici:
         return kayit
 
     def cikis_kaydet(self, plaka: str, agirlik: float) -> Optional[PlakaKayit]:
-        plaka = plaka.strip().upper()
+        plaka = self._plaka_normalize(plaka)
         simdi = datetime.now()
         acik = self.acik_seans_getir(plaka)
         if acik is None:
@@ -163,6 +164,96 @@ class KantarKaydedici:
         except PermissionError as e:
             self._csv_aktif = False
             log.warning("CSV erişilemedi, devre dışı: %s", e)
+
+    def _csvden_durum_yukle(self) -> None:
+        path = Path(self.csv_dosya)
+        if not path.exists():
+            return
+
+        acik_seanslar: dict[str, dict] = {}
+        son_kayitlar: list[PlakaKayit] = []
+        try:
+            with open(path, mode="r", newline="", encoding="utf-8-sig") as f:
+                reader = csv.DictReader(f, delimiter=";")
+                for row in reader:
+                    kayit = self._csv_satirindan_kayit(row)
+                    if kayit is None:
+                        continue
+
+                    son_kayitlar.append(kayit)
+                    plaka = self._plaka_normalize(kayit.plaka)
+                    if kayit.durum == "ICERIDE":
+                        acik_seanslar[plaka] = {
+                            "plaka": plaka,
+                            "giris_tarih": kayit.giris_tarih,
+                            "giris_saat": kayit.giris_saat,
+                            "giris_agirlik": kayit.giris_agirlik,
+                            "guven": kayit.guven,
+                            "firma_adi": kayit.firma_adi,
+                            "sofor_adi": kayit.sofor_adi,
+                            "sofor_tel": kayit.sofor_tel,
+                            "malzeme_cinsi": kayit.malzeme_cinsi,
+                            "irsaliye_no": kayit.irsaliye_no,
+                        }
+                    elif kayit.durum == "TAMAMLANDI":
+                        acik_seanslar.pop(plaka, None)
+        except Exception as e:
+            log.warning("CSV durum restore edilemedi: %s", e)
+            return
+
+        self._acik_seanslar = acik_seanslar
+        self.son_kayitlar = son_kayitlar[-50:]
+        if self._acik_seanslar:
+            log.warning(
+                "Acik kantar seansi CSV'den restore edildi: %s",
+                ", ".join(sorted(self._acik_seanslar)),
+            )
+        if self.son_kayitlar:
+            log.info("Son %d kantar kaydi CSV'den yuklendi.", len(self.son_kayitlar))
+
+    def _csv_satirindan_kayit(self, row: dict) -> Optional[PlakaKayit]:
+        plaka = self._plaka_normalize(str(row.get("Plaka") or ""))
+        if not plaka:
+            return None
+
+        durum = str(row.get("Durum") or "ICERIDE").strip().upper()
+        giris_agirlik = self._float_oku(row.get("GirisAgirlik(kg)"), 0.0)
+        cikis_agirlik = self._float_oku(row.get("CikisAgirlik(kg)"))
+        net_agirlik = self._float_oku(row.get("NetAgirlik(kg)"))
+
+        return PlakaKayit(
+            plaka=plaka,
+            giris_tarih=str(row.get("GirisTarih") or ""),
+            giris_saat=str(row.get("GirisSaat") or ""),
+            giris_agirlik=giris_agirlik if giris_agirlik is not None else 0.0,
+            guven=self._float_oku(row.get("Guven"), 0.0) or 0.0,
+            cikis_tarih=self._bos_ise_none(row.get("CikisTarih")),
+            cikis_saat=self._bos_ise_none(row.get("CikisSaat")),
+            cikis_agirlik=cikis_agirlik,
+            net_agirlik=net_agirlik,
+            durum=durum,
+            operator=str(row.get("Operator") or "AUTO"),
+            firma_adi=self._bos_ise_none(row.get("FirmaAdi")),
+            sofor_adi=self._bos_ise_none(row.get("SoforAdi")),
+            sofor_tel=self._bos_ise_none(row.get("SoforTel")),
+            malzeme_cinsi=self._bos_ise_none(row.get("MalzemeCinsi")),
+            irsaliye_no=self._bos_ise_none(row.get("IrsaliyeNo")),
+        )
+
+    @staticmethod
+    def _bos_ise_none(value) -> Optional[str]:
+        text = "" if value is None else str(value).strip()
+        return text or None
+
+    @staticmethod
+    def _float_oku(value, default: Optional[float] = None) -> Optional[float]:
+        text = "" if value is None else str(value).strip().replace(",", ".")
+        if not text:
+            return default
+        try:
+            return float(text)
+        except ValueError:
+            return default
 
     def gecis_kaydet(self, kayit: PlakaKayit):
         with self._kilit:
