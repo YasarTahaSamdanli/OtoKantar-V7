@@ -831,8 +831,21 @@ class OtoKantar:
         sonuclar = self.ocr_worker.sonuclari_topla()
         for (arac_id, sonuc, yolo_conf, bbox) in sonuclar:
             if not sonuc.gecerli or sonuc.plaka is None:
+                log.debug(
+                    "OCR_RED neden=sonuc_gecersiz arac_id=%s ham=%r plaka=%s guven=%.3f yolo_conf=%.3f bbox=%s",
+                    arac_id,
+                    getattr(sonuc, "ham_metin", ""),
+                    getattr(sonuc, "plaka", None),
+                    float(getattr(sonuc, "guven", 0.0) or 0.0),
+                    float(yolo_conf or 0.0),
+                    bbox,
+                )
                 continue
             plaka = sonuc.plaka
+            log.debug(
+                "OCR_KARAR sonuc_alindi arac_id=%s ham=%r plaka=%s ocr_guven=%.3f yolo_conf=%.3f bbox=%s",
+                arac_id, sonuc.ham_metin, plaka, float(sonuc.guven or 0.0), float(yolo_conf), bbox,
+            )
             kara_listede_okunan = self.kaydedici.plaka_kara_listede_mi(plaka)
             if kara_listede_okunan:
                 log.warning(
@@ -846,6 +859,10 @@ class OtoKantar:
                 lider, oku_n, lider_oy, esik_c, min_g = self.dogrulama.durum_ozeti(
                     arac_id
                 )
+                log.debug(
+                    "OCR_KARAR kayit_bekliyor arac_id=%s aday=%s lider=%s okuma=%d/%d lider_oy=%.3f min_toplam=%.3f",
+                    arac_id, plaka, lider, int(oku_n), int(esik_c), float(lider_oy), float(min_g),
+                )
                 self.cizici.plaka_kutusu(
                     kare, bbox, plaka, oku_n, esik_c,
                     arac_id=arac_id, kara_liste=kara_listede_okunan,
@@ -854,6 +871,7 @@ class OtoKantar:
                 continue
 
             if final_plaka is None:
+                log.debug("OCR_RED neden=final_plaka_yok arac_id=%s aday=%s", arac_id, plaka)
                 continue
 
             ort_ocr    = float(kazan_toplam) / max(1, int(kazan_n))
@@ -869,14 +887,31 @@ class OtoKantar:
                             guven=ort_ocr,
                             yolo_conf=float(yolo_conf),
                         )
+                        log.info(
+                            "OCR_BUFFER olustur plaka=%s ort_ocr=%.3f yolo_conf=%.3f final_conf=%.3f kg=%.1f",
+                            final_plaka, float(ort_ocr), float(yolo_conf), float(final_conf), float(guncel_kg),
+                        )
                     else:
-                        self._plaka_buffer.guncule_eger_daha_iyi(
+                        onceki = (
+                            self._plaka_buffer.plaka,
+                            float(self._plaka_buffer.guven),
+                            float(self._plaka_buffer.yolo_conf),
+                        )
+                        guncellendi = self._plaka_buffer.guncule_eger_daha_iyi(
                             final_plaka, ort_ocr, float(yolo_conf)
+                        )
+                        log.info(
+                            "OCR_BUFFER karsilastir onceki=%s aday=%s ort_ocr=%.3f yolo_conf=%.3f final_conf=%.3f guncellendi=%s",
+                            onceki, final_plaka, float(ort_ocr), float(yolo_conf), float(final_conf), guncellendi,
                         )
 
                 seans_kilitli = self._kantar_seans_kilitli
 
             if agirlik_sabit and not seans_kilitli:
+                log.info(
+                    "OCR_KAYIT dogrudan_deneme plaka=%s kg=%.1f final_conf=%.3f bbox=%s",
+                    final_plaka, float(guncel_kg), float(final_conf), bbox,
+                )
                 kayit = self._kayit_yap(
                     kare=kare, bbox=bbox, plaka=final_plaka,
                     agirlik=guncel_kg, final_conf=final_conf,

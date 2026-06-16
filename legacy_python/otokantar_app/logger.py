@@ -14,9 +14,14 @@ def debug_log_aktif_mi() -> bool:
     return str(deger).strip().lower() in {"1", "true", "yes", "on", "debug"}
 
 
+def ocr_debug_log_aktif_mi() -> bool:
+    deger = os.getenv("OCR_DEBUG_LOG", str(CONFIG.get("OCR_DEBUG_LOG", "")))
+    return str(deger).strip().lower() in {"1", "true", "yes", "on", "debug"}
+
+
 class _DebugLogFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
-        return record.levelno > logging.DEBUG or debug_log_aktif_mi()
+        return record.levelno > logging.DEBUG or debug_log_aktif_mi() or ocr_debug_log_aktif_mi()
 
 
 def _logger_kur(log_dosya: str) -> logging.Logger:

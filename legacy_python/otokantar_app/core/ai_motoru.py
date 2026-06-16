@@ -708,6 +708,8 @@ class PlakaCozucu:
         """
         ikinci_esik = float(_cfg("OCR_IKINCI_GECIS_ESIK"))
         min_conf = float(_cfg("OCR_MIN_CONF"))
+        metin2, conf2 = "", 0.0
+        fb_metin, fb_conf = "", 0.0
 
         # --- Pass 1: original ---
         try:
@@ -717,9 +719,30 @@ class PlakaCozucu:
             log.warning("Birincil OCR çalıştırılamadı; fallback denenecek. (%s)", e)
             metin1, conf1 = "", 0.0
             primary_ok_1 = False
+        log.debug(
+            "OCR_PASS1 backend=%s text=%r confidence=%.3f",
+            self.primary_backend_adi,
+            metin1,
+            float(conf1),
+        )
 
         # Early exit: high-confidence valid plate on first pass
         if conf1 >= ikinci_esik and PLAKA_REGEX.search(metin1):
+            log.debug(
+                "OCR_ADAY pass1=%r conf1=%.3f pass2=%r conf2=%.3f fallback=%r fallback_conf=%.3f",
+                metin1,
+                float(conf1),
+                metin2,
+                float(conf2),
+                fb_metin,
+                float(fb_conf),
+            )
+            log.debug(
+                "OCR_SECILEN text=%r confidence=%.3f regex_match=%s",
+                metin1,
+                float(conf1),
+                True,
+            )
             return metin1, conf1
 
         # --- Pass 2: inverted (only when needed) ---
@@ -732,6 +755,12 @@ class PlakaCozucu:
                 metin2, conf2 = "", 0.0
         else:
             metin2, conf2 = "", 0.0
+        log.debug(
+            "OCR_PASS2 backend=%s text=%r confidence=%.3f",
+            self.primary_backend_adi,
+            metin2,
+            float(conf2),
+        )
 
         # Pick the better of the two primary passes
         def _skor(m: str, c: float) -> float:
@@ -748,7 +777,32 @@ class PlakaCozucu:
             if fb is not None:
                 fb1_m, fb1_c = fb.oku(binary)
                 fb2_m, fb2_c = fb.oku(inverted)
-                return (fb2_m, fb2_c) if _skor(fb2_m, fb2_c) > _skor(fb1_m, fb1_c) else (fb1_m, fb1_c)
+                if _skor(fb2_m, fb2_c) > _skor(fb1_m, fb1_c):
+                    fb_metin, fb_conf = fb2_m, fb2_c
+                else:
+                    fb_metin, fb_conf = fb1_m, fb1_c
+                log.debug(
+                    "OCR_FALLBACK backend=%s text=%r confidence=%.3f",
+                    self.fallback_backend_adi,
+                    fb_metin,
+                    float(fb_conf),
+                )
+                log.debug(
+                    "OCR_ADAY pass1=%r conf1=%.3f pass2=%r conf2=%.3f fallback=%r fallback_conf=%.3f",
+                    metin1,
+                    float(conf1),
+                    metin2,
+                    float(conf2),
+                    fb_metin,
+                    float(fb_conf),
+                )
+                log.debug(
+                    "OCR_SECILEN text=%r confidence=%.3f regex_match=%s",
+                    fb_metin,
+                    float(fb_conf),
+                    bool(PLAKA_REGEX.search(fb_metin)),
+                )
+                return fb_metin, fb_conf
 
         # --- Fallback backend (only if primary result is still insufficient) ---
         if best_conf < min_conf:
@@ -757,9 +811,30 @@ class PlakaCozucu:
                 fb_metin, fb_conf = fb.oku(
                     binary if conf1 >= conf2 else inverted
                 )
+                log.debug(
+                    "OCR_FALLBACK backend=%s text=%r confidence=%.3f",
+                    self.fallback_backend_adi,
+                    fb_metin,
+                    float(fb_conf),
+                )
                 if _skor(fb_metin, fb_conf) > _skor(best_metin, best_conf):
                     best_metin, best_conf = fb_metin, fb_conf
 
+        log.debug(
+            "OCR_ADAY pass1=%r conf1=%.3f pass2=%r conf2=%.3f fallback=%r fallback_conf=%.3f",
+            metin1,
+            float(conf1),
+            metin2,
+            float(conf2),
+            fb_metin,
+            float(fb_conf),
+        )
+        log.debug(
+            "OCR_SECILEN text=%r confidence=%.3f regex_match=%s",
+            best_metin,
+            float(best_conf),
+            bool(PLAKA_REGEX.search(best_metin)),
+        )
         return best_metin, best_conf
 
     # ------------------------------------------------------------------
@@ -783,7 +858,7 @@ class PlakaCozucu:
     # Public interface
     # ------------------------------------------------------------------
 
-    def coz(self, bgr_roi: np.ndarray) -> TespitSonucu:
+    def coz(self, bgr_roi: np.ndarray, bbox: tuple = ()) -> TespitSonucu:
         """
         Full pipeline: preprocess → adaptive OCR → validate → correct.
 
@@ -791,27 +866,42 @@ class PlakaCozucu:
             TespitSonucu with raw plate text and confidence.
             Decision (accept/reject) is made downstream in dogrulama.py.
         """
-        log.debug("OCR crop alindi crop_shape=%s", tuple(bgr_roi.shape[:2]) if bgr_roi is not None else None)
+        if bgr_roi is not None and bgr_roi.size > 0:
+            crop_h, crop_w = bgr_roi.shape[:2]
+        else:
+            crop_h, crop_w = 0, 0
+        log.debug(
+            "OCR_CROP bbox=%s crop_width=%d crop_height=%d",
+            bbox,
+            crop_w,
+            crop_h,
+        )
         binary = self._roi_hazirla(bgr_roi)
         if binary is None:
-            log.debug("OCR crop hazirlanamadi crop_shape=%s", tuple(bgr_roi.shape[:2]) if bgr_roi is not None else None)
+            log.debug(
+                "OCR_FINAL ham_metin= duzeltilmis_plaka= guven=0.000 gecerli=False",
+            )
             return TespitSonucu(bbox=(), ham_metin="", plaka=None, guven=0.0)
 
-        ham, ocr_conf = self._ocr_calistir(binary)
+        prep_h, prep_w = binary.shape[:2]
         log.debug(
-            "OCR sonucu ham=%r guven=%.3f prepared_shape=%s",
-            ham, float(ocr_conf), tuple(binary.shape[:2]),
+            "OCR_PREP binary_width=%d binary_height=%d",
+            prep_w,
+            prep_h,
         )
+
+        ham, ocr_conf = self._ocr_calistir(binary)
         eslesen = PLAKA_REGEX.search(ham)
-        log.debug("dogrulama oncesi plaka ham=%r regex_match=%s", ham, bool(eslesen))
         if eslesen:
             il, harf, rakam = eslesen.group(1), eslesen.group(2), eslesen.group(3)
             plaka = self._plaka_duzelt(il, harf, rakam)
-            log.debug(
-                "dogrulama sonrasi plaka ham=%r normalize=%s uzunluk_gecerli=%s",
-                ham, plaka, self._uzunluk_gecerli(plaka),
-            )
             if self._uzunluk_gecerli(plaka):
+                log.debug(
+                    "OCR_FINAL ham_metin=%r duzeltilmis_plaka=%s guven=%.3f gecerli=True",
+                    ham,
+                    plaka,
+                    float(ocr_conf),
+                )
                 return TespitSonucu(
                     bbox=(),
                     ham_metin=ham,
@@ -819,7 +909,11 @@ class PlakaCozucu:
                     guven=float(ocr_conf),
                     gecerli=True,
                 )
-        log.debug("dogrulama sonrasi plaka ham=%r normalize=None gecerli=False", ham)
+        log.debug(
+            "OCR_FINAL ham_metin=%r duzeltilmis_plaka= guven=%.3f gecerli=False",
+            ham,
+            float(ocr_conf),
+        )
         return TespitSonucu(bbox=(), ham_metin=ham, plaka=None, guven=0.0)
 
     def coz_batch(self, roi_listesi: list[np.ndarray]) -> list[TespitSonucu]:
@@ -923,7 +1017,7 @@ class OcrWorker(threading.Thread):
             tuple(gorev.roi_bgr.shape[:2]),
             float(gorev.yolo_conf),
         )
-        sonuc = self._cozucu.coz(gorev.roi_bgr)
+        sonuc = self._cozucu.coz(gorev.roi_bgr, gorev.bbox)
         log.debug(
             "OCR isle bitti arac_id=%s ham=%r plaka=%s guven=%.3f gecerli=%s",
             gorev.arac_id,

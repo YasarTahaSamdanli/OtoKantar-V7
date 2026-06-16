@@ -2,6 +2,7 @@ import re
 import time
 
 from otokantar_app.config import _HARF_DUZELTME, _RAKAM_DUZELTME
+from otokantar_app.logger import log
 from otokantar_app.models import DogrulamaDurumu
 
 
@@ -169,14 +170,21 @@ class DogrulamaMotoru:
 
     def isle(self, arac_id: int, plaka: str, guven: float) -> tuple:
         su_an = time.time()
+        gelen_plaka = plaka
+        gelen_guven = float(guven or 0.0)
 
         d = self._durum.get(arac_id)
         if d is None:
             d = DogrulamaDurumu()
             self._durum[arac_id] = d
+            log.debug("OCR_DOGRULAMA yeni_arac arac_id=%s", arac_id)
 
         # Son kayıttan bu yana bekleme süresi dolmadıysa işlem yapma
         if su_an - d.son_kayit < self.bekleme:
+            log.debug(
+                "OCR_DOGRULAMA red=bektirme arac_id=%s plaka=%s kalan=%.1f",
+                arac_id, gelen_plaka, self.bekleme - (su_an - d.son_kayit),
+            )
             return (False, None, 0.0, 0)
 
         # ── DÜZELTME 1: Pencere süresi uzatıldı ──────────────────────────────
@@ -184,6 +192,10 @@ class DogrulamaMotoru:
         # görünür, 5s'de yeterliydi ama kamera hızlı geçerken oylar birikmeden
         # pencere kapanıyordu. 6s'ye çıkardık.
         if su_an - d.son_gorulme > self.okuma_penceresi:
+            log.debug(
+                "OCR_DOGRULAMA pencere_sifirlandi arac_id=%s onceki_oylar=%s onceki_hane=%s",
+                arac_id, dict(d.oylar), dict(d.hane),
+            )
             d.oylar.clear()
             d.hane.clear()
             d.okuma_sayisi = 0
@@ -195,13 +207,27 @@ class DogrulamaMotoru:
         # Hareketli kamerada motion blur nedeniyle OCR güveni 0.45'in altına
         # düşüyor fakat metin çoğunlukla doğru. 0.30'a düşürdük.
         if guven < self.min_gecerli_guven:
+            log.debug(
+                "OCR_DOGRULAMA red=dusuk_guven arac_id=%s plaka=%s guven=%.3f min=%.3f",
+                arac_id, gelen_plaka, gelen_guven, self.min_gecerli_guven,
+            )
             return (False, None, 0.0, 0)
 
         plaka = self._normalize(plaka)
         if not self._tr_plaka_gecerli_mi(plaka):
+            log.debug(
+                "OCR_DOGRULAMA red=normalize_gecersiz arac_id=%s ham=%s normalize=%s guven=%.3f",
+                arac_id, gelen_plaka, plaka, gelen_guven,
+            )
             return (False, None, 0.0, 0)
 
+        normalize_plaka = plaka
         plaka = self._oto_duzelt(plaka)
+        if plaka != normalize_plaka:
+            log.debug(
+                "OCR_DOGRULAMA oto_duzelt arac_id=%s normalize=%s duzeltilen=%s guven=%.3f",
+                arac_id, normalize_plaka, plaka, gelen_guven,
+            )
 
         # ── DÜZELTME 3: Güven klamp aralığı genişletildi ─────────────────────
         # Eski: (0.3, 0.95). 0.30'un altı zaten yukarıda elendi.
@@ -213,6 +239,13 @@ class DogrulamaMotoru:
         d.hane[plaka]  = d.hane.get(plaka, 0) + 1
 
         lider, toplam_guven, toplam_hane = self._cluster(d.oylar, d.hane)
+        log.debug(
+            "OCR_DOGRULAMA oy arac_id=%s gelen=%s normalize=%s oy_plaka=%s guven=%.3f klamp=%.3f "
+            "lider=%s toplam_guven=%.3f toplam_hane=%d okuma_sayisi=%d oylar=%s hane=%s",
+            arac_id, gelen_plaka, normalize_plaka, plaka, gelen_guven, g,
+            lider, float(toplam_guven), int(toplam_hane), int(d.okuma_sayisi),
+            dict(d.oylar), dict(d.hane),
+        )
 
         # ── DÜZELTME 4: Erken çıkış — tek yüksek güvenli okuma yeterli ───────
         # Hareket eden kamerada bazen plaka sadece 1-2 kare net görünür.
@@ -225,8 +258,18 @@ class DogrulamaMotoru:
         )
 
         if not tamam:
+            log.debug(
+                "OCR_DOGRULAMA bekle arac_id=%s lider=%s toplam_guven=%.3f toplam_hane=%d "
+                "esik=%d min_toplam=%.3f erken=%.3f",
+                arac_id, lider, float(toplam_guven), int(toplam_hane),
+                self.esik, self.min_toplam_guven, self.erken_cikis_guven,
+            )
             return (False, None, 0.0, 0)
 
+        log.info(
+            "OCR_DOGRULAMA kabul arac_id=%s final=%s toplam_guven=%.3f toplam_hane=%d oylar=%s",
+            arac_id, lider, float(toplam_guven), int(toplam_hane), dict(d.oylar),
+        )
         d.son_kayit    = su_an
         d.oylar.clear()
         d.hane.clear()
