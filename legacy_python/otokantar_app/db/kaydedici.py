@@ -31,17 +31,17 @@ class KantarKaydedici:
         "Ü": "U",
     })
 
-    def __init__(self, csv_dosya: str, json_dosya: str):
+    def __init__(self, csv_dosya: str, json_dosya: str, mysql_db=None):
         self.csv_dosya = csv_dosya
         self.json_dosya = json_dosya
         self.son_kayitlar: list = []
         self._kilit = threading.Lock()
         self._csv_aktif = True
         self._acik_seanslar: dict[str, dict] = {}
-        self.mysql = MySQLDBManager.from_config(CONFIG)
+        self.mysql = mysql_db
         self._csv_baslik_yaz()
         self._csvden_durum_yukle()
-        log.info("KantarKaydedici MySQL modu aktif.")
+        log.info("KantarKaydedici %s modu aktif.", "MySQL" if self.mysql is not None else "CSV")
 
     def _plaka_temizle(self, plaka: str) -> str:
         plaka = (plaka or "").upper().translate(self._TR_HARF_MAP)
@@ -84,6 +84,10 @@ class KantarKaydedici:
         return adaylar[0][2]
 
     def plaka_kara_listede_mi(self, plaka: str) -> bool:
+        if self.mysql is None:
+            return self._plaka_normalize(plaka) in {
+                self._plaka_normalize(p) for p in CONFIG.get("KARA_LISTE", [])
+            }
         try:
             return self.mysql.kara_listede_mi(plaka)
         except Exception as e:

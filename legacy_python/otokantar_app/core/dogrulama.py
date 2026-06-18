@@ -28,6 +28,7 @@ class DogrulamaMotoru:
         #   • erken_cikis_guven : tek güçlü okumada anında kabul eşiği
         self.okuma_penceresi   = 6.0   # saniye — eski 5.0
         self.min_gecerli_guven = 0.30  # eski 0.45
+        self.min_duzeltme_guven = 0.55
         self.erken_cikis_guven = 2.5   # toplam güven bu değere ulaşırsa
                                        # esik kare beklenmeden kabul edilir
 
@@ -152,12 +153,16 @@ class DogrulamaMotoru:
     # Otomatik düzeltme (bilinen plakalara yaklaştırma)
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _oto_duzelt(self, plaka: str) -> str:
+    def _oto_duzelt(self, plaka: str, guven: float) -> str:
         if not self.bilinen_plakalar or plaka in self.bilinen_plakalar:
+            return plaka
+        if guven < self.min_duzeltme_guven:
             return plaka
         best_aday = plaka
         best_score = 999
         for kayitli in self.bilinen_plakalar:
+            if len(plaka) != len(kayitli) or plaka[:2] != kayitli[:2]:
+                continue
             dist = self._mesafe_hesapla(plaka, kayitli)
             if dist < best_score:
                 best_score = dist
@@ -222,7 +227,7 @@ class DogrulamaMotoru:
             return (False, None, 0.0, 0)
 
         normalize_plaka = plaka
-        plaka = self._oto_duzelt(plaka)
+        plaka = self._oto_duzelt(plaka, gelen_guven)
         if plaka != normalize_plaka:
             log.debug(
                 "OCR_DOGRULAMA oto_duzelt arac_id=%s normalize=%s duzeltilen=%s guven=%.3f",
@@ -254,7 +259,7 @@ class DogrulamaMotoru:
         tamam = (
             toplam_hane  >= self.esik              # eski davranış: yeterli kare
             or toplam_guven >= self.min_toplam_guven   # eski davranış: güven toplamı
-            or toplam_guven >= self.erken_cikis_guven  # YENİ: tek/az okumada hızlı kabul
+            or (toplam_hane >= 2 and toplam_guven >= self.erken_cikis_guven)
         )
 
         if not tamam:
@@ -296,6 +301,9 @@ class DogrulamaMotoru:
         ]
         for aid in silinecek:
             del self._durum[aid]
+
+    def sil(self, arac_id: int):
+        self._durum.pop(arac_id, None)
 
     def sifirla(self):
         self._durum.clear()

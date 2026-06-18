@@ -33,7 +33,7 @@ import cv2
 import numpy as np
 
 from otokantar_app.config import CONFIG
-from otokantar_app.core.ai_motoru import OcrWorker, PlakaCozucu, PlakaTespitci
+from otokantar_app.core.ai_motoru import OcrWorkerPool, PlakaCozucu, PlakaTespitci
 from otokantar_app.core.dogrulama import DogrulamaMotoru
 from otokantar_app.core.tracker import CentroidTracker
 from otokantar_app.db.mysql_manager import MySQLDBManager
@@ -118,7 +118,15 @@ class OtoKantar:
             CONFIG["OCR_DILLER"], CONFIG["OCR_GPU"], CONFIG["MIN_OCR_CONF"]
         )
         _ocr_kuyruk = int(CONFIG.get("OCR_WORKER_KUYRUK", 4))
-        self.ocr_worker = OcrWorker(self.cozucu, kuyruk_boyutu=_ocr_kuyruk)
+        _ocr_worker_sayisi = int(CONFIG.get("OCR_WORKER_SAYISI", 1))
+        self._cfg_ocr_gonder_timeout = max(
+            0.0, float(CONFIG.get("OCR_WORKER_GONDER_TIMEOUT", 0.05))
+        )
+        self.ocr_worker = OcrWorkerPool(
+            self.cozucu,
+            n_workers=_ocr_worker_sayisi,
+            kuyruk_boyutu=_ocr_kuyruk,
+        )
         self.dogrulama   = DogrulamaMotoru(
             CONFIG["ESIK_DEGERI"],
             CONFIG["OYLAMA_MIN_TOPLAM_GUVEN"],
@@ -126,9 +134,6 @@ class OtoKantar:
         )
         self.kantar_okuyucu = KantarOkuyucu()
         self.fis_yazdirici  = FisYazdirici()
-        self.kaydedici      = KantarKaydedici(
-            CONFIG["CSV_DOSYA"], CONFIG["JSON_CANLI"]
-        )
         try:
             self.mysql_db = MySQLDBManager.from_config(CONFIG)
             log.info(
@@ -138,6 +143,9 @@ class OtoKantar:
         except Exception as e:
             self.mysql_db = None
             log.warning("MySQL devre dışı (başlatılamadı): %s", e)
+        self.kaydedici      = KantarKaydedici(
+            CONFIG["CSV_DOSYA"], CONFIG["JSON_CANLI"], mysql_db=self.mysql_db
+        )
         self.cizici  = EkranCizici()
         self.tracker = CentroidTracker()
         self.bg_subtractor = cv2.createBackgroundSubtractorMOG2(
@@ -598,12 +606,14 @@ class OtoKantar:
     # Kamera açma
     # -----------------------------------------------------------------------
     def _kamera_ac(self) -> cv2.VideoCapture:
-        kamera_index  = int(CONFIG["KAMERA_INDEX"])
+        kamera_kaynak = CONFIG["KAMERA_INDEX"]
+        if isinstance(kamera_kaynak, str) and kamera_kaynak.strip().isdigit():
+            kamera_kaynak = int(kamera_kaynak)
         warmup_frames = int(CONFIG.get("KAMERA_WARMUP_FRAMES", 8))
         siyah_esik    = float(CONFIG.get("KAMERA_SIYAH_ESIK", 2.0))
         warmup_sleep  = float(CONFIG.get("KAMERA_WARMUP_SLEEP", 0.02))
 
-        if platform.system() == "Windows":
+        if isinstance(kamera_kaynak, int) and platform.system() == "Windows":
             backendler = [
                 ("DSHOW", cv2.CAP_DSHOW),
                 ("MSMF", cv2.CAP_MSMF),
@@ -621,12 +631,14 @@ class OtoKantar:
             except Exception:
                 return True
 
-        for deneme in range(CONFIG["KAMERA_YENIDEN_BAGLANTI_DENEMESI"]):
+        deneme = 0
+        while not self._cikis_istendi.is_set():
+            deneme += 1
             for backend_ad, backend in backendler:
                 kamera = (
-                    cv2.VideoCapture(kamera_index, backend)
+                    cv2.VideoCapture(kamera_kaynak, backend)
                     if backend is not None
-                    else cv2.VideoCapture(kamera_index)
+                    else cv2.VideoCapture(kamera_kaynak)
                 )
                 if not kamera.isOpened():
                     kamera.release()
@@ -648,9 +660,8 @@ class OtoKantar:
                 kamera.release()
 
             log.warning(
-                "Kamera açılamadı/okunamadı. Deneme %d/%d",
-                deneme + 1,
-                CONFIG["KAMERA_YENIDEN_BAGLANTI_DENEMESI"],
+                "Kamera acilamadi/okunamadi. Deneme %d",
+                deneme,
             )
             time.sleep(CONFIG["KAMERA_BEKLEME_SURESI"])
 
@@ -720,8 +731,9 @@ class OtoKantar:
         FIX #6: dur_event parametresi kaldırıldı.
         Yalnızca self._cikis_istendi kullanılır.
         """
-        kamera = self._kamera_ac()
+        kamera = None
         try:
+            kamera = self._kamera_ac()
             while not self._cikis_istendi.is_set():
                 ret, kare = kamera.read()
                 if not ret:
@@ -736,8 +748,12 @@ class OtoKantar:
                     continue
                 self._yakalama_fps_guncelle()
                 self._kuyruga_kare_koy(kare_kuyrugu, kare)
+        except RuntimeError as e:
+            if not self._cikis_istendi.is_set():
+                log.error(str(e))
         finally:
-            kamera.release()
+            if kamera is not None:
+                kamera.release()
             log.debug("Kamera (üretici) serbest bırakıldı.")
 
     # -----------------------------------------------------------------------
@@ -1056,13 +1072,14 @@ class OtoKantar:
             with self._plaka_listesi_lock:
                 plaka_listesi = list(self._son_plaka_listesi)
 
-        if not plaka_listesi:
-            self._aktif_bbox = None
-            return
-
         for silinen_id in self.tracker.purge_expired():
             with self._durum_lock:
                 self.plaka_hafizasi.pop(silinen_id, None)
+            self.dogrulama.sil(silinen_id)
+
+        if not plaka_listesi:
+            self._aktif_bbox = None
+            return
 
         self._aktif_bbox = None
         ocr_calis = self._kare_sayaci % self._cfg_ocr_kare_atlama == 0
@@ -1109,13 +1126,14 @@ class OtoKantar:
             if roi.size == 0:
                 continue
 
-            gonderildi = self.ocr_worker.gorevi_gonder(
+            gonderildi = self.ocr_worker.gorevi_gonder_bekle(
                 OcrGorevi(
                     roi_bgr=roi.copy(),
                     arac_id=arac_id,
                     yolo_conf=float(yolo_conf),
                     bbox=bbox,
-                )
+                ),
+                timeout=self._cfg_ocr_gonder_timeout,
             )
             if not gonderildi:
                 log.debug(

@@ -27,6 +27,7 @@ import os
 import queue
 import re
 import threading
+import time
 import urllib.request
 from pathlib import Path
 from typing import Optional
@@ -947,7 +948,7 @@ class OcrWorker(threading.Thread):
         boyut = kuyruk_boyutu or int(_cfg("WORKER_KUYRUK"))
         self._cozucu = cozucu
         self._giris_kuyrugu: queue.Queue[Optional[OcrGorevi]] = queue.Queue(maxsize=boyut)
-        self._cikis_kuyrugu: queue.Queue = queue.Queue(maxsize=boyut * 2)
+        self._cikis_kuyrugu: queue.Queue = queue.Queue(maxsize=0)
         self._dur = threading.Event()
 
     # ------------------------------------------------------------------
@@ -1026,10 +1027,7 @@ class OcrWorker(threading.Thread):
             float(sonuc.guven or 0.0),
             sonuc.gecerli,
         )
-        try:
-            self._cikis_kuyrugu.put_nowait((gorev.arac_id, sonuc, gorev.yolo_conf, gorev.bbox))
-        except queue.Full:
-            log.warning("OcrWorker çıkış kuyruğu dolu, sonuç atıldı.")
+        self._cikis_kuyrugu.put((gorev.arac_id, sonuc, gorev.yolo_conf, gorev.bbox))
 
     def run(self) -> None:
         log.info("OcrWorker başlatıldı.")
@@ -1091,11 +1089,29 @@ class OcrWorkerPool:
         for w in self._workers:
             w.start()
 
+    def start(self) -> None:
+        self.baslat()
+
     def gorevi_gonder(self, gorev: OcrGorevi) -> bool:
         with self._kilit:
-            worker = self._workers[self._idx % len(self._workers)]
+            baslangic = self._idx
             self._idx += 1
-        return worker.gorevi_gonder(gorev)
+        for offset in range(len(self._workers)):
+            worker = self._workers[(baslangic + offset) % len(self._workers)]
+            if worker.gorevi_gonder(gorev):
+                return True
+        return False
+
+    def gorevi_gonder_bekle(self, gorev: OcrGorevi, timeout: float = 0.1) -> bool:
+        with self._kilit:
+            baslangic = self._idx
+            self._idx += 1
+        deneme_timeout = max(0.0, float(timeout)) / max(1, len(self._workers))
+        for offset in range(len(self._workers)):
+            worker = self._workers[(baslangic + offset) % len(self._workers)]
+            if worker.gorevi_gonder_bekle(gorev, timeout=deneme_timeout):
+                return True
+        return False
 
     def sonuclari_topla(self) -> list:
         sonuclar = []
@@ -1106,5 +1122,12 @@ class OcrWorkerPool:
     def durdur(self) -> None:
         for w in self._workers:
             w.durdur()
+
+    def join(self, timeout: float = 5.0) -> None:
+        deadline = time.monotonic() + max(0.0, float(timeout))
         for w in self._workers:
-            w.join(timeout=5.0)
+            kalan = max(0.0, deadline - time.monotonic())
+            w.join(timeout=kalan)
+
+    def is_alive(self) -> bool:
+        return any(w.is_alive() for w in self._workers)
