@@ -29,6 +29,8 @@ class DogrulamaMotoru:
         self.okuma_penceresi   = 6.0   # saniye — eski 5.0
         self.min_gecerli_guven = 0.30  # eski 0.45
         self.min_duzeltme_guven = 0.55
+        self.min_lider_hane = 2
+        self.min_lider_guven = 1.0
         self.erken_cikis_guven = 2.5   # toplam güven bu değere ulaşırsa
                                        # esik kare beklenmeden kabul edilir
 
@@ -138,7 +140,7 @@ class DogrulamaMotoru:
             toplam_hane  = sum(hane[p]  for p in kume["uyeler"])
             lider = max(
                 kume["uyeler"],
-                key=lambda p: (p in self.bilinen_plakalar, oylar[p], hane[p]),
+                key=lambda p: (p in self.bilinen_plakalar, hane[p], oylar[p]),
             )
             skor = toplam_guven + (toplam_hane * 0.2)
             if lider in self.bilinen_plakalar:
@@ -256,24 +258,34 @@ class DogrulamaMotoru:
         # Hareket eden kamerada bazen plaka sadece 1-2 kare net görünür.
         # OCR o karede güçlüyse (toplam güven erken_cikis_guven'i geçiyorsa)
         # esik kare beklenmeden kaydedilir.
-        tamam = (
+        lider_oy = float(d.oylar.get(lider, 0.0))
+        lider_hane = int(d.hane.get(lider, 0))
+
+        kume_hazir = (
             toplam_hane  >= self.esik              # eski davranış: yeterli kare
             or toplam_guven >= self.min_toplam_guven   # eski davranış: güven toplamı
             or (toplam_hane >= 2 and toplam_guven >= self.erken_cikis_guven)
         )
+        lider_guvenilir = (
+            lider_hane >= self.min_lider_hane
+            and lider_oy >= self.min_lider_guven
+        )
+        tamam = kume_hazir and lider_guvenilir
 
         if not tamam:
             log.debug(
                 "OCR_DOGRULAMA bekle arac_id=%s lider=%s toplam_guven=%.3f toplam_hane=%d "
-                "esik=%d min_toplam=%.3f erken=%.3f",
+                "lider_oy=%.3f lider_hane=%d esik=%d min_toplam=%.3f erken=%.3f",
                 arac_id, lider, float(toplam_guven), int(toplam_hane),
-                self.esik, self.min_toplam_guven, self.erken_cikis_guven,
+                lider_oy, lider_hane, self.esik, self.min_toplam_guven, self.erken_cikis_guven,
             )
             return (False, None, 0.0, 0)
 
         log.info(
-            "OCR_DOGRULAMA kabul arac_id=%s final=%s toplam_guven=%.3f toplam_hane=%d oylar=%s",
-            arac_id, lider, float(toplam_guven), int(toplam_hane), dict(d.oylar),
+            "OCR_DOGRULAMA kabul arac_id=%s final=%s toplam_guven=%.3f toplam_hane=%d "
+            "lider_oy=%.3f lider_hane=%d oylar=%s",
+            arac_id, lider, float(toplam_guven), int(toplam_hane),
+            lider_oy, lider_hane, dict(d.oylar),
         )
         d.son_kayit    = su_an
         d.oylar.clear()

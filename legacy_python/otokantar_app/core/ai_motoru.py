@@ -696,6 +696,24 @@ class PlakaCozucu:
     # Adaptive two-pass OCR
     # ------------------------------------------------------------------
 
+    def _plaka_adayi_cikar(self, metin: str) -> tuple[Optional[str], int, int]:
+        """
+        Return a valid corrected Turkish plate candidate from OCR text.
+
+        PLAKA_REGEX is intentionally a search because OCR often adds junk at
+        the edges (e.g. N06ABC123). The caller still gets the amount of junk so
+        scoring can prefer cleaner full-plate readings.
+        """
+        ham = (metin or "").upper()
+        for eslesen in PLAKA_REGEX.finditer(ham):
+            il, harf, rakam = eslesen.group(1), eslesen.group(2), eslesen.group(3)
+            plaka = self._plaka_duzelt(il, harf, rakam)
+            if self._uzunluk_gecerli(plaka):
+                sol_junk = eslesen.start()
+                sag_junk = len(ham) - eslesen.end()
+                return plaka, sol_junk, sag_junk
+        return None, 0, 0
+
     def _ocr_calistir(self, binary: np.ndarray) -> tuple[str, float]:
         """
         Adaptive two-pass OCR — CPU-optimised.
@@ -728,7 +746,7 @@ class PlakaCozucu:
         )
 
         # Early exit: high-confidence valid plate on first pass
-        if conf1 >= ikinci_esik and PLAKA_REGEX.search(metin1):
+        if conf1 >= ikinci_esik and self._plaka_adayi_cikar(metin1)[0]:
             log.debug(
                 "OCR_ADAY pass1=%r conf1=%.3f pass2=%r conf2=%.3f fallback=%r fallback_conf=%.3f",
                 metin1,
@@ -765,7 +783,19 @@ class PlakaCozucu:
 
         # Pick the better of the two primary passes
         def _skor(m: str, c: float) -> float:
-            return c + (1.0 if PLAKA_REGEX.search(m) else 0.0)
+            plaka, sol_junk, sag_junk = self._plaka_adayi_cikar(m)
+            if plaka:
+                # Prefer readings that produce a real plate after correction.
+                # Edge junk is tolerated but penalized so "06ABC123" beats
+                # "N06ABC123" at similar confidence.
+                return c + 2.0 - ((sol_junk + sag_junk) * 0.15)
+            # A raw regex fragment that cannot become a valid plate is weak
+            # evidence only; examples like "6644Y895" used to win here.
+            if PLAKA_REGEX.search(m or ""):
+                return c + 0.15
+            # If neither pass is valid, avoid letting tiny high-confidence
+            # fragments such as "06" dominate longer near-complete readings.
+            return c + min(len(m or ""), 9) * 0.02
 
         if _skor(metin2, conf2) > _skor(metin1, conf1):
             best_metin, best_conf = metin2, conf2
