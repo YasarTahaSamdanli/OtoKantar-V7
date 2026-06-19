@@ -70,7 +70,9 @@
         <div class="btns">
             <button class="btn" id="refresh" type="button">Simdi yenile</button>
             <button class="btn primary" id="demo" type="button">Demo modu</button>
-            <a class="btn" href="{{ route('canli.csv') }}" id="csv">CSV indir</a>
+            @if (Auth::user()->isAdmin())
+                <a class="btn" href="{{ route('canli.csv') }}" id="csv">CSV indir</a>
+            @endif
         </div>
     </section>
 
@@ -94,7 +96,36 @@
         <div class="mini-chart" id="chart"></div>
     </section>
     <section class="card span4">
-        <x-panel.card-head title="Son kayitlar" badge="0 kayit" badge-id="table-count" />
+        <div class="records-head">
+            <x-panel.card-head title="Kayitlar" badge="0 kayit" badge-id="table-count" />
+            <div class="record-tools">
+                <label class="field">
+                    <span>Donem</span>
+                    <select id="period">
+                        <option value="all">Tum kayitlar</option>
+                        <option value="day">Gunluk</option>
+                        <option value="month">Aylik</option>
+                        <option value="year">Yillik</option>
+                    </select>
+                </label>
+                <label class="field period-field" data-period-field="day">
+                    <span>Gun</span>
+                    <input id="filter-date" type="date" value="{{ date('Y-m-d') }}">
+                </label>
+                <label class="field period-field" data-period-field="month">
+                    <span>Ay</span>
+                    <input id="filter-month" type="month" value="{{ date('Y-m') }}">
+                </label>
+                <label class="field period-field" data-period-field="year">
+                    <span>Yil</span>
+                    <input id="filter-year" type="number" min="2000" max="2100" step="1" value="{{ date('Y') }}">
+                </label>
+                <button class="btn compact" id="apply-record-filter" type="button">Uygula</button>
+                @if (Auth::user()->isAdmin())
+                    <a class="btn compact primary" href="{{ route('canli.csv') }}" id="records-csv">CSV indir</a>
+                @endif
+            </div>
+        </div>
         <table>
             <thead><tr><th>Plaka</th><th>Agirlik / Net</th><th>Tarih</th><th>Saat</th><th>Tip</th><th>Guven</th></tr></thead>
             <tbody id="tbody"><tr><td class="empty-row" colspan="6">Henuz kayit yok. Sistem dosya akisina baglanmayi bekliyor.</td></tr></tbody>
@@ -109,8 +140,9 @@ const Config = {
   camMs: 1400,
   verifyThreshold: 4,
   maxLog: 80,
-  tableLimit: 15,
+  tableLimit: 200,
   chartHours: 12,
+  isAdmin: @json(Auth::user()->isAdmin()),
 };
 
 const State = {
@@ -124,6 +156,12 @@ const State = {
   demoPlate: null,
   demoStep: 0,
   intervals: { poll: null, cam: null, demo: null },
+  filters: {
+    period: 'all',
+    date: @json(date('Y-m-d')),
+    month: @json(date('Y-m')),
+    year: @json(date('Y')),
+  },
 };
 
 const Utils = {
@@ -406,10 +444,31 @@ const Panel = {
 };
 
 const Api = {
+  panelUrl() {
+    const params = new URLSearchParams({
+      action: 'panel',
+      limit: String(Config.tableLimit),
+      period: State.filters.period,
+      date: State.filters.date,
+      month: State.filters.month,
+      year: State.filters.year,
+      t: String(Date.now()),
+    });
+    return `/canli/api?${params.toString()}`;
+  },
+  csvUrl() {
+    const params = new URLSearchParams({
+      period: State.filters.period,
+      date: State.filters.date,
+      month: State.filters.month,
+      year: State.filters.year,
+    });
+    return `/canli/csv?${params.toString()}`;
+  },
   async poll() {
     if (State.demoOn) return;
     try {
-      const r = await fetch(`/canli/api?action=panel&limit=40&t=${Date.now()}`, { cache: 'no-store' });
+      const r = await fetch(this.panelUrl(), { cache: 'no-store' });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const payload = await r.json();
       if (payload?.hata) throw new Error(payload.hata);
@@ -535,7 +594,53 @@ const App = {
       if (State.demoOn) Demo.stop();
       else Demo.start();
     });
-    Utils.el('csv').addEventListener('click', () => UI.log('info', 'CSV raporu indiriliyor'));
+    const csv = Utils.el('csv');
+    if (csv) {
+      csv.addEventListener('click', () => {
+        csv.href = Api.csvUrl();
+        UI.log('info', 'CSV raporu indiriliyor');
+      });
+    }
+    const recordsCsv = Utils.el('records-csv');
+    if (recordsCsv) {
+      recordsCsv.addEventListener('click', () => {
+        recordsCsv.href = Api.csvUrl();
+        UI.log('info', 'Filtreli CSV raporu indiriliyor');
+      });
+    }
+    Utils.el('apply-record-filter').addEventListener('click', () => {
+      this.syncRecordFilters();
+      Api.poll();
+      UI.log('info', 'Kayit filtresi guncellendi');
+    });
+    Utils.el('period').addEventListener('change', () => {
+      this.syncRecordFilters();
+      this.updateFilterFields();
+      Api.poll();
+    });
+    ['filter-date', 'filter-month', 'filter-year'].forEach((id) => {
+      Utils.el(id).addEventListener('change', () => {
+        this.syncRecordFilters();
+        Api.poll();
+      });
+    });
+  },
+  syncRecordFilters() {
+    State.filters.period = Utils.el('period').value || 'all';
+    State.filters.date = Utils.el('filter-date').value || State.filters.date;
+    State.filters.month = Utils.el('filter-month').value || State.filters.month;
+    State.filters.year = Utils.el('filter-year').value || State.filters.year;
+    const url = Api.csvUrl();
+    const csv = Utils.el('csv');
+    const recordsCsv = Utils.el('records-csv');
+    if (csv) csv.href = url;
+    if (recordsCsv) recordsCsv.href = url;
+  },
+  updateFilterFields() {
+    const period = Utils.el('period').value || 'all';
+    document.querySelectorAll('[data-period-field]').forEach((field) => {
+      field.classList.toggle('hidden', field.dataset.periodField !== period);
+    });
   },
   startClock() {
     setInterval(() => {
@@ -547,6 +652,8 @@ const App = {
   },
   init() {
     this.bindTabs();
+    this.updateFilterFields();
+    this.syncRecordFilters();
     this.bindEvents();
     this.startClock();
     UI.resetPlate();

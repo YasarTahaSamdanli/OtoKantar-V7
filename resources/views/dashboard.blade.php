@@ -53,7 +53,7 @@
                 </a>
             </div>
 
-            <div class="mt-6 grid gap-4 lg:grid-cols-2">
+            <div class="mt-6 grid gap-4">
                 <section class="rounded-2xl border border-white/10 bg-[#181f2b]/95 p-6 shadow-[0_20px_48px_rgba(0,0,0,.24)]">
                     <div class="text-xs font-semibold uppercase tracking-[.16em] text-slate-500">Roller</div>
                     <div class="mt-4 space-y-3">
@@ -71,16 +71,6 @@
                             </div>
                             <span class="rounded-full bg-white/5 px-3 py-1 text-xs text-slate-400">sinirli</span>
                         </div>
-                    </div>
-                </section>
-
-                <section class="rounded-2xl border border-white/10 bg-[#181f2b]/95 p-6 shadow-[0_20px_48px_rgba(0,0,0,.24)]">
-                    <div class="text-xs font-semibold uppercase tracking-[.16em] text-slate-500">Kisa yollar</div>
-                    <div class="mt-4 grid gap-3 sm:grid-cols-2">
-                        <a href="{{ route('admin.users.create') }}" class="rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-3 text-sm font-semibold text-emerald-200 hover:bg-emerald-400/15">Admin ekle</a>
-                        <a href="{{ route('canli.csv') }}" class="rounded-xl border border-white/10 bg-white/[.03] px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-white/[.06]">CSV indir</a>
-                        <a href="{{ route('profile.edit') }}" class="rounded-xl border border-white/10 bg-white/[.03] px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-white/[.06]">Profil</a>
-                        <a href="{{ route('canli.view') }}" class="rounded-xl border border-white/10 bg-white/[.03] px-4 py-3 text-sm font-semibold text-slate-200 hover:bg-white/[.06]">Canli izle</a>
                     </div>
                 </section>
             </div>

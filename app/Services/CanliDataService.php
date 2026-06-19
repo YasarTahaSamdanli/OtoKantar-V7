@@ -98,35 +98,40 @@ class CanliDataService
         ];
     }
 
-    public function dbPanelPayload(PDO $pdo, int $limit): array
+    public function dbPanelPayload(PDO $pdo, int $limit, array $filters = []): array
     {
         $jsonIndex = $this->agirlikService->jsonAgirlikIndexiGetir($this->legacyPath('canli_durum.json'));
         $csvIndex = $this->agirlikService->csvAgirlikIndexiGetir($this->legacyPath('kantar_raporu.csv'));
-        $kayitlar = $this->dbKayitlariGetir($pdo, $limit, $jsonIndex, $csvIndex);
+        $kayitlar = $this->dbKayitlariGetir($pdo, $limit, $jsonIndex, $csvIndex, $filters);
         $durum = $this->durumOkuVeyaFallback($pdo);
 
         return [
             'durum' => $durum,
-            'toplam' => (int) $pdo->query('SELECT COUNT(*) FROM gecisler')->fetchColumn(),
+            'toplam' => $this->dbKayitSayisi($pdo, $filters),
             'limit' => $limit,
+            'filtre' => $this->normalizeFilters($filters),
             'kayitlar' => $kayitlar,
             'ozet' => $this->dbOzetGetir($pdo),
             '_sunucu_zaman' => date('Y-m-d\TH:i:s'),
         ];
     }
 
-    public function csvIcerikOlustur(PDO $pdo): array
+    public function csvIcerikOlustur(PDO $pdo, array $filters = []): array
     {
-        $stmt = $pdo->query(
+        [$where, $params] = $this->dateWhereSql($filters, 'g');
+        $stmt = $pdo->prepare(
             "SELECT a.plaka, g.yon, g.gecis_zamani, g.guven
              FROM gecisler g
              INNER JOIN araclar a ON a.id = g.id
+             {$where}
              ORDER BY g.gecis_zamani DESC
              LIMIT 5000"
         );
+        $this->bindDateParams($stmt, $params);
+        $stmt->execute();
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        $filename = 'kantar_raporu_mysql_' . date('Ymd_His') . '.csv';
+        $filename = 'kantar_raporu_mysql_' . $this->filterSlug($filters) . '_' . date('Ymd_His') . '.csv';
         $header = ['Plaka', 'Yon', 'GecisZamani', 'Guven'];
 
         $out = fopen('php://temp', 'w+');
@@ -214,15 +219,18 @@ class CanliDataService
         return max(0.0, min(1.0, $num));
     }
 
-    private function dbKayitlariGetir(PDO $pdo, int $limit, array $agirlikIndex = [], array $csvAgirlikIndex = []): array
+    private function dbKayitlariGetir(PDO $pdo, int $limit, array $agirlikIndex = [], array $csvAgirlikIndex = [], array $filters = []): array
     {
+        [$where, $params] = $this->dateWhereSql($filters, 'g');
         $stmt = $pdo->prepare(
             "SELECT g.id AS arac_id, a.plaka, a.kara_liste, g.yon, g.gecis_zamani, g.guven
              FROM gecisler g
              INNER JOIN araclar a ON a.id = g.id
+             {$where}
              ORDER BY g.gecis_zamani DESC
              LIMIT :limit"
         );
+        $this->bindDateParams($stmt, $params);
         $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
         $stmt->execute();
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
@@ -258,6 +266,69 @@ class CanliDataService
         }
 
         return $kayitlar;
+    }
+
+    private function dbKayitSayisi(PDO $pdo, array $filters = []): int
+    {
+        [$where, $params] = $this->dateWhereSql($filters, 'g');
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM gecisler g {$where}");
+        $this->bindDateParams($stmt, $params);
+        $stmt->execute();
+
+        return (int) $stmt->fetchColumn();
+    }
+
+    private function normalizeFilters(array $filters): array
+    {
+        $period = strtolower((string) ($filters['period'] ?? 'all'));
+        if (!in_array($period, ['all', 'day', 'month', 'year'], true)) {
+            $period = 'all';
+        }
+
+        return [
+            'period' => $period,
+            'date' => preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) ($filters['date'] ?? '')) === 1
+                ? (string) $filters['date']
+                : date('Y-m-d'),
+            'month' => preg_match('/^\d{4}-\d{2}$/', (string) ($filters['month'] ?? '')) === 1
+                ? (string) $filters['month']
+                : date('Y-m'),
+            'year' => preg_match('/^\d{4}$/', (string) ($filters['year'] ?? '')) === 1
+                ? (string) $filters['year']
+                : date('Y'),
+        ];
+    }
+
+    private function dateWhereSql(array $filters, string $alias): array
+    {
+        $filters = $this->normalizeFilters($filters);
+        $column = $alias.'.gecis_zamani';
+
+        return match ($filters['period']) {
+            'day' => ["WHERE DATE({$column}) = :filter_date", ['filter_date' => $filters['date']]],
+            'month' => ["WHERE DATE_FORMAT({$column}, '%Y-%m') = :filter_month", ['filter_month' => $filters['month']]],
+            'year' => ["WHERE YEAR({$column}) = :filter_year", ['filter_year' => (int) $filters['year']]],
+            default => ['', []],
+        };
+    }
+
+    private function bindDateParams(\PDOStatement $stmt, array $params): void
+    {
+        foreach ($params as $key => $value) {
+            $stmt->bindValue(':'.$key, $value, is_int($value) ? PDO::PARAM_INT : PDO::PARAM_STR);
+        }
+    }
+
+    private function filterSlug(array $filters): string
+    {
+        $filters = $this->normalizeFilters($filters);
+
+        return match ($filters['period']) {
+            'day' => 'gunluk_'.$filters['date'],
+            'month' => 'aylik_'.$filters['month'],
+            'year' => 'yillik_'.$filters['year'],
+            default => 'tum_kayitlar',
+        };
     }
 
     private function dbOzetGetir(PDO $pdo): array

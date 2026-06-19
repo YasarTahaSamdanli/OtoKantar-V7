@@ -34,6 +34,7 @@ class CanliController extends Controller
 
         $action = (string) $request->query('action', 'panel');
         $limit = min(200, max(1, (int) $request->query('limit', 40)));
+        $filters = $this->recordFilters($request);
 
         try {
             $cacheKey = $this->canliCacheKey($request, $action, $limit);
@@ -65,7 +66,7 @@ class CanliController extends Controller
                     return response()->json($payload);
                 }
 
-                $payload = $this->canliData->dbPanelPayload($pdo, $limit);
+                $payload = $this->canliData->dbPanelPayload($pdo, $limit, $filters);
                 Cache::put($cacheKey, $payload, $ttlSeconds);
                 return response()->json($payload);
             }
@@ -94,9 +95,11 @@ class CanliController extends Controller
             return $guard;
         }
 
+        abort_unless($request->user()?->isAdmin(), 403);
+
         try {
             $pdo = DB::connection('legacy')->getPdo();
-            $export = $this->canliData->csvIcerikOlustur($pdo);
+            $export = $this->canliData->csvIcerikOlustur($pdo, $this->recordFilters($request));
 
             return Response::make($export['content'], 200, [
                 'Content-Type' => 'text/csv; charset=utf-8',
@@ -161,6 +164,36 @@ class CanliController extends Controller
         $this->sortQueryRecursive($query);
 
         return $query;
+    }
+
+    private function recordFilters(Request $request): array
+    {
+        $period = strtolower((string) $request->query('period', 'all'));
+        if (!in_array($period, ['all', 'day', 'month', 'year'], true)) {
+            $period = 'all';
+        }
+
+        return [
+            'period' => $period,
+            'date' => $this->validDate((string) $request->query('date', date('Y-m-d'))) ?? date('Y-m-d'),
+            'month' => $this->validMonth((string) $request->query('month', date('Y-m'))) ?? date('Y-m'),
+            'year' => $this->validYear((string) $request->query('year', date('Y'))) ?? date('Y'),
+        ];
+    }
+
+    private function validDate(string $value): ?string
+    {
+        return preg_match('/^\d{4}-\d{2}-\d{2}$/', $value) === 1 ? $value : null;
+    }
+
+    private function validMonth(string $value): ?string
+    {
+        return preg_match('/^\d{4}-\d{2}$/', $value) === 1 ? $value : null;
+    }
+
+    private function validYear(string $value): ?string
+    {
+        return preg_match('/^\d{4}$/', $value) === 1 ? $value : null;
     }
 
     private function sortQueryRecursive(array &$query): void
