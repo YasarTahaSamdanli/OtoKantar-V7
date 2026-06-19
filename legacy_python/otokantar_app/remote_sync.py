@@ -65,6 +65,9 @@ class RemoteCanliSync:
 
         payload_copy = dict(payload or {})
         image = Path(image_path) if image_path else None
+        if self._invalid_image_only_job(payload_copy, image):
+            log.debug("Remote sync payloadsiz JPG atlandi: %s", image)
+            return
 
         if self._circuit_is_open():
             self._enqueue(payload_copy, image, quiet=True)
@@ -105,6 +108,8 @@ class RemoteCanliSync:
         if self._pending is None:
             return
         payload, image_path, _on_success = self._pending
+        if self._status_only_job(payload, image_path):
+            return
         self._enqueue(payload, image_path, quiet=True)
 
     def _flush_pending(self) -> None:
@@ -163,13 +168,17 @@ class RemoteCanliSync:
     def _drain_queue(self, exclude_id: Optional[str] = None) -> None:
         if self._circuit_is_open():
             return
-        for entry in self._read_queue():
+        for entry in self._sorted_queue_entries():
             entry_id = entry.get("id")
             if not entry_id or entry_id == exclude_id:
                 continue
             payload = dict(entry.get("payload") or {})
             image_raw = entry.get("image_path")
             image = Path(image_raw) if image_raw else None
+            if self._invalid_image_only_job(payload, image):
+                log.warning("Remote sync gecersiz payloadsiz JPG kuyruktan silindi: %s", entry_id)
+                self._remove_from_queue(entry_id, payload, image)
+                continue
             self._send_with_retry(payload, image, queue_id=entry_id)
 
     def _send_with_retry(
@@ -205,6 +214,13 @@ class RemoteCanliSync:
 
             last_status = status_code
             last_error = error
+            if status_code is not None and 400 <= status_code < 500 and status_code != 429:
+                log.warning(
+                    "Remote sync kalici hata nedeniyle kuyruktan silindi: HTTP %s",
+                    status_code,
+                )
+                self._remove_from_queue(queue_id, payload, image_path)
+                return False
 
         if last_status is not None:
             log.warning(
@@ -232,6 +248,39 @@ class RemoteCanliSync:
             log.debug("Remote sync kuyrukta bekliyor: %s", queue_id)
 
         return False
+
+    def _sorted_queue_entries(self) -> list[dict]:
+        entries = self._read_queue()
+
+        def priority(entry: dict) -> tuple[int, float]:
+            payload = dict(entry.get("payload") or {})
+            image_raw = entry.get("image_path")
+            image = Path(image_raw) if image_raw else None
+            if self._invalid_image_only_job(payload, image):
+                return (0, float(entry.get("queued_at") or 0))
+            if image is not None and self._is_transition_payload(payload):
+                return (1, float(entry.get("queued_at") or 0))
+            if self._is_transition_payload(payload):
+                return (2, float(entry.get("queued_at") or 0))
+            return (3, float(entry.get("queued_at") or 0))
+
+        return sorted(entries, key=priority)
+
+    @staticmethod
+    def _is_transition_payload(payload: dict) -> bool:
+        event_type = str(
+            payload.get("event_type")
+            or payload.get("olay_tipi")
+            or payload.get("_event_type")
+            or ""
+        ).strip().upper()
+        return event_type in {"GIRIS", "CIKIS"}
+
+    def _invalid_image_only_job(self, payload: dict, image_path: Optional[Path]) -> bool:
+        return image_path is not None and not self._is_transition_payload(payload)
+
+    def _status_only_job(self, payload: dict, image_path: Optional[Path]) -> bool:
+        return image_path is None and not self._is_transition_payload(payload)
 
     def _attempt_post(
         self,

@@ -136,6 +136,7 @@
 <script>
 const Config = {
   plates: ['06ABC123', '34TR574', '35ZK882', '16BRS61', '41KLM99', '27FRT20', '06ANK80', '34ED5728', '24TR123', '79SAA001'],
+  eventCheckMs: 5000,
   verifyThreshold: 4,
   maxLog: 80,
   tableLimit: 200,
@@ -154,7 +155,7 @@ const State = {
   demoOn: false,
   demoPlate: null,
   demoStep: 0,
-  intervals: { demo: null },
+  intervals: { event: null, demo: null },
   filters: {
     period: 'all',
     date: @json(date('Y-m-d')),
@@ -463,6 +464,13 @@ const Api = {
     });
     return `/canli/api?${params.toString()}`;
   },
+  durumUrl() {
+    const params = new URLSearchParams({
+      action: 'durum',
+      t: String(Date.now()),
+    });
+    return `/canli/api?${params.toString()}`;
+  },
   csvUrl() {
     const params = new URLSearchParams({
       period: State.filters.period,
@@ -486,6 +494,29 @@ const Api = {
         UI.log('warn', 'Canli veri okunamadi, /canli/api bekleniyor');
       }
       Utils.el('kg-status').textContent = 'Panel baglantisi bekleniyor. MySQL veya durum kaynagi yanit vermiyor.';
+    }
+  },
+  async checkEvent() {
+    if (State.demoOn) return;
+    try {
+      const r = await fetch(this.durumUrl(), { cache: 'no-store' });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const durum = await r.json();
+      if (durum?.hata) throw new Error(durum.hata);
+      const isNewRecord = Panel.latestEvent(durum, State.hasReceivedPanel);
+      Panel.updateState(durum);
+      UI.setScale(durum);
+      UI.updateFresh(durum?._durum_yasi_saniye ?? null);
+      UI.setInfo(durum);
+      if (isNewRecord) {
+        UI.refreshCam();
+        await this.poll();
+      }
+    } catch (e) {
+      if (State.status !== 'offline') {
+        UI.setStatus('offline');
+        UI.log('warn', 'Canli durum kontrolu okunamadi');
+      }
     }
   },
 };
@@ -556,6 +587,7 @@ const Demo = {
   start() {
     if (State.demoOn) return;
     State.demoOn = true;
+    clearInterval(State.intervals.event);
     clearInterval(State.intervals.demo);
     UI.setStatus('demo');
     Utils.el('demo').textContent = 'Canli moda don';
@@ -572,6 +604,7 @@ const Demo = {
     UI.resetPlate();
     UI.log('warn', 'Demo modu durduruldu, canli dosya akisina donuluyor');
     Api.poll();
+    State.intervals.event = setInterval(() => Api.checkEvent(), Config.eventCheckMs);
   },
 };
 
@@ -663,6 +696,7 @@ const App = {
     UI.log('info', 'OtoKantar paneli yuklendi');
     UI.log('info', 'Kaynak: MySQL + /canli/api + /canli/kare');
     Api.poll();
+    State.intervals.event = setInterval(() => Api.checkEvent(), Config.eventCheckMs);
   },
 };
 
