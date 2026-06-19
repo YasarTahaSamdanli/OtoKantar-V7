@@ -98,8 +98,15 @@ class CanliController extends Controller
         abort_unless($request->user()?->isAdmin(), 403);
 
         try {
-            $pdo = DB::connection('legacy')->getPdo();
-            $export = $this->canliData->csvIcerikOlustur($pdo, $this->recordFilters($request));
+            $filters = $this->recordFilters($request);
+
+            try {
+                $pdo = DB::connection('legacy')->getPdo();
+                $export = $this->canliData->csvIcerikOlustur($pdo, $filters);
+            } catch (Throwable $e) {
+                Log::warning('Canli CSV icin DB kullanilamadi, dosya fallback deneniyor', ['exception' => $e]);
+                $export = $this->canliData->csvDosyaIcerikOlustur($this->canliData->legacyPath('kantar_raporu.csv'), $filters);
+            }
 
             return Response::make($export['content'], 200, [
                 'Content-Type' => 'text/csv; charset=utf-8',
@@ -119,7 +126,14 @@ class CanliController extends Controller
         }
 
         $path = $this->canliData->legacyPath('canli_kare.jpg');
-        abort_unless(is_file($path), 404);
+
+        if (!is_file($path)) {
+            return Response::make($this->missingFrameSvg(), 200, [
+                'Content-Type' => 'image/svg+xml; charset=utf-8',
+                'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+                'Pragma' => 'no-cache',
+            ]);
+        }
 
         return response()->file($path, [
             'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
@@ -142,6 +156,23 @@ class CanliController extends Controller
         }
 
         return null;
+    }
+
+    private function missingFrameSvg(): string
+    {
+        return <<<'SVG'
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-label="Canli kare bekleniyor">
+  <rect width="1280" height="720" fill="#091018"/>
+  <rect x="1" y="1" width="1278" height="718" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="2"/>
+  <g fill="none" stroke="#21d19f" stroke-width="12" opacity=".75">
+    <rect x="520" y="290" width="240" height="118" rx="18"/>
+    <circle cx="580" cy="410" r="24" fill="#21d19f" stroke="none"/>
+    <circle cx="700" cy="410" r="24" fill="#21d19f" stroke="none"/>
+    <path d="M575 290v-30c0-28 22-50 50-50h30c28 0 50 22 50 50v30"/>
+  </g>
+  <text x="640" y="475" text-anchor="middle" fill="#94a0b1" font-family="Arial, sans-serif" font-size="30">Canli kare bekleniyor</text>
+</svg>
+SVG;
     }
 
     private function canliCacheKey(Request $request, string $action, int $limit): string

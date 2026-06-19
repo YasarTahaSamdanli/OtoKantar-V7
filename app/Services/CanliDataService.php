@@ -152,6 +152,48 @@ class CanliDataService
         return ['content' => $csv, 'filename' => $filename];
     }
 
+    public function csvDosyaIcerikOlustur(string $csvDosya, array $filters = []): array
+    {
+        $filename = 'kantar_raporu_dosya_' . $this->filterSlug($filters) . '_' . date('Ymd_His') . '.csv';
+        $header = ['Tarih', 'Saat', 'Plaka', 'Tip', 'Guven', 'Operator'];
+        $rows = [];
+
+        if (is_file($csvDosya)) {
+            $handle = fopen($csvDosya, 'r');
+            if ($handle !== false) {
+                $csvHeader = fgetcsv($handle, 0, ';') ?: [];
+                $csvHeader = array_map(fn ($value): string => preg_replace('/^\xEF\xBB\xBF/', '', trim((string) $value)) ?? '', $csvHeader);
+                if ($csvHeader !== []) {
+                    $header = $csvHeader;
+                }
+
+                while (($row = fgetcsv($handle, 0, ';')) !== false) {
+                    $assoc = [];
+                    foreach ($header as $index => $key) {
+                        $assoc[$key] = $row[$index] ?? '';
+                    }
+
+                    if ($this->csvSatiriFiltreyeUyar($assoc, $filters)) {
+                        $rows[] = $row;
+                    }
+                }
+                fclose($handle);
+            }
+        }
+
+        $out = fopen('php://temp', 'w+');
+        fwrite($out, "\xEF\xBB\xBF");
+        fputcsv($out, $header, ';');
+        foreach ($rows as $row) {
+            fputcsv($out, $row, ';');
+        }
+        rewind($out);
+        $csv = stream_get_contents($out) ?: '';
+        fclose($out);
+
+        return ['content' => $csv, 'filename' => $filename];
+    }
+
     private function isAbsolutePath(string $path): bool
     {
         return $path !== '' && (str_starts_with($path, '/') || preg_match('/^[A-Za-z]:[\/\\\\]/', $path) === 1);
@@ -329,6 +371,42 @@ class CanliDataService
             'year' => 'yillik_'.$filters['year'],
             default => 'tum_kayitlar',
         };
+    }
+
+    private function csvSatiriFiltreyeUyar(array $row, array $filters): bool
+    {
+        $filters = $this->normalizeFilters($filters);
+        if ($filters['period'] === 'all') {
+            return true;
+        }
+
+        $date = $this->csvSatirTarihi($row);
+        if ($date === null) {
+            return false;
+        }
+
+        return match ($filters['period']) {
+            'day' => $date === $filters['date'],
+            'month' => str_starts_with($date, $filters['month'].'-'),
+            'year' => str_starts_with($date, $filters['year'].'-'),
+            default => true,
+        };
+    }
+
+    private function csvSatirTarihi(array $row): ?string
+    {
+        $value = $row['Tarih']
+            ?? $row['GirisTarih']
+            ?? $row['CikisTarih']
+            ?? $row['GecisZamani']
+            ?? null;
+
+        if ($value === null || trim((string) $value) === '') {
+            return null;
+        }
+
+        $timestamp = strtotime((string) $value);
+        return $timestamp === false ? null : date('Y-m-d', $timestamp);
     }
 
     private function dbOzetGetir(PDO $pdo): array
