@@ -41,6 +41,7 @@ import torch
 os.environ.setdefault("FLAGS_enable_pir_in_executor", "0")
 os.environ.setdefault("FLAGS_use_mkldnn", "0")
 os.environ.setdefault("FLAGS_enable_onednn", "0")
+os.environ.setdefault("FLAGS_use_onednn", "0")
 
 try:
     from paddleocr import PaddleOCR
@@ -213,6 +214,7 @@ class _PaddleBackend(_OcrBackend):
             use_doc_orientation_classify=False,
             use_doc_unwarping=False,
             lang="en",
+            enable_mkldnn=bool(_cfg("PADDLE_ENABLE_MKLDNN")),
         )
         try:
             self._reader = PaddleOCR(**kwargs, show_log=False)
@@ -452,13 +454,6 @@ class PlakaCozucu:
         self.primary_backend_adi = type(self._primary).__name__.lstrip("_").replace("Backend", "")
 
         self._fallback: Optional[_OcrBackend] = None
-        if (
-            _cfg("OCR_FALLBACK_ENABLED")
-            and paddle_ok
-            and _EASY_AVAILABLE
-            and isinstance(self._primary, _PaddleBackend)
-        ):
-            self._fallback = _EasyBackend(diller, gpu)
         self.fallback_backend_adi = (
             type(self._fallback).__name__.lstrip("_").replace("Backend", "")
             if self._fallback is not None
