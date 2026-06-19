@@ -158,5 +158,5 @@ PLAKA_REGEX = re.compile(
     r"([0-9]{2,4})"
 )
 
-_HARF_DUZELTME = {"0": "O", "1": "I", "5": "S", "8": "B", "2": "Z"}
-_RAKAM_DUZELTME = {"O": "0", "I": "1", "S": "5", "B": "8", "Z": "2"}
+_HARF_DUZELTME = {"0": "O", "1": "I", "8": "B", "2": "Z", "6": "G"}
+_RAKAM_DUZELTME = {"O": "0", "I": "1", "B": "8", "Z": "2", "G": "6", "D": "0"}

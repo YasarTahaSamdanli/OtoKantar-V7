@@ -58,6 +58,7 @@ except ImportError:
 from ultralytics import YOLO
 
 from otokantar_app.config import CONFIG, PLAKA_REGEX, _HARF_DUZELTME, _RAKAM_DUZELTME
+from otokantar_app.core.plaka_aday_motoru import en_iyi_aday_sec
 from otokantar_app.logger import log
 from otokantar_app.models import OcrGorevi, TespitSonucu
 
@@ -459,6 +460,22 @@ class PlakaCozucu:
             if self._fallback is not None
             else None
         )
+    def _en_iyi_aday_sec(self, ham: str, ocr_conf: float) -> tuple[Optional[str], float, float]:
+        plaka, skor, maliyet, adaylar = en_iyi_aday_sec(
+            ham,
+            ocr_conf,
+        )
+        if adaylar:
+            log.debug(
+                "OCR_ADAY_SKOR ham=%r ocr_conf=%.3f secilen=%s skor=%.3f maliyet=%.3f top=%s",
+                ham,
+                float(ocr_conf),
+                plaka,
+                float(skor),
+                float(maliyet),
+                [(a, round(s, 3), round(m, 3)) for a, s, m in adaylar[:5]],
+            )
+        return plaka, skor, maliyet
 
     def _ensure_fallback(self) -> Optional[_OcrBackend]:
         if self._fallback is not None:
@@ -693,21 +710,13 @@ class PlakaCozucu:
 
     def _plaka_adayi_cikar(self, metin: str) -> tuple[Optional[str], int, int]:
         """
-        Return a valid corrected Turkish plate candidate from OCR text.
-
-        PLAKA_REGEX is intentionally a search because OCR often adds junk at
-        the edges (e.g. N06ABC123). The caller still gets the amount of junk so
-        scoring can prefer cleaner full-plate readings.
+        Return a same-length OCR correction candidate from OCR text.
         """
-        ham = (metin or "").upper()
-        for eslesen in PLAKA_REGEX.finditer(ham):
-            il, harf, rakam = eslesen.group(1), eslesen.group(2), eslesen.group(3)
-            plaka = self._plaka_duzelt(il, harf, rakam)
-            if self._uzunluk_gecerli(plaka):
-                sol_junk = eslesen.start()
-                sag_junk = len(ham) - eslesen.end()
-                return plaka, sol_junk, sag_junk
-        return None, 0, 0
+        ham = re.sub(r"[^A-Z0-9]", "", (metin or "").upper())
+        plaka, _, _ = self._en_iyi_aday_sec(ham, 0.5)
+        if not plaka:
+            return None, 0, 0
+        return plaka, 0, 0
 
     def _ocr_calistir(self, binary: np.ndarray) -> tuple[str, float]:
         """
@@ -776,20 +785,14 @@ class PlakaCozucu:
             float(conf2),
         )
 
-        # Pick the better of the two primary passes
+        # Pick the better OCR pass without creating new plate text.
         def _skor(m: str, c: float) -> float:
-            plaka, sol_junk, sag_junk = self._plaka_adayi_cikar(m)
+            plaka, _, maliyet = self._en_iyi_aday_sec(m, c)
             if plaka:
-                # Prefer readings that produce a real plate after correction.
-                # Edge junk is tolerated but penalized so "06ABC123" beats
-                # "N06ABC123" at similar confidence.
-                return c + 2.0 - ((sol_junk + sag_junk) * 0.15)
-            # A raw regex fragment that cannot become a valid plate is weak
-            # evidence only; examples like "6644Y895" used to win here.
+                _, sol_junk, sag_junk = self._plaka_adayi_cikar(m)
+                return c + 1.0 - maliyet - ((sol_junk + sag_junk) * 0.12)
             if PLAKA_REGEX.search(m or ""):
                 return c + 0.15
-            # If neither pass is valid, avoid letting tiny high-confidence
-            # fragments such as "06" dominate longer near-complete readings.
             return c + min(len(m or ""), 9) * 0.02
 
         if _skor(metin2, conf2) > _skor(metin1, conf1):
@@ -917,24 +920,24 @@ class PlakaCozucu:
         )
 
         ham, ocr_conf = self._ocr_calistir(binary)
-        eslesen = PLAKA_REGEX.search(ham)
-        if eslesen:
-            il, harf, rakam = eslesen.group(1), eslesen.group(2), eslesen.group(3)
-            plaka = self._plaka_duzelt(il, harf, rakam)
-            if self._uzunluk_gecerli(plaka):
-                log.debug(
-                    "OCR_FINAL ham_metin=%r duzeltilmis_plaka=%s guven=%.3f gecerli=True",
-                    ham,
-                    plaka,
-                    float(ocr_conf),
-                )
-                return TespitSonucu(
-                    bbox=(),
-                    ham_metin=ham,
-                    plaka=plaka,
-                    guven=float(ocr_conf),
-                    gecerli=True,
-                )
+        plaka, aday_skor, maliyet = self._en_iyi_aday_sec(ham, ocr_conf)
+        if plaka and self._uzunluk_gecerli(plaka):
+            log.debug(
+                "OCR_FINAL ham_metin=%r duzeltilmis_plaka=%s ocr_guven=%.3f "
+                "aday_skor=%.3f maliyet=%.3f gecerli=True",
+                ham,
+                plaka,
+                float(ocr_conf),
+                float(aday_skor),
+                float(maliyet),
+            )
+            return TespitSonucu(
+                bbox=(),
+                ham_metin=ham,
+                plaka=plaka,
+                guven=float(ocr_conf),
+                gecerli=True,
+            )
         log.debug(
             "OCR_FINAL ham_metin=%r duzeltilmis_plaka= guven=%.3f gecerli=False",
             ham,
