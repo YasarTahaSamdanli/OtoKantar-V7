@@ -136,7 +136,6 @@
 <script>
 const Config = {
   plates: ['06ABC123', '34TR574', '35ZK882', '16BRS61', '41KLM99', '27FRT20', '06ANK80', '34ED5728', '24TR123', '79SAA001'],
-  pollMs: 2000,
   verifyThreshold: 4,
   maxLog: 80,
   tableLimit: 200,
@@ -155,7 +154,7 @@ const State = {
   demoOn: false,
   demoPlate: null,
   demoStep: 0,
-  intervals: { poll: null, demo: null },
+  intervals: { demo: null },
   filters: {
     period: 'all',
     date: @json(date('Y-m-d')),
@@ -557,7 +556,6 @@ const Demo = {
   start() {
     if (State.demoOn) return;
     State.demoOn = true;
-    clearInterval(State.intervals.poll);
     clearInterval(State.intervals.demo);
     UI.setStatus('demo');
     Utils.el('demo').textContent = 'Canli moda don';
@@ -574,7 +572,6 @@ const Demo = {
     UI.resetPlate();
     UI.log('warn', 'Demo modu durduruldu, canli dosya akisina donuluyor');
     Api.poll();
-    State.intervals.poll = setInterval(() => Api.poll(), Config.pollMs);
   },
 };
 
@@ -666,7 +663,6 @@ const App = {
     UI.log('info', 'OtoKantar paneli yuklendi');
     UI.log('info', 'Kaynak: MySQL + /canli/api + /canli/kare');
     Api.poll();
-    State.intervals.poll = setInterval(() => Api.poll(), Config.pollMs);
   },
 };
 
