@@ -622,6 +622,7 @@ const App = {
   bindEvents() {
     Utils.el('refresh').addEventListener('click', () => {
       Api.poll();
+      UI.refreshCam();
       UI.log('info', 'Panel verisi manuel yenilendi');
     });
     Utils.el('demo').addEventListener('click', () => {
@@ -695,6 +696,7 @@ const App = {
     UI.setStatus('offline');
     UI.log('info', 'OtoKantar paneli yuklendi');
     UI.log('info', 'Kaynak: MySQL + /canli/api + /canli/kare');
+    UI.refreshCam();
     Api.poll();
     State.intervals.event = setInterval(() => Api.checkEvent(), Config.eventCheckMs);
   },

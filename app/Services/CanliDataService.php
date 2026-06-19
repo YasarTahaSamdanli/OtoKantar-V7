@@ -77,9 +77,10 @@ class CanliDataService
     public function jsonOnlyPanelPayload(int $limit, array $filters = []): array
     {
         $durum = $this->durumOkuVeyaFallback();
-        $kayitlar = [];
+        $history = $this->historyKayitlariVeToplam($limit, $filters);
+        $kayitlar = $history['kayitlar'];
 
-        if (isset($durum['son_10']) && is_array($durum['son_10'])) {
+        if ($kayitlar === [] && isset($durum['son_10']) && is_array($durum['son_10'])) {
             $kayitlar = array_slice(array_reverse($durum['son_10']), 0, $limit);
         }
 
@@ -94,7 +95,7 @@ class CanliDataService
 
         return [
             'durum' => $durum,
-            'toplam' => count($kayitlar),
+            'toplam' => $history['toplam'] > 0 ? $history['toplam'] : count($kayitlar),
             'limit' => $limit,
             'filtre' => $this->normalizeFilters($filters),
             'kayitlar' => $kayitlar,
@@ -109,11 +110,15 @@ class CanliDataService
         $jsonIndex = $this->agirlikService->jsonAgirlikIndexiGetir($this->legacyPath('canli_durum.json'));
         $csvIndex = $this->agirlikService->csvAgirlikIndexiGetir($this->legacyPath('kantar_raporu.csv'));
         $kayitlar = $this->dbKayitlariGetir($pdo, $limit, $jsonIndex, $csvIndex, $filters);
+        $history = $kayitlar === [] ? $this->historyKayitlariVeToplam($limit, $filters) : ['kayitlar' => [], 'toplam' => 0];
+        if ($kayitlar === [] && $history['kayitlar'] !== []) {
+            $kayitlar = $history['kayitlar'];
+        }
         $durum = $this->durumOkuVeyaFallback($pdo);
 
         return [
             'durum' => $durum,
-            'toplam' => $this->dbKayitSayisi($pdo, $filters),
+            'toplam' => $history['toplam'] > 0 ? $history['toplam'] : $this->dbKayitSayisi($pdo, $filters),
             'limit' => $limit,
             'filtre' => $this->normalizeFilters($filters),
             'kayitlar' => $kayitlar,
@@ -203,16 +208,17 @@ class CanliDataService
     public function jsonCsvIcerikOlustur(array $filters = []): array
     {
         $durum = $this->durumOkuVeyaFallback();
-        $rows = [];
+        $history = $this->historyKayitlariVeToplam(5000, $filters);
+        $records = $history['kayitlar'];
 
-        $records = [];
-        if (isset($durum['son_10']) && is_array($durum['son_10'])) {
+        if ($records === [] && isset($durum['son_10']) && is_array($durum['son_10'])) {
             $records = array_reverse($durum['son_10']);
         }
         if ($records === [] && isset($durum['son_kayit']) && is_array($durum['son_kayit'])) {
             $records = [$durum['son_kayit']];
         }
 
+        $rows = [];
         foreach ($records as $record) {
             if (!is_array($record) || !$this->kayitFiltreyeUyar($record, $filters)) {
                 continue;
@@ -247,6 +253,78 @@ class CanliDataService
         fclose($out);
 
         return ['content' => $csv, 'filename' => $filename, 'row_count' => count($rows)];
+    }
+
+    private function historyKayitlariVeToplam(int $limit, array $filters = []): array
+    {
+        $path = $this->legacyPath('gecis_gecmisi.jsonl');
+        if (!is_file($path)) {
+            return ['kayitlar' => [], 'toplam' => 0];
+        }
+
+        $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        if (!is_array($lines)) {
+            return ['kayitlar' => [], 'toplam' => 0];
+        }
+
+        $kayitlar = [];
+        foreach ($lines as $line) {
+            $row = json_decode((string) $line, true);
+            if (!is_array($row)) {
+                continue;
+            }
+
+            $record = $this->historyKaydiniNormalizeEt($row);
+            if (!$this->kayitFiltreyeUyar($record, $filters)) {
+                continue;
+            }
+
+            $kayitlar[] = $record;
+        }
+
+        usort($kayitlar, function (array $a, array $b): int {
+            return strcmp((string) ($b['gecis_zamani'] ?? ''), (string) ($a['gecis_zamani'] ?? ''));
+        });
+
+        return [
+            'kayitlar' => array_slice($kayitlar, 0, $limit),
+            'toplam' => count($kayitlar),
+        ];
+    }
+
+    private function historyKaydiniNormalizeEt(array $row): array
+    {
+        $tip = $this->kayitTipi($row);
+        $timestamp = strtotime((string) ($row['gecis_zamani'] ?? ''));
+
+        $date = $tip === 'CIKIS'
+            ? (string) ($row['cikis_tarih'] ?? $row['tarih'] ?? '')
+            : (string) ($row['giris_tarih'] ?? $row['tarih'] ?? '');
+        $time = $tip === 'CIKIS'
+            ? (string) ($row['cikis_saat'] ?? $row['saat'] ?? '')
+            : (string) ($row['giris_saat'] ?? $row['saat'] ?? '');
+
+        if (($date === '' || $time === '') && $timestamp !== false) {
+            $date = $date !== '' ? $date : date('Y-m-d', $timestamp);
+            $time = $time !== '' ? $time : date('H:i:s', $timestamp);
+        }
+
+        return [
+            'arac_id' => (int) ($row['arac_id'] ?? 0),
+            'plaka' => (string) ($row['plaka'] ?? ''),
+            'durum' => $tip,
+            'tip' => $tip,
+            'giris_tarih' => $tip === 'GIRIS' ? $date : (string) ($row['giris_tarih'] ?? ''),
+            'giris_saat' => $tip === 'GIRIS' ? $time : (string) ($row['giris_saat'] ?? ''),
+            'giris_agirlik' => $this->agirlikService->parseAgirlik($row['giris_agirlik'] ?? null),
+            'cikis_tarih' => $tip === 'CIKIS' ? $date : (string) ($row['cikis_tarih'] ?? ''),
+            'cikis_saat' => $tip === 'CIKIS' ? $time : (string) ($row['cikis_saat'] ?? ''),
+            'cikis_agirlik' => $this->agirlikService->parseAgirlik($row['cikis_agirlik'] ?? null),
+            'net_agirlik' => $this->agirlikService->parseAgirlik($row['net_agirlik'] ?? null),
+            'guven' => $this->parseGuven($row['guven'] ?? null),
+            'kara_liste' => (bool) ($row['kara_liste'] ?? false),
+            'gecis_zamani' => $timestamp !== false ? date('Y-m-d H:i:s', $timestamp) : null,
+        ];
     }
 
     private function isAbsolutePath(string $path): bool

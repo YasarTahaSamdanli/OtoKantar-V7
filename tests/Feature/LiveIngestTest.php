@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use Illuminate\Support\Facades\File;
+use App\Services\CanliDataService;
 use Tests\TestCase;
 
 class LiveIngestTest extends TestCase
@@ -38,6 +39,14 @@ class LiveIngestTest extends TestCase
                     'event_type' => 'GIRIS',
                     'son_guncelleme' => '2026-06-08T12:00:00',
                     'kantar_kg' => 1234.5,
+                    'son_kayit' => [
+                        'plaka' => '06TST123',
+                        'durum' => 'GIRIS',
+                        'giris_tarih' => '2026-06-08',
+                        'giris_saat' => '12:00:00',
+                        'giris_agirlik' => 1234.5,
+                        'guven' => 0.9,
+                    ],
                     'son_10' => [],
                 ]),
                 'image_base64' => base64_encode('fake-jpg'),
@@ -47,7 +56,51 @@ class LiveIngestTest extends TestCase
 
         $this->assertFileExists($runtimePath.DIRECTORY_SEPARATOR.'canli_durum.json');
         $this->assertFileExists($runtimePath.DIRECTORY_SEPARATOR.'canli_kare.jpg');
+        $this->assertFileExists($runtimePath.DIRECTORY_SEPARATOR.'gecis_gecmisi.jsonl');
         $this->assertStringContainsString('1234.5', File::get($runtimePath.DIRECTORY_SEPARATOR.'canli_durum.json'));
+        $this->assertStringContainsString('"plaka"', File::get($runtimePath.DIRECTORY_SEPARATOR.'gecis_gecmisi.jsonl'));
+    }
+
+    public function test_json_panel_fallback_reads_full_history_not_only_last_10(): void
+    {
+        $runtimePath = storage_path('framework/testing/live-ingest/'.__FUNCTION__);
+
+        config([
+            'services.legacy_runtime.path' => $runtimePath,
+        ]);
+
+        File::ensureDirectoryExists($runtimePath);
+        File::put($runtimePath.DIRECTORY_SEPARATOR.'canli_durum.json', json_encode([
+            'son_guncelleme' => '2026-06-19T12:00:00',
+            'son_10' => [],
+        ]));
+
+        $lines = [];
+        for ($i = 1; $i <= 12; $i++) {
+            $day = str_pad((string) $i, 2, '0', STR_PAD_LEFT);
+            $plate = '06TST'.str_pad((string) $i, 3, '0', STR_PAD_LEFT);
+            $lines[] = json_encode([
+                'plaka' => $plate,
+                'durum' => 'GIRIS',
+                'tip' => 'GIRIS',
+                'giris_tarih' => '2026-06-'.$day,
+                'giris_saat' => '10:00:00',
+                'giris_agirlik' => 1000 + $i,
+                'guven' => 0.9,
+                'gecis_zamani' => '2026-06-'.$day.' 10:00:00',
+                '_event_id' => 'event-'.$i,
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        }
+        File::put($runtimePath.DIRECTORY_SEPARATOR.'gecis_gecmisi.jsonl', implode(PHP_EOL, $lines).PHP_EOL);
+
+        $payload = $this->app->make(CanliDataService::class)->jsonOnlyPanelPayload(200, [
+            'period' => 'month',
+            'month' => '2026-06',
+        ]);
+
+        $this->assertSame(12, $payload['toplam']);
+        $this->assertCount(12, $payload['kayitlar']);
+        $this->assertSame('06TST012', $payload['kayitlar'][0]['plaka']);
     }
 
     public function test_live_ingest_ignores_non_event_image_when_status_json_exists(): void

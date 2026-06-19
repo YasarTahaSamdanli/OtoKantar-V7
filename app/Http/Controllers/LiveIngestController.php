@@ -49,6 +49,10 @@ class LiveIngestController extends Controller
             }
 
             if ($this->isTransitionEvent($payload)) {
+                if ($this->storeTransitionHistory($payload, $root)) {
+                    $wrote[] = 'gecis_gecmisi.jsonl';
+                }
+
                 try {
                     if ($this->storeTransitionEvent($payload)) {
                         $wrote[] = 'legacy_db';
@@ -275,6 +279,90 @@ class LiveIngestController extends Controller
         }
 
         return max(0.0, min(1.0, $confidence));
+    }
+
+    private function storeTransitionHistory(?array $payload, string $root): bool
+    {
+        if ($payload === null) {
+            return false;
+        }
+
+        $record = is_array($payload['son_kayit'] ?? null) ? $payload['son_kayit'] : $payload;
+        $plate = strtoupper(trim((string) ($record['plaka'] ?? $payload['plaka'] ?? '')));
+        if ($plate === '') {
+            return false;
+        }
+
+        $direction = strtoupper(trim((string) (
+            $payload['event_type']
+            ?? $payload['olay_tipi']
+            ?? $payload['_event_type']
+            ?? $record['tip']
+            ?? $record['durum']
+            ?? 'GIRIS'
+        )));
+        $direction = $direction === 'CIKIS' ? 'CIKIS' : 'GIRIS';
+
+        $date = (string) ($direction === 'CIKIS'
+            ? ($record['cikis_tarih'] ?? $record['tarih'] ?? $record['giris_tarih'] ?? '')
+            : ($record['giris_tarih'] ?? $record['tarih'] ?? $record['cikis_tarih'] ?? ''));
+        $time = (string) ($direction === 'CIKIS'
+            ? ($record['cikis_saat'] ?? $record['saat'] ?? $record['giris_saat'] ?? '')
+            : ($record['giris_saat'] ?? $record['saat'] ?? $record['cikis_saat'] ?? ''));
+
+        $timestamp = strtotime(trim($date.' '.$time));
+        if ($timestamp === false) {
+            $timestamp = time();
+        }
+
+        $eventId = trim((string) ($payload['event_id'] ?? ''));
+        if ($eventId === '') {
+            $eventId = sha1($plate.'|'.$direction.'|'.date('Y-m-d H:i:s', $timestamp));
+        }
+
+        $historyRecord = $record;
+        $historyRecord['plaka'] = $plate;
+        $historyRecord['durum'] = $direction;
+        $historyRecord['tip'] = $direction;
+        $historyRecord['guven'] = $this->normalizeConfidence($record['guven'] ?? $payload['guven'] ?? null);
+        $historyRecord['gecis_zamani'] = date('Y-m-d H:i:s', $timestamp);
+        $historyRecord['_event_id'] = $eventId;
+        $historyRecord['_remote_ingest_at'] = now()->toIso8601String();
+
+        $path = $root.DIRECTORY_SEPARATOR.'gecis_gecmisi.jsonl';
+        $directory = dirname($path);
+        if (!is_dir($directory)) {
+            mkdir($directory, 0775, true);
+        }
+
+        $line = json_encode($historyRecord, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+        if ($line === false) {
+            return false;
+        }
+
+        $handle = fopen($path, 'c+');
+        if ($handle === false) {
+            return false;
+        }
+
+        try {
+            flock($handle, LOCK_EX);
+            rewind($handle);
+            while (($existing = fgets($handle)) !== false) {
+                $decoded = json_decode($existing, true);
+                if (is_array($decoded) && (string) ($decoded['_event_id'] ?? '') === $eventId) {
+                    return false;
+                }
+            }
+            fseek($handle, 0, SEEK_END);
+            fwrite($handle, $line.PHP_EOL);
+            fflush($handle);
+
+            return true;
+        } finally {
+            flock($handle, LOCK_UN);
+            fclose($handle);
+        }
     }
 
     private function atomicWrite(string $path, string $contents): void
