@@ -60,7 +60,7 @@ class CanliController extends Controller
                     $pdo = DB::connection('legacy')->getPdo();
                 } catch (Throwable $e) {
                     Log::warning('Legacy DB yok, JSON-only panel payload kullaniliyor', ['exception' => $e]);
-                    $payload = $this->canliData->jsonOnlyPanelPayload($limit);
+                    $payload = $this->canliData->jsonOnlyPanelPayload($limit, $filters);
                     Cache::put($cacheKey, $payload, $ttlSeconds);
 
                     return response()->json($payload);
@@ -103,9 +103,18 @@ class CanliController extends Controller
             try {
                 $pdo = DB::connection('legacy')->getPdo();
                 $export = $this->canliData->csvIcerikOlustur($pdo, $filters);
+                if (($export['row_count'] ?? 0) === 0) {
+                    $fallback = $this->canliData->csvDosyaIcerikOlustur($this->canliData->legacyPath('kantar_raporu.csv'), $filters);
+                    $export = (($fallback['row_count'] ?? 0) > 0)
+                        ? $fallback
+                        : $this->canliData->jsonCsvIcerikOlustur($filters);
+                }
             } catch (Throwable $e) {
                 Log::warning('Canli CSV icin DB kullanilamadi, dosya fallback deneniyor', ['exception' => $e]);
                 $export = $this->canliData->csvDosyaIcerikOlustur($this->canliData->legacyPath('kantar_raporu.csv'), $filters);
+                if (($export['row_count'] ?? 0) === 0) {
+                    $export = $this->canliData->jsonCsvIcerikOlustur($filters);
+                }
             }
 
             return Response::make($export['content'], 200, [

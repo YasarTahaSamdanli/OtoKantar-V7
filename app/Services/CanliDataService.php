@@ -74,7 +74,7 @@ class CanliDataService
         ];
     }
 
-    public function jsonOnlyPanelPayload(int $limit): array
+    public function jsonOnlyPanelPayload(int $limit, array $filters = []): array
     {
         $durum = $this->durumOkuVeyaFallback();
         $kayitlar = [];
@@ -87,10 +87,16 @@ class CanliDataService
             $kayitlar = [$durum['son_kayit']];
         }
 
+        $kayitlar = array_values(array_filter(
+            $kayitlar,
+            fn (mixed $row): bool => is_array($row) && $this->kayitFiltreyeUyar($row, $filters)
+        ));
+
         return [
             'durum' => $durum,
             'toplam' => count($kayitlar),
             'limit' => $limit,
+            'filtre' => $this->normalizeFilters($filters),
             'kayitlar' => $kayitlar,
             'ozet' => $this->jsonOzetGetir($kayitlar),
             '_sunucu_zaman' => date('Y-m-d\TH:i:s'),
@@ -149,7 +155,7 @@ class CanliDataService
         $csv = stream_get_contents($out) ?: '';
         fclose($out);
 
-        return ['content' => $csv, 'filename' => $filename];
+        return ['content' => $csv, 'filename' => $filename, 'row_count' => count($rows)];
     }
 
     public function csvDosyaIcerikOlustur(string $csvDosya, array $filters = []): array
@@ -191,7 +197,56 @@ class CanliDataService
         $csv = stream_get_contents($out) ?: '';
         fclose($out);
 
-        return ['content' => $csv, 'filename' => $filename];
+        return ['content' => $csv, 'filename' => $filename, 'row_count' => count($rows)];
+    }
+
+    public function jsonCsvIcerikOlustur(array $filters = []): array
+    {
+        $durum = $this->durumOkuVeyaFallback();
+        $rows = [];
+
+        $records = [];
+        if (isset($durum['son_10']) && is_array($durum['son_10'])) {
+            $records = array_reverse($durum['son_10']);
+        }
+        if ($records === [] && isset($durum['son_kayit']) && is_array($durum['son_kayit'])) {
+            $records = [$durum['son_kayit']];
+        }
+
+        foreach ($records as $record) {
+            if (!is_array($record) || !$this->kayitFiltreyeUyar($record, $filters)) {
+                continue;
+            }
+
+            $tip = $this->kayitTipi($record);
+            $date = $tip === 'CIKIS'
+                ? (string) ($record['cikis_tarih'] ?? $record['tarih'] ?? $record['giris_tarih'] ?? '')
+                : (string) ($record['giris_tarih'] ?? $record['tarih'] ?? $record['cikis_tarih'] ?? '');
+            $time = $tip === 'CIKIS'
+                ? (string) ($record['cikis_saat'] ?? $record['saat'] ?? $record['giris_saat'] ?? '')
+                : (string) ($record['giris_saat'] ?? $record['saat'] ?? $record['cikis_saat'] ?? '');
+            $timestamp = trim($date.' '.$time);
+
+            $rows[] = [
+                (string) ($record['plaka'] ?? ''),
+                $tip,
+                $timestamp,
+                $record['guven'] ?? '',
+            ];
+        }
+
+        $filename = 'kantar_raporu_json_' . $this->filterSlug($filters) . '_' . date('Ymd_His') . '.csv';
+        $out = fopen('php://temp', 'w+');
+        fwrite($out, "\xEF\xBB\xBF");
+        fputcsv($out, ['Plaka', 'Yon', 'GecisZamani', 'Guven'], ';');
+        foreach ($rows as $row) {
+            fputcsv($out, $row, ';');
+        }
+        rewind($out);
+        $csv = stream_get_contents($out) ?: '';
+        fclose($out);
+
+        return ['content' => $csv, 'filename' => $filename, 'row_count' => count($rows)];
     }
 
     private function isAbsolutePath(string $path): bool
@@ -391,6 +446,52 @@ class CanliDataService
             'year' => str_starts_with($date, $filters['year'].'-'),
             default => true,
         };
+    }
+
+    private function kayitFiltreyeUyar(array $row, array $filters): bool
+    {
+        $filters = $this->normalizeFilters($filters);
+        if ($filters['period'] === 'all') {
+            return true;
+        }
+
+        $date = $this->kayitTarihi($row);
+        if ($date === null) {
+            return false;
+        }
+
+        return match ($filters['period']) {
+            'day' => $date === $filters['date'],
+            'month' => str_starts_with($date, $filters['month'].'-'),
+            'year' => str_starts_with($date, $filters['year'].'-'),
+            default => true,
+        };
+    }
+
+    private function kayitTarihi(array $row): ?string
+    {
+        $tip = $this->kayitTipi($row);
+        $value = $tip === 'CIKIS'
+            ? ($row['cikis_tarih'] ?? $row['tarih'] ?? $row['giris_tarih'] ?? null)
+            : ($row['giris_tarih'] ?? $row['tarih'] ?? $row['cikis_tarih'] ?? null);
+
+        if ($value === null || trim((string) $value) === '') {
+            $value = $row['gecis_zamani'] ?? $row['GecisZamani'] ?? null;
+        }
+
+        if ($value === null || trim((string) $value) === '') {
+            return null;
+        }
+
+        $timestamp = strtotime((string) $value);
+        return $timestamp === false ? null : date('Y-m-d', $timestamp);
+    }
+
+    private function kayitTipi(array $row): string
+    {
+        $raw = strtoupper(trim((string) ($row['tip'] ?? $row['durum'] ?? $row['yon'] ?? 'GIRIS')));
+
+        return str_contains($raw, 'CIKIS') || str_contains($raw, 'TAMAMLANDI') ? 'CIKIS' : 'GIRIS';
     }
 
     private function csvSatirTarihi(array $row): ?string

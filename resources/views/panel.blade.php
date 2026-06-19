@@ -136,8 +136,7 @@
 <script>
 const Config = {
   plates: ['06ABC123', '34TR574', '35ZK882', '16BRS61', '41KLM99', '27FRT20', '06ANK80', '34ED5728', '24TR123', '79SAA001'],
-  pollMs: 1000,
-  camMs: 1400,
+  pollMs: 2000,
   verifyThreshold: 4,
   maxLog: 80,
   tableLimit: 200,
@@ -150,12 +149,13 @@ const State = {
   bars: new Array(Config.chartHours).fill(0),
   total: 0,
   lastSignature: '',
+  hasReceivedPanel: false,
   status: 'offline',
   lastUpdateMs: null,
   demoOn: false,
   demoPlate: null,
   demoStep: 0,
-  intervals: { poll: null, cam: null, demo: null },
+  intervals: { poll: null, demo: null },
   filters: {
     period: 'all',
     date: @json(date('Y-m-d')),
@@ -395,11 +395,16 @@ const Panel = {
     else if (next === 'offline' && !State.demoOn) UI.log('warn', 'Canli veri yok, dosya akisi bekleniyor');
     else if (next === 'demo') UI.log('info', 'Demo modu aktif');
   },
-  latestEvent(durum) {
+  latestEvent(durum, canTreatAsNew) {
     if (!durum?.son_kayit?.plaka) return false;
     const record = Utils.normalizeRecord(durum.son_kayit);
     const signature = Utils.recordStamp(record);
-    if (!signature || signature === State.lastSignature) return false;
+    if (!signature) return false;
+    if (!State.lastSignature) {
+      State.lastSignature = signature;
+      return Boolean(canTreatAsNew);
+    }
+    if (signature === State.lastSignature) return false;
     State.lastSignature = signature;
     const weight = record.tip === 'CIKIS'
       ? (record.net_agirlik ?? record.cikis_agirlik ?? record.giris_agirlik)
@@ -429,13 +434,16 @@ const Panel = {
   },
   apply(data) {
     const durum = data?.durum || {};
+    const hadPanelData = State.hasReceivedPanel;
     State.records = Array.isArray(data?.kayitlar) ? data.kayitlar.map((r) => Utils.normalizeRecord(r)) : [];
     State.total = Number(data?.toplam ?? State.records.length);
     Store.calcBars();
-    const isNewRecord = this.latestEvent(durum);
+    const isNewRecord = this.latestEvent(durum, hadPanelData);
+    State.hasReceivedPanel = true;
     this.updateState(durum);
     UI.setScale(durum);
     this.setDetection(durum, isNewRecord);
+    if (isNewRecord) UI.refreshCam();
     UI.setMetrics(data?.ozet || {}, durum);
     UI.setInfo(durum);
     UI.drawTable();
@@ -550,7 +558,6 @@ const Demo = {
     if (State.demoOn) return;
     State.demoOn = true;
     clearInterval(State.intervals.poll);
-    clearInterval(State.intervals.cam);
     clearInterval(State.intervals.demo);
     UI.setStatus('demo');
     Utils.el('demo').textContent = 'Canli moda don';
@@ -567,9 +574,7 @@ const Demo = {
     UI.resetPlate();
     UI.log('warn', 'Demo modu durduruldu, canli dosya akisina donuluyor');
     Api.poll();
-    UI.refreshCam();
     State.intervals.poll = setInterval(() => Api.poll(), Config.pollMs);
-    State.intervals.cam = setInterval(() => UI.refreshCam(), Config.camMs);
   },
 };
 
@@ -587,7 +592,6 @@ const App = {
   bindEvents() {
     Utils.el('refresh').addEventListener('click', () => {
       Api.poll();
-      UI.refreshCam();
       UI.log('info', 'Panel verisi manuel yenilendi');
     });
     Utils.el('demo').addEventListener('click', () => {
@@ -662,9 +666,7 @@ const App = {
     UI.log('info', 'OtoKantar paneli yuklendi');
     UI.log('info', 'Kaynak: MySQL + /canli/api + /canli/kare');
     Api.poll();
-    UI.refreshCam();
     State.intervals.poll = setInterval(() => Api.poll(), Config.pollMs);
-    State.intervals.cam = setInterval(() => UI.refreshCam(), Config.camMs);
   },
 };
 
