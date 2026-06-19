@@ -57,7 +57,7 @@ except ImportError:
 
 from ultralytics import YOLO
 
-from otokantar_app.config import CONFIG, PLAKA_REGEX, _HARF_DUZELTME, _RAKAM_DUZELTME
+from otokantar_app.config import CONFIG, PLAKA_REGEX, PLAKA_REGEX_TAM, _HARF_DUZELTME, _RAKAM_DUZELTME
 from otokantar_app.core.plaka_aday_motoru import en_iyi_aday_sec
 from otokantar_app.logger import log
 from otokantar_app.models import OcrGorevi, TespitSonucu
@@ -791,7 +791,9 @@ class PlakaCozucu:
             if plaka:
                 _, sol_junk, sag_junk = self._plaka_adayi_cikar(m)
                 return c + 1.0 - maliyet - ((sol_junk + sag_junk) * 0.12)
-            if PLAKA_REGEX.search(m or ""):
+            # PLAKA_REGEX_TAM (ankorsuz değil) — substring eşleşmesini engeller.
+            # Eski PLAKA_REGEX.search() ham metin içinden plaka parçası yakalıyordu.
+            if PLAKA_REGEX_TAM.match(m or ""):
                 return c + 0.15
             return c + min(len(m or ""), 9) * 0.02
 
@@ -829,7 +831,7 @@ class PlakaCozucu:
                     "OCR_SECILEN text=%r confidence=%.3f regex_match=%s",
                     fb_metin,
                     float(fb_conf),
-                    bool(PLAKA_REGEX.search(fb_metin)),
+                    bool(PLAKA_REGEX_TAM.match(fb_metin)),
                 )
                 return fb_metin, fb_conf
 
@@ -862,7 +864,7 @@ class PlakaCozucu:
             "OCR_SECILEN text=%r confidence=%.3f regex_match=%s",
             best_metin,
             float(best_conf),
-            bool(PLAKA_REGEX.search(best_metin)),
+            bool(PLAKA_REGEX_TAM.match(best_metin)),
         )
         return best_metin, best_conf
 

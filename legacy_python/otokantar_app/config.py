@@ -158,5 +158,15 @@ PLAKA_REGEX = re.compile(
     r"([0-9]{2,4})"
 )
 
+# Tam eşleşme (anchored) versiyonu — plaka ÜRETIM kararlarında zorunlu.
+# PLAKA_REGEX.search/finditer kullanımı ham metin içinden substring yakalar
+# ve yanlış kırpmalara (örn. 060L61261 → 60L6126) yol açar.
+# Üretim/karar akışlarında yalnızca bu regex veya fullmatch() kullanılmalı.
+PLAKA_REGEX_TAM = re.compile(
+    r"^(0[1-9]|[1-7][0-9]|8[0-1])"
+    r"([A-Z]{1,3})"
+    r"([0-9]{2,4})$"
+)
+
 _HARF_DUZELTME = {"0": "O", "1": "I", "8": "B", "2": "Z", "6": "G"}
 _RAKAM_DUZELTME = {"O": "0", "I": "1", "B": "8", "Z": "2", "G": "6", "D": "0"}
