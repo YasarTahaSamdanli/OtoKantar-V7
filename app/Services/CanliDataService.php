@@ -110,15 +110,15 @@ class CanliDataService
         $jsonIndex = $this->agirlikService->jsonAgirlikIndexiGetir($this->legacyPath('canli_durum.json'));
         $csvIndex = $this->agirlikService->csvAgirlikIndexiGetir($this->legacyPath('kantar_raporu.csv'));
         $kayitlar = $this->dbKayitlariGetir($pdo, $limit, $jsonIndex, $csvIndex, $filters);
-        $history = $kayitlar === [] ? $this->historyKayitlariVeToplam($limit, $filters) : ['kayitlar' => [], 'toplam' => 0];
-        if ($kayitlar === [] && $history['kayitlar'] !== []) {
-            $kayitlar = $history['kayitlar'];
-        }
+        $history = $this->historyKayitlariVeToplam($limit, $filters);
+        $historyTekrar = $this->ortakKayitSayisi($kayitlar, $history['kayitlar']);
+        $kayitlar = $this->kayitlariBirlestir($kayitlar, $history['kayitlar'], $limit);
+        $dbToplam = $this->dbKayitSayisi($pdo, $filters);
         $durum = $this->durumOkuVeyaFallback($pdo);
 
         return [
             'durum' => $durum,
-            'toplam' => $history['toplam'] > 0 ? $history['toplam'] : $this->dbKayitSayisi($pdo, $filters),
+            'toplam' => max(count($kayitlar), $dbToplam + max(0, $history['toplam'] - $historyTekrar)),
             'limit' => $limit,
             'filtre' => $this->normalizeFilters($filters),
             'kayitlar' => $kayitlar,
@@ -258,29 +258,28 @@ class CanliDataService
     private function historyKayitlariVeToplam(int $limit, array $filters = []): array
     {
         $path = $this->legacyPath('gecis_gecmisi.jsonl');
-        if (!is_file($path)) {
-            return ['kayitlar' => [], 'toplam' => 0];
-        }
-
-        $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-        if (!is_array($lines)) {
-            return ['kayitlar' => [], 'toplam' => 0];
-        }
-
         $kayitlar = [];
-        foreach ($lines as $line) {
-            $row = json_decode((string) $line, true);
-            if (!is_array($row)) {
-                continue;
-            }
 
-            $record = $this->historyKaydiniNormalizeEt($row);
-            if (!$this->kayitFiltreyeUyar($record, $filters)) {
-                continue;
-            }
+        if (is_file($path)) {
+            $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+            if (is_array($lines)) {
+                foreach ($lines as $line) {
+                    $row = json_decode((string) $line, true);
+                    if (!is_array($row)) {
+                        continue;
+                    }
 
-            $kayitlar[] = $record;
+                    $record = $this->historyKaydiniNormalizeEt($row);
+                    if (!$this->kayitFiltreyeUyar($record, $filters)) {
+                        continue;
+                    }
+
+                    $kayitlar[] = $record;
+                }
+            }
         }
+
+        $kayitlar = $this->kayitlariBirlestir($kayitlar, $this->csvGecmisKayitlari($filters), PHP_INT_MAX);
 
         usort($kayitlar, function (array $a, array $b): int {
             return strcmp((string) ($b['gecis_zamani'] ?? ''), (string) ($a['gecis_zamani'] ?? ''));
@@ -290,6 +289,142 @@ class CanliDataService
             'kayitlar' => array_slice($kayitlar, 0, $limit),
             'toplam' => count($kayitlar),
         ];
+    }
+
+    private function csvGecmisKayitlari(array $filters = []): array
+    {
+        $path = $this->legacyPath('kantar_raporu.csv');
+        if (!is_file($path)) {
+            return [];
+        }
+
+        $handle = fopen($path, 'r');
+        if ($handle === false) {
+            return [];
+        }
+
+        $records = [];
+        try {
+            $header = fgetcsv($handle, 0, ';') ?: [];
+            $header = array_map(fn ($value): string => preg_replace('/^\xEF\xBB\xBF/', '', trim((string) $value)) ?? '', $header);
+            if ($header === []) {
+                return [];
+            }
+
+            while (($row = fgetcsv($handle, 0, ';')) !== false) {
+                $assoc = [];
+                foreach ($header as $index => $key) {
+                    $assoc[$key] = $row[$index] ?? '';
+                }
+
+                $record = $this->csvKaydiniNormalizeEt($assoc);
+                if (!$this->kayitFiltreyeUyar($record, $filters)) {
+                    continue;
+                }
+
+                $records[] = $record;
+            }
+        } finally {
+            fclose($handle);
+        }
+
+        return $records;
+    }
+
+    private function csvKaydiniNormalizeEt(array $row): array
+    {
+        $durum = strtoupper(trim((string) ($row['Durum'] ?? 'GIRIS')));
+        $tip = ($durum === 'TAMAMLANDI' || $durum === 'CIKIS') ? 'CIKIS' : 'GIRIS';
+        $date = $tip === 'CIKIS'
+            ? (string) ($row['CikisTarih'] ?? $row['GirisTarih'] ?? '')
+            : (string) ($row['GirisTarih'] ?? $row['CikisTarih'] ?? '');
+        $time = $tip === 'CIKIS'
+            ? (string) ($row['CikisSaat'] ?? $row['GirisSaat'] ?? '')
+            : (string) ($row['GirisSaat'] ?? $row['CikisSaat'] ?? '');
+        $timestamp = strtotime(trim($date.' '.$time));
+
+        return [
+            'arac_id' => 0,
+            'plaka' => (string) ($row['Plaka'] ?? ''),
+            'durum' => $tip,
+            'tip' => $tip,
+            'giris_tarih' => (string) ($row['GirisTarih'] ?? ''),
+            'giris_saat' => (string) ($row['GirisSaat'] ?? ''),
+            'giris_agirlik' => $this->agirlikService->parseAgirlik($row['GirisAgirlik(kg)'] ?? null),
+            'cikis_tarih' => (string) ($row['CikisTarih'] ?? ''),
+            'cikis_saat' => (string) ($row['CikisSaat'] ?? ''),
+            'cikis_agirlik' => $this->agirlikService->parseAgirlik($row['CikisAgirlik(kg)'] ?? null),
+            'net_agirlik' => $this->agirlikService->parseAgirlik($row['NetAgirlik(kg)'] ?? null),
+            'guven' => $this->parseGuven($row['Guven'] ?? null),
+            'kara_liste' => false,
+            'gecis_zamani' => $timestamp !== false ? date('Y-m-d H:i:s', $timestamp) : null,
+        ];
+    }
+
+    private function kayitlariBirlestir(array $primary, array $secondary, int $limit): array
+    {
+        $merged = [];
+        $seen = [];
+
+        foreach (array_merge($primary, $secondary) as $record) {
+            if (!is_array($record)) {
+                continue;
+            }
+
+            $key = $this->kayitAnahtari($record);
+            if (isset($seen[$key])) {
+                continue;
+            }
+
+            $seen[$key] = true;
+            $merged[] = $record;
+        }
+
+        usort($merged, function (array $a, array $b): int {
+            return strcmp((string) ($b['gecis_zamani'] ?? ''), (string) ($a['gecis_zamani'] ?? ''));
+        });
+
+        return array_slice($merged, 0, $limit);
+    }
+
+    private function ortakKayitSayisi(array $primary, array $secondary): int
+    {
+        $keys = [];
+        foreach ($primary as $record) {
+            if (is_array($record)) {
+                $keys[$this->kayitAnahtari($record)] = true;
+            }
+        }
+
+        $count = 0;
+        foreach ($secondary as $record) {
+            if (is_array($record) && isset($keys[$this->kayitAnahtari($record)])) {
+                $count++;
+            }
+        }
+
+        return $count;
+    }
+
+    private function kayitAnahtari(array $record): string
+    {
+        $tip = $this->kayitTipi($record);
+        $date = $tip === 'CIKIS'
+            ? (string) ($record['cikis_tarih'] ?? $record['tarih'] ?? $record['giris_tarih'] ?? '')
+            : (string) ($record['giris_tarih'] ?? $record['tarih'] ?? $record['cikis_tarih'] ?? '');
+        $time = $tip === 'CIKIS'
+            ? (string) ($record['cikis_saat'] ?? $record['saat'] ?? $record['giris_saat'] ?? '')
+            : (string) ($record['giris_saat'] ?? $record['saat'] ?? $record['cikis_saat'] ?? '');
+
+        if (($date === '' || $time === '') && !empty($record['gecis_zamani'])) {
+            $timestamp = strtotime((string) $record['gecis_zamani']);
+            if ($timestamp !== false) {
+                $date = date('Y-m-d', $timestamp);
+                $time = date('H:i:s', $timestamp);
+            }
+        }
+
+        return strtoupper(trim((string) ($record['plaka'] ?? ''))).'|'.$tip.'|'.$date.'|'.$time;
     }
 
     private function historyKaydiniNormalizeEt(array $row): array

@@ -126,10 +126,9 @@
                 @endif
             </div>
         </div>
-        <table>
-            <thead><tr><th>Plaka</th><th>Agirlik / Net</th><th>Tarih</th><th>Saat</th><th>Tip</th><th>Guven</th></tr></thead>
-            <tbody id="tbody"><tr><td class="empty-row" colspan="6">Henuz kayit yok. Sistem dosya akisina baglanmayi bekliyor.</td></tr></tbody>
-        </table>
+        <div class="records-list" id="records-list">
+            <div class="empty-row">Henuz kayit yok. Sistem dosya akisina baglanmayi bekliyor.</div>
+        </div>
     </section>
 </main>
 
@@ -178,7 +177,9 @@ const Utils = {
       .replaceAll("'", '&#39;');
   },
   recordTs(record) {
-    const v = Date.parse(`${record.giris_tarih || ''}T${record.giris_saat || ''}`);
+    const date = record.tip === 'CIKIS' && record.cikis_tarih ? record.cikis_tarih : record.giris_tarih;
+    const time = record.tip === 'CIKIS' && record.cikis_saat ? record.cikis_saat : record.giris_saat;
+    const v = Date.parse(`${date || ''}T${time || ''}`);
     return Number.isFinite(v) ? v : null;
   },
   normalizeRecord(record = {}) {
@@ -282,12 +283,13 @@ const UI = {
     };
   },
   emptyTableRow() {
-    return '<tr><td class="empty-row" colspan="6">Henuz kayit yok. Sistem dosya akisina baglanmayi bekliyor.</td></tr>';
+    return '<div class="empty-row">Henuz kayit yok. Sistem dosya akisina baglanmayi bekliyor.</div>';
   },
   renderRecordRow(record) {
     const percent = Math.max(0, Math.min(100, Math.round((record.guven || 0) * 100)));
     const { date, time } = this.recordDateTime(record);
-    return `<tr><td class="plate-td">${Utils.escapeHtml(record.plaka)}</td><td>${Utils.escapeHtml(Utils.kg(this.recordWeight(record)))}</td><td>${Utils.escapeHtml(date || '--')}</td><td>${Utils.escapeHtml(time || '--')}</td><td><span class="tag ${this.recordTag(record.tip)}">${Utils.escapeHtml(record.tip)}</span></td><td><div class="conf"><div class="conf-track"><div class="conf-fill${this.confidenceClass(percent)}" style="width:${percent}%"></div></div><span>%${percent}</span></div></td></tr>`;
+    const net = record.net_agirlik ?? this.recordWeight(record);
+    return `<details class="record-item"><summary class="record-summary"><span class="plate-td">${Utils.escapeHtml(record.plaka || '--')}</span><span>${Utils.escapeHtml(date || '--')}</span><span>${Utils.escapeHtml(Utils.kg(net))} kg</span><span><span class="tag ${this.recordTag(record.tip)}">${Utils.escapeHtml(record.tip)}</span></span></summary><div class="record-detail"><div><span>Giris</span><b>${Utils.escapeHtml(record.giris_tarih || '--')} ${Utils.escapeHtml(record.giris_saat || '--')}</b></div><div><span>Giris kg</span><b>${Utils.escapeHtml(Utils.kg(record.giris_agirlik))}</b></div><div><span>Cikis</span><b>${Utils.escapeHtml(record.cikis_tarih || '--')} ${Utils.escapeHtml(record.cikis_saat || '--')}</b></div><div><span>Cikis kg</span><b>${Utils.escapeHtml(Utils.kg(record.cikis_agirlik))}</b></div><div><span>Net kg</span><b>${Utils.escapeHtml(Utils.kg(record.net_agirlik))}</b></div><div><span>Guven</span><b class="conf"><span class="conf-track"><span class="conf-fill${this.confidenceClass(percent)}" style="width:${percent}%"></span></span><span>%${percent}</span></b></div></div></details>`;
   },
   renderChartColumn(value, index, max, hour) {
     const height = Math.max(4, Math.round((value / max) * 92));
@@ -297,10 +299,10 @@ const UI = {
   drawTable() {
     Utils.el('table-count').textContent = `${State.total} kayit`;
     if (!State.records.length) {
-      Utils.el('tbody').innerHTML = this.emptyTableRow();
+      Utils.el('records-list').innerHTML = this.emptyTableRow();
       return;
     }
-    Utils.el('tbody').innerHTML = State.records
+    Utils.el('records-list').innerHTML = State.records
       .slice(0, Config.tableLimit)
       .map((record) => this.renderRecordRow(record))
       .join('');

@@ -294,6 +294,7 @@ class KantarKaydedici:
 
     def _json_guncelle(self, son_kayit: PlakaKayit):
         try:
+            self._gecmis_jsonl_ekle(son_kayit)
             with open(self.json_dosya, "w", encoding="utf-8") as f:
                 json.dump(
                     {
@@ -307,3 +308,23 @@ class KantarKaydedici:
                 )
         except Exception as e:
             log.warning("JSON güncellenemedi: %s", e)
+
+    def _gecmis_jsonl_ekle(self, kayit: PlakaKayit) -> None:
+        try:
+            json_path = Path(self.json_dosya)
+            history_path = json_path.with_name("gecis_gecmisi.jsonl")
+            event_time = (
+                f"{kayit.cikis_tarih} {kayit.cikis_saat}"
+                if kayit.cikis_tarih and kayit.cikis_saat
+                else f"{kayit.giris_tarih} {kayit.giris_saat}"
+            )
+            payload = asdict(kayit)
+            payload["tip"] = "CIKIS" if kayit.durum == "TAMAMLANDI" else "GIRIS"
+            payload["gecis_zamani"] = event_time
+            payload["_event_id"] = f"{kayit.plaka}|{payload['tip']}|{event_time}"
+
+            history_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(history_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
+        except Exception as e:
+            log.warning("Gecis gecmisi JSONL guncellenemedi: %s", e)

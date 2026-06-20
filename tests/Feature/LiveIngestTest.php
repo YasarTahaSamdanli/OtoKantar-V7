@@ -103,6 +103,36 @@ class LiveIngestTest extends TestCase
         $this->assertSame('06TST012', $payload['kayitlar'][0]['plaka']);
     }
 
+    public function test_json_panel_fallback_reads_csv_history_when_jsonl_is_missing(): void
+    {
+        $runtimePath = storage_path('framework/testing/live-ingest/'.__FUNCTION__);
+
+        config([
+            'services.legacy_runtime.path' => $runtimePath,
+        ]);
+
+        File::ensureDirectoryExists($runtimePath);
+        File::put($runtimePath.DIRECTORY_SEPARATOR.'canli_durum.json', json_encode([
+            'son_guncelleme' => '2026-06-19T12:00:00',
+            'son_10' => [],
+        ]));
+        File::put($runtimePath.DIRECTORY_SEPARATOR.'kantar_raporu.csv', implode(PHP_EOL, [
+            'Plaka;Durum;GirisTarih;GirisSaat;GirisAgirlik(kg);CikisTarih;CikisSaat;CikisAgirlik(kg);NetAgirlik(kg);Guven;Operator;FirmaAdi;SoforAdi;SoforTel;MalzemeCinsi;IrsaliyeNo',
+            '06CSV001;ICERIDE;2026-06-18;10:00:00;12000;;;;;0.90;AUTO;;;;;',
+            '06CSV002;TAMAMLANDI;2026-06-19;09:00:00;42000;2026-06-19;11:00:00;12000;30000;0.95;AUTO;;;;;',
+        ]).PHP_EOL);
+
+        $payload = $this->app->make(CanliDataService::class)->jsonOnlyPanelPayload(200, [
+            'period' => 'month',
+            'month' => '2026-06',
+        ]);
+
+        $this->assertSame(2, $payload['toplam']);
+        $this->assertCount(2, $payload['kayitlar']);
+        $this->assertSame('06CSV002', $payload['kayitlar'][0]['plaka']);
+        $this->assertSame(30000.0, $payload['kayitlar'][0]['net_agirlik']);
+    }
+
     public function test_live_ingest_ignores_non_event_image_when_status_json_exists(): void
     {
         $runtimePath = storage_path('framework/testing/live-ingest/'.__FUNCTION__);
