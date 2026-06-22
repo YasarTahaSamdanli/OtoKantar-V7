@@ -80,14 +80,6 @@ class CanliDataService
         $history = $this->historyKayitlariVeToplam($limit, $filters);
         $kayitlar = $history['kayitlar'];
 
-        if ($kayitlar === [] && isset($durum['son_10']) && is_array($durum['son_10'])) {
-            $kayitlar = array_slice(array_reverse($durum['son_10']), 0, $limit);
-        }
-
-        if ($kayitlar === [] && isset($durum['son_kayit']) && is_array($durum['son_kayit'])) {
-            $kayitlar = [$durum['son_kayit']];
-        }
-
         $kayitlar = array_values(array_filter(
             $kayitlar,
             fn (mixed $row): bool => is_array($row) && $this->kayitFiltreyeUyar($row, $filters)
@@ -110,15 +102,12 @@ class CanliDataService
         $jsonIndex = $this->agirlikService->jsonAgirlikIndexiGetir($this->legacyPath('canli_durum.json'));
         $csvIndex = $this->agirlikService->csvAgirlikIndexiGetir($this->legacyPath('kantar_raporu.csv'));
         $kayitlar = $this->dbKayitlariGetir($pdo, $limit, $jsonIndex, $csvIndex, $filters);
-        $history = $this->historyKayitlariVeToplam($limit, $filters);
-        $historyTekrar = $this->ortakKayitSayisi($kayitlar, $history['kayitlar']);
-        $kayitlar = $this->kayitlariBirlestir($kayitlar, $history['kayitlar'], $limit);
         $dbToplam = $this->dbKayitSayisi($pdo, $filters);
         $durum = $this->durumOkuVeyaFallback($pdo);
 
         return [
             'durum' => $durum,
-            'toplam' => max(count($kayitlar), $dbToplam + max(0, $history['toplam'] - $historyTekrar)),
+            'toplam' => $dbToplam,
             'limit' => $limit,
             'filtre' => $this->normalizeFilters($filters),
             'kayitlar' => $kayitlar,
@@ -207,16 +196,8 @@ class CanliDataService
 
     public function jsonCsvIcerikOlustur(array $filters = []): array
     {
-        $durum = $this->durumOkuVeyaFallback();
         $history = $this->historyKayitlariVeToplam(5000, $filters);
         $records = $history['kayitlar'];
-
-        if ($records === [] && isset($durum['son_10']) && is_array($durum['son_10'])) {
-            $records = array_reverse($durum['son_10']);
-        }
-        if ($records === [] && isset($durum['son_kayit']) && is_array($durum['son_kayit'])) {
-            $records = [$durum['son_kayit']];
-        }
 
         $rows = [];
         foreach ($records as $record) {
