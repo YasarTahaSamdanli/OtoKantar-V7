@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\VehiclePass;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -59,6 +60,14 @@ class LiveIngestController extends Controller
                     }
                 } catch (Throwable $e) {
                     Log::warning('Live ingest DB kaydi atlandi', ['exception' => $e]);
+                }
+
+                try {
+                    if ($this->storeVehiclePass($payload, $root, $imageBytes !== null)) {
+                        $wrote[] = 'vehicle_passes';
+                    }
+                } catch (Throwable $e) {
+                    Log::warning('VehiclePass dual-write atlandi', ['exception' => $e]);
                 }
             }
 
@@ -281,6 +290,108 @@ class LiveIngestController extends Controller
         return max(0.0, min(1.0, $confidence));
     }
 
+    private function storeVehiclePass(?array $payload, string $root, bool $snapshotWritten): bool
+    {
+        if ($payload === null) {
+            return false;
+        }
+
+        $record = is_array($payload['son_kayit'] ?? null) ? $payload['son_kayit'] : $payload;
+        $plate = strtoupper(trim((string) ($record['plaka'] ?? $payload['plaka'] ?? '')));
+        if ($plate === '') {
+            return false;
+        }
+
+        $direction = strtoupper(trim((string) (
+            $payload['event_type']
+            ?? $payload['olay_tipi']
+            ?? $payload['_event_type']
+            ?? $record['tip']
+            ?? $record['durum']
+            ?? 'GIRIS'
+        )));
+        $direction = $direction === 'CIKIS' ? 'CIKIS' : 'GIRIS';
+
+        $date = (string) ($direction === 'CIKIS'
+            ? ($record['cikis_tarih'] ?? $record['tarih'] ?? $record['giris_tarih'] ?? '')
+            : ($record['giris_tarih'] ?? $record['tarih'] ?? $record['cikis_tarih'] ?? ''));
+        $time = (string) ($direction === 'CIKIS'
+            ? ($record['cikis_saat'] ?? $record['saat'] ?? $record['giris_saat'] ?? '')
+            : ($record['giris_saat'] ?? $record['saat'] ?? $record['cikis_saat'] ?? ''));
+
+        $timestamp = strtotime(trim($date.' '.$time));
+        if ($timestamp === false) {
+            $timestamp = time();
+        }
+
+        $passedAt = date('Y-m-d H:i:s', $timestamp);
+        $eventId = trim((string) ($payload['event_id'] ?? ''));
+        $legacyPassKey = $this->transitionEventKey($plate, $direction, $timestamp);
+        $snapshotPath = $snapshotWritten ? $root.DIRECTORY_SEPARATOR.'canli_kare.jpg' : null;
+
+        $values = [
+            'event_id' => $eventId !== '' ? $eventId : null,
+            'plate' => $plate,
+            'direction' => $direction,
+            'status' => $record['durum'] ?? $record['tip'] ?? null,
+            'passed_at' => $passedAt,
+            'entry_at' => $this->recordDateTime($record, 'giris'),
+            'exit_at' => $this->recordDateTime($record, 'cikis'),
+            'entry_weight_kg' => $this->parseWeight($record['giris_agirlik'] ?? null),
+            'exit_weight_kg' => $this->parseWeight($record['cikis_agirlik'] ?? null),
+            'net_weight_kg' => $this->parseWeight($record['net_agirlik'] ?? null),
+            'scale_weight_kg' => $this->parseWeight($payload['kantar_kg'] ?? null),
+            'confidence' => $this->normalizeConfidence($record['guven'] ?? $payload['guven'] ?? null),
+            'snapshot_disk' => $snapshotPath !== null ? 'legacy_runtime' : null,
+            'snapshot_path' => $snapshotPath,
+            'snapshot_url' => null,
+            'source' => 'remote_ingest',
+            'source_payload' => $payload,
+            'legacy_vehicle_id' => null,
+            'legacy_pass_key' => $legacyPassKey,
+            'is_blacklisted' => (bool) ($record['kara_liste'] ?? false),
+            'operator' => $record['operator'] ?? null,
+            'company_name' => $record['firma_adi'] ?? $record['firma'] ?? null,
+            'driver_name' => $record['sofor_adi'] ?? null,
+            'driver_phone' => $record['sofor_tel'] ?? null,
+            'material_type' => $record['malzeme_cinsi'] ?? null,
+            'dispatch_no' => $record['irsaliye_no'] ?? null,
+        ];
+
+        if ($eventId !== '') {
+            VehiclePass::updateOrCreate(['event_id' => $eventId], $values);
+        } else {
+            VehiclePass::updateOrCreate(['legacy_pass_key' => $legacyPassKey], $values);
+        }
+
+        return true;
+    }
+
+    private function recordDateTime(array $record, string $prefix): ?string
+    {
+        $date = trim((string) ($record[$prefix.'_tarih'] ?? ''));
+        $time = trim((string) ($record[$prefix.'_saat'] ?? ''));
+        $timestamp = strtotime(trim($date.' '.$time));
+
+        return $timestamp === false ? null : date('Y-m-d H:i:s', $timestamp);
+    }
+
+    private function parseWeight(mixed $value): ?float
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        $value = str_replace(',', '.', (string) $value);
+
+        return is_numeric($value) ? (float) $value : null;
+    }
+
+    private function transitionEventKey(string $plate, string $direction, int $timestamp): string
+    {
+        return sha1($plate.'|'.$direction.'|'.date('Y-m-d H:i:s', $timestamp));
+    }
+
     private function storeTransitionHistory(?array $payload, string $root): bool
     {
         if ($payload === null) {
@@ -317,7 +428,7 @@ class LiveIngestController extends Controller
 
         $eventId = trim((string) ($payload['event_id'] ?? ''));
         if ($eventId === '') {
-            $eventId = sha1($plate.'|'.$direction.'|'.date('Y-m-d H:i:s', $timestamp));
+            $eventId = $this->transitionEventKey($plate, $direction, $timestamp);
         }
 
         $historyRecord = $record;
