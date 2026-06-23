@@ -2,7 +2,9 @@
 
 namespace App\Services;
 
+use App\Models\VehiclePass;
 use PDO;
+use Throwable;
 
 class CanliDataService
 {
@@ -95,6 +97,112 @@ class CanliDataService
             '_sunucu_zaman' => date('Y-m-d\TH:i:s'),
             '_demo_modu' => true,
         ];
+    }
+
+    public function vehiclePassHasRecords(array $filters = []): bool
+    {
+        try {
+            return $this->vehiclePassQuery($filters)->exists();
+        } catch (Throwable) {
+            return false;
+        }
+    }
+
+    public function vehiclePassPanelPayload(int $limit, array $filters = []): array
+    {
+        $query = $this->vehiclePassQuery($filters);
+        $total = (clone $query)->count();
+        $kayitlar = $query
+            ->orderByDesc('passed_at')
+            ->orderByDesc('id')
+            ->limit($limit)
+            ->get()
+            ->map(fn (VehiclePass $pass): array => $this->vehiclePassKaydiniNormalizeEt($pass))
+            ->all();
+        $durum = $this->vehiclePassDurumPayload($kayitlar[0] ?? null);
+
+        return [
+            'durum' => $durum,
+            'toplam' => $total,
+            'limit' => $limit,
+            'filtre' => $this->normalizeFilters($filters),
+            'kayitlar' => $kayitlar,
+            'ozet' => $this->vehiclePassOzetGetir($filters),
+            '_sunucu_zaman' => date('Y-m-d\TH:i:s'),
+            '_source' => 'vehicle_passes',
+        ];
+    }
+
+    public function vehiclePassLiveTickerPayload(): array
+    {
+        return $this->vehiclePassPanelPayload(5);
+    }
+
+    public function vehiclePassArchivePayload(int $page, int $perPage, array $filters = []): array
+    {
+        $page = max(1, $page);
+        $perPage = max(1, min(100, $perPage));
+        $query = $this->vehiclePassQuery($filters);
+        $total = (clone $query)->count();
+        $lastPage = max(1, (int) ceil($total / $perPage));
+        $page = min($page, $lastPage);
+        $kayitlar = $query
+            ->orderByDesc('passed_at')
+            ->orderByDesc('id')
+            ->offset(($page - 1) * $perPage)
+            ->limit($perPage)
+            ->get()
+            ->map(fn (VehiclePass $pass): array => $this->vehiclePassKaydiniNormalizeEt($pass))
+            ->all();
+
+        return [
+            'kayitlar' => $kayitlar,
+            'toplam' => $total,
+            'limit' => $perPage,
+            'filtre' => $this->normalizeFilters($filters),
+            'pagination' => [
+                'current_page' => $page,
+                'per_page' => $perPage,
+                'total' => $total,
+                'last_page' => $lastPage,
+            ],
+            '_sunucu_zaman' => date('Y-m-d\TH:i:s'),
+            '_source' => 'vehicle_passes',
+        ];
+    }
+
+    public function vehiclePassCsvIcerikOlustur(array $filters = []): array
+    {
+        $passes = $this->vehiclePassQuery($filters)
+            ->orderByDesc('passed_at')
+            ->orderByDesc('id')
+            ->limit(5000)
+            ->get();
+
+        $filename = 'kantar_raporu_vehicle_passes_' . $this->filterSlug($filters) . '_' . date('Ymd_His') . '.csv';
+        $header = ['Plaka', 'Yon', 'GecisZamani', 'GirisKg', 'CikisKg', 'NetKg', 'Guven', 'Snapshot'];
+
+        $out = fopen('php://temp', 'w+');
+        fwrite($out, "\xEF\xBB\xBF");
+        fputcsv($out, $header, ';');
+        foreach ($passes as $pass) {
+            $record = $this->vehiclePassKaydiniNormalizeEt($pass);
+            fputcsv($out, [
+                $record['plaka'] ?? '',
+                $record['tip'] ?? '',
+                $record['gecis_zamani'] ?? '',
+                $record['giris_agirlik'] ?? '',
+                $record['cikis_agirlik'] ?? '',
+                $record['net_agirlik'] ?? '',
+                $record['guven'] ?? '',
+                $pass->snapshot_url ?: $pass->snapshot_path,
+            ], ';');
+        }
+        rewind($out);
+        $csv = stream_get_contents($out) ?: '';
+        fclose($out);
+
+        return ['content' => $csv, 'filename' => $filename, 'row_count' => $passes->count()];
     }
 
     public function dbPanelPayload(PDO $pdo, int $limit, array $filters = []): array
@@ -514,6 +622,103 @@ class CanliDataService
     private function isAbsolutePath(string $path): bool
     {
         return $path !== '' && (str_starts_with($path, '/') || preg_match('/^[A-Za-z]:[\/\\\\]/', $path) === 1);
+    }
+
+    private function vehiclePassQuery(array $filters = [])
+    {
+        $filters = $this->normalizeFilters($filters);
+        $query = VehiclePass::query();
+
+        match ($filters['period']) {
+            'day' => $query
+                ->where('passed_at', '>=', $filters['date'].' 00:00:00')
+                ->where('passed_at', '<', date('Y-m-d', strtotime($filters['date'].' +1 day')).' 00:00:00'),
+            'month' => $query
+                ->where('passed_at', '>=', $filters['month'].'-01 00:00:00')
+                ->where('passed_at', '<', date('Y-m', strtotime($filters['month'].'-01 +1 month')).'-01 00:00:00'),
+            'year' => $query
+                ->where('passed_at', '>=', $filters['year'].'-01-01 00:00:00')
+                ->where('passed_at', '<', ((int) $filters['year'] + 1).'-01-01 00:00:00'),
+            default => null,
+        };
+
+        if ($filters['plate'] !== '') {
+            $query->where('plate', 'like', '%'.$filters['plate'].'%');
+        }
+
+        return $query;
+    }
+
+    private function vehiclePassKaydiniNormalizeEt(VehiclePass $pass): array
+    {
+        $direction = strtoupper(trim((string) $pass->direction));
+        if ($direction !== 'CIKIS') {
+            $direction = 'GIRIS';
+        }
+
+        $passedAt = $pass->passed_at;
+        $entryAt = $pass->entry_at ?: ($direction === 'GIRIS' ? $passedAt : null);
+        $exitAt = $pass->exit_at ?: ($direction === 'CIKIS' ? $passedAt : null);
+
+        return [
+            'arac_id' => $pass->legacy_vehicle_id ?: $pass->id,
+            'plaka' => (string) $pass->plate,
+            'durum' => $direction,
+            'tip' => $direction,
+            'giris_tarih' => $entryAt ? $entryAt->format('Y-m-d') : '',
+            'giris_saat' => $entryAt ? $entryAt->format('H:i:s') : '',
+            'giris_agirlik' => $pass->entry_weight_kg !== null ? (float) $pass->entry_weight_kg : null,
+            'cikis_tarih' => $exitAt ? $exitAt->format('Y-m-d') : '',
+            'cikis_saat' => $exitAt ? $exitAt->format('H:i:s') : '',
+            'cikis_agirlik' => $pass->exit_weight_kg !== null ? (float) $pass->exit_weight_kg : null,
+            'net_agirlik' => $pass->net_weight_kg !== null ? (float) $pass->net_weight_kg : null,
+            'guven' => $this->parseGuven($pass->confidence),
+            'kara_liste' => (bool) $pass->is_blacklisted,
+            'gecis_zamani' => $passedAt ? $passedAt->format('Y-m-d H:i:s') : null,
+            'snapshot' => $pass->snapshot_url ?: $pass->snapshot_path,
+        ];
+    }
+
+    private function vehiclePassDurumPayload(?array $sonKayit): array
+    {
+        $durum = $this->durumOkuVeyaFallback();
+        if (!isset($durum['sistem']) || !is_array($durum['sistem'])) {
+            $durum['sistem'] = [];
+        }
+
+        $durum['sistem']['mimari'] = 'VehiclePass + JSON durum';
+        $durum['sistem']['kanallar'] = ['vehicle_passes', 'canli_durum.json', 'canli_kare.jpg'];
+
+        if ($sonKayit !== null) {
+            $durum['son_kayit'] = $sonKayit;
+            $durum['plaka_buffer'] = (string) ($sonKayit['plaka'] ?? '');
+            $durum['plaka_buffer_detay'] = ['plaka' => (string) ($sonKayit['plaka'] ?? '')];
+            $durum['son_guncelleme'] = $sonKayit['gecis_zamani'] ?? ($durum['son_guncelleme'] ?? null);
+        }
+
+        return $durum;
+    }
+
+    private function vehiclePassOzetGetir(array $filters = []): array
+    {
+        $today = date('Y-m-d');
+        $todayQuery = $this->vehiclePassQuery(['period' => 'day', 'date' => $today]);
+        $filteredQuery = $this->vehiclePassQuery($filters);
+
+        $bugun = (clone $todayQuery)->count();
+        $sonSaat = (clone $filteredQuery)->where('passed_at', '>=', date('Y-m-d H:i:s', time() - 3600))->count();
+        $tamamlanan = (clone $todayQuery)->where('direction', 'CIKIS')->count();
+        $girisBugun = (clone $todayQuery)->where('direction', 'GIRIS')->count();
+        $avg = $this->parseGuven((clone $filteredQuery)->avg('confidence'));
+
+        return [
+            'bugun_kayit' => $bugun,
+            'son_saat_kayit' => $sonSaat,
+            'aktif_seans' => max(0, $girisBugun - $tamamlanan),
+            'tamamlanan' => $tamamlanan,
+            'ortalama_guven' => $avg !== null ? round($avg, 3) : null,
+            'ortalama_guven_yuzde' => $avg !== null ? (int) round($avg * 100) : null,
+        ];
     }
 
     private function jsonOzetGetir(array $kayitlar): array

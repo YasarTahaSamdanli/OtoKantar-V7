@@ -56,6 +56,17 @@ class CanliController extends Controller
             }
 
             if ($action === 'panel') {
+                if ($this->canliData->vehiclePassHasRecords($filters)) {
+                    try {
+                        $payload = $this->canliData->vehiclePassPanelPayload($limit, $filters);
+                        Cache::put($cacheKey, $payload, $ttlSeconds);
+
+                        return response()->json($payload);
+                    } catch (Throwable $e) {
+                        Log::warning('VehiclePass panel payload kullanilamadi, legacy kaynaklara dusuluyor', ['exception' => $e]);
+                    }
+                }
+
                 try {
                     $pdo = DB::connection('legacy')->getPdo();
                 } catch (Throwable $e) {
@@ -102,6 +113,17 @@ class CanliController extends Controller
                 return response()->json($cached);
             }
 
+            if ($this->canliData->vehiclePassHasRecords()) {
+                try {
+                    $payload = $this->canliData->vehiclePassLiveTickerPayload();
+                    Cache::put($cacheKey, $payload, 1);
+
+                    return response()->json($payload);
+                } catch (Throwable $e) {
+                    Log::warning('VehiclePass live ticker payload kullanilamadi, legacy kaynaklara dusuluyor', ['exception' => $e]);
+                }
+            }
+
             try {
                 $payload = $this->canliData->dbLiveTickerPayload(DB::connection('legacy')->getPdo());
             } catch (Throwable $e) {
@@ -139,6 +161,17 @@ class CanliController extends Controller
                 return response()->json($cached);
             }
 
+            if ($this->canliData->vehiclePassHasRecords($filters)) {
+                try {
+                    $payload = $this->canliData->vehiclePassArchivePayload($page, $perPage, $filters);
+                    Cache::put($cacheKey, $payload, 5);
+
+                    return response()->json($payload);
+                } catch (Throwable $e) {
+                    Log::warning('VehiclePass arsiv payload kullanilamadi, legacy kaynaklara dusuluyor', ['exception' => $e]);
+                }
+            }
+
             try {
                 $payload = $this->canliData->dbArchivePayload(DB::connection('legacy')->getPdo(), $page, $perPage, $filters);
             } catch (Throwable $e) {
@@ -173,20 +206,31 @@ class CanliController extends Controller
         try {
             $filters = $this->recordFilters($request);
 
-            try {
-                $pdo = DB::connection('legacy')->getPdo();
-                $export = $this->canliData->csvIcerikOlustur($pdo, $filters);
-                if (($export['row_count'] ?? 0) === 0) {
-                    $fallback = $this->canliData->csvDosyaIcerikOlustur($this->canliData->legacyPath('kantar_raporu.csv'), $filters);
-                    $export = (($fallback['row_count'] ?? 0) > 0)
-                        ? $fallback
-                        : $this->canliData->jsonCsvIcerikOlustur($filters);
+            if ($this->canliData->vehiclePassHasRecords($filters)) {
+                try {
+                    $export = $this->canliData->vehiclePassCsvIcerikOlustur($filters);
+                } catch (Throwable $e) {
+                    Log::warning('VehiclePass CSV kullanilamadi, legacy kaynaklara dusuluyor', ['exception' => $e]);
+                    $export = null;
                 }
-            } catch (Throwable $e) {
-                Log::warning('Canli CSV icin DB kullanilamadi, dosya fallback deneniyor', ['exception' => $e]);
-                $export = $this->canliData->csvDosyaIcerikOlustur($this->canliData->legacyPath('kantar_raporu.csv'), $filters);
-                if (($export['row_count'] ?? 0) === 0) {
-                    $export = $this->canliData->jsonCsvIcerikOlustur($filters);
+            }
+
+            if (!isset($export) || ($export['row_count'] ?? 0) === 0) {
+                try {
+                    $pdo = DB::connection('legacy')->getPdo();
+                    $export = $this->canliData->csvIcerikOlustur($pdo, $filters);
+                    if (($export['row_count'] ?? 0) === 0) {
+                        $fallback = $this->canliData->csvDosyaIcerikOlustur($this->canliData->legacyPath('kantar_raporu.csv'), $filters);
+                        $export = (($fallback['row_count'] ?? 0) > 0)
+                            ? $fallback
+                            : $this->canliData->jsonCsvIcerikOlustur($filters);
+                    }
+                } catch (Throwable $e) {
+                    Log::warning('Canli CSV icin DB kullanilamadi, dosya fallback deneniyor', ['exception' => $e]);
+                    $export = $this->canliData->csvDosyaIcerikOlustur($this->canliData->legacyPath('kantar_raporu.csv'), $filters);
+                    if (($export['row_count'] ?? 0) === 0) {
+                        $export = $this->canliData->jsonCsvIcerikOlustur($filters);
+                    }
                 }
             }
 
