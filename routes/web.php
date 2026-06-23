@@ -32,6 +32,8 @@ Route::middleware(['auth', 'role:admin,employee'])->group(function () {
 
     Route::get('/canli', [CanliController::class, 'view'])->name('canli.view');
     Route::get('/canli/api', [CanliController::class, 'api'])->middleware('throttle:canli-api')->name('canli.api');
+    Route::get('/canli/live-ticker', [CanliController::class, 'getLiveTicker'])->middleware('throttle:canli-api')->name('canli.live-ticker');
+    Route::get('/canli/archive', [CanliController::class, 'getArchive'])->middleware('throttle:canli-api')->name('canli.archive');
     Route::get('/canli/csv', [CanliController::class, 'csv'])->name('canli.csv');
     Route::get('/canli/kare', [CanliController::class, 'kare'])->middleware('throttle:canli-kare')->name('canli.kare');
 });

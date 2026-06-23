@@ -294,7 +294,8 @@ class KantarKaydedici:
 
     def _json_guncelle(self, son_kayit: PlakaKayit):
         try:
-            self._gecmis_jsonl_ekle(son_kayit)
+            # Gecmis kayitlar artik sadece MySQL'e yaziliyor.
+            # self._gecmis_jsonl_ekle(son_kayit)
             with open(self.json_dosya, "w", encoding="utf-8") as f:
                 json.dump(
                     {
@@ -323,8 +324,8 @@ class KantarKaydedici:
             payload["gecis_zamani"] = event_time
             payload["_event_id"] = f"{kayit.plaka}|{payload['tip']}|{event_time}"
 
-            history_path.parent.mkdir(parents=True, exist_ok=True)
-            with open(history_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
+            # history_path.parent.mkdir(parents=True, exist_ok=True)
+            # with open(history_path, "a", encoding="utf-8") as f:
+            #     f.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
         except Exception as e:
             log.warning("Gecis gecmisi JSONL guncellenemedi: %s", e)

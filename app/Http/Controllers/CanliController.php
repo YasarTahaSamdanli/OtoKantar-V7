@@ -89,6 +89,79 @@ class CanliController extends Controller
         }
     }
 
+    public function getLiveTicker(Request $request)
+    {
+        if ($guard = $this->guardCanliAccess($request)) {
+            return $guard;
+        }
+
+        try {
+            $cacheKey = $this->canliCacheKey($request, 'live-ticker', 5);
+            $cached = Cache::get($cacheKey);
+            if (is_array($cached)) {
+                return response()->json($cached);
+            }
+
+            try {
+                $payload = $this->canliData->dbLiveTickerPayload(DB::connection('legacy')->getPdo());
+            } catch (Throwable $e) {
+                Log::warning('Live ticker icin DB kullanilamadi, JSON-only panel payload kullaniliyor', ['exception' => $e]);
+                $payload = $this->canliData->jsonOnlyPanelPayload(5);
+            }
+
+            Cache::put($cacheKey, $payload, 1);
+
+            return response()->json($payload);
+        } catch (Throwable $e) {
+            Log::error('Canli ticker API hatasi', ['exception' => $e]);
+
+            return response()->json([
+                'hata' => 'Canli ticker verisi okunamadi',
+                'mesaj' => 'Canli veri kaynagi su anda yanit vermiyor.',
+            ], 500);
+        }
+    }
+
+    public function getArchive(Request $request)
+    {
+        if ($guard = $this->guardCanliAccess($request)) {
+            return $guard;
+        }
+
+        $page = max(1, (int) $request->query('page', 1));
+        $perPage = 50;
+        $filters = $this->recordFilters($request);
+
+        try {
+            $cacheKey = $this->canliCacheKey($request, 'archive:'.$page, $perPage);
+            $cached = Cache::get($cacheKey);
+            if (is_array($cached)) {
+                return response()->json($cached);
+            }
+
+            try {
+                $payload = $this->canliData->dbArchivePayload(DB::connection('legacy')->getPdo(), $page, $perPage, $filters);
+            } catch (Throwable $e) {
+                Log::warning('Arsiv icin DB kullanilamadi, JSON-only arsiv payload kullaniliyor', ['exception' => $e]);
+                $payload = $this->canliData->jsonOnlyArchivePayload($page, $perPage, $filters);
+            }
+
+            Cache::put($cacheKey, $payload, 5);
+
+            return response()->json($payload);
+        } catch (Throwable $e) {
+            Log::error('Canli arsiv API hatasi', [
+                'page' => $page,
+                'exception' => $e,
+            ]);
+
+            return response()->json([
+                'hata' => 'Arsiv verisi okunamadi',
+                'mesaj' => 'Kayit arsivi su anda yanit vermiyor.',
+            ], 500);
+        }
+    }
+
     public function csv(Request $request)
     {
         if ($guard = $this->guardCanliAccess($request)) {
@@ -218,6 +291,7 @@ SVG;
             'date' => $this->validDate((string) $request->query('date', date('Y-m-d'))) ?? date('Y-m-d'),
             'month' => $this->validMonth((string) $request->query('month', date('Y-m'))) ?? date('Y-m'),
             'year' => $this->validYear((string) $request->query('year', date('Y'))) ?? date('Y'),
+            'plate' => strtoupper(trim((string) $request->query('plate', $request->query('plaka', '')))),
         ];
     }
 

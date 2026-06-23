@@ -116,6 +116,74 @@ class CanliDataService
         ];
     }
 
+    public function dbLiveTickerPayload(PDO $pdo): array
+    {
+        $jsonIndex = $this->agirlikService->jsonAgirlikIndexiGetir($this->legacyPath('canli_durum.json'));
+        $csvIndex = $this->agirlikService->csvAgirlikIndexiGetir($this->legacyPath('kantar_raporu.csv'));
+        $kayitlar = $this->dbKayitlariGetir($pdo, 5, $jsonIndex, $csvIndex);
+        $durum = $this->durumOkuVeyaFallback($pdo);
+
+        return [
+            'durum' => $durum,
+            'toplam' => count($kayitlar),
+            'limit' => 5,
+            'kayitlar' => $kayitlar,
+            'ozet' => $this->dbOzetGetir($pdo),
+            '_sunucu_zaman' => date('Y-m-d\TH:i:s'),
+        ];
+    }
+
+    public function dbArchivePayload(PDO $pdo, int $page, int $perPage, array $filters = []): array
+    {
+        $page = max(1, $page);
+        $perPage = max(1, min(100, $perPage));
+        $total = $this->dbKayitSayisi($pdo, $filters);
+        $lastPage = max(1, (int) ceil($total / $perPage));
+        $page = min($page, $lastPage);
+        $jsonIndex = $this->agirlikService->jsonAgirlikIndexiGetir($this->legacyPath('canli_durum.json'));
+        $csvIndex = $this->agirlikService->csvAgirlikIndexiGetir($this->legacyPath('kantar_raporu.csv'));
+        $kayitlar = $this->dbKayitlariGetir($pdo, $perPage, $jsonIndex, $csvIndex, $filters, ($page - 1) * $perPage);
+
+        return [
+            'kayitlar' => $kayitlar,
+            'toplam' => $total,
+            'limit' => $perPage,
+            'filtre' => $this->normalizeFilters($filters),
+            'pagination' => [
+                'current_page' => $page,
+                'per_page' => $perPage,
+                'total' => $total,
+                'last_page' => $lastPage,
+            ],
+            '_sunucu_zaman' => date('Y-m-d\TH:i:s'),
+        ];
+    }
+
+    public function jsonOnlyArchivePayload(int $page, int $perPage, array $filters = []): array
+    {
+        $page = max(1, $page);
+        $perPage = max(1, min(100, $perPage));
+        $history = $this->historyKayitlariVeToplam(PHP_INT_MAX, $filters);
+        $total = (int) $history['toplam'];
+        $lastPage = max(1, (int) ceil($total / $perPage));
+        $page = min($page, $lastPage);
+
+        return [
+            'kayitlar' => array_slice($history['kayitlar'], ($page - 1) * $perPage, $perPage),
+            'toplam' => $total,
+            'limit' => $perPage,
+            'filtre' => $this->normalizeFilters($filters),
+            'pagination' => [
+                'current_page' => $page,
+                'per_page' => $perPage,
+                'total' => $total,
+                'last_page' => $lastPage,
+            ],
+            '_sunucu_zaman' => date('Y-m-d\TH:i:s'),
+            '_demo_modu' => true,
+        ];
+    }
+
     public function csvIcerikOlustur(PDO $pdo, array $filters = []): array
     {
         [$where, $params] = $this->dateWhereSql($filters, 'g');
@@ -510,7 +578,7 @@ class CanliDataService
         return max(0.0, min(1.0, $num));
     }
 
-    private function dbKayitlariGetir(PDO $pdo, int $limit, array $agirlikIndex = [], array $csvAgirlikIndex = [], array $filters = []): array
+    private function dbKayitlariGetir(PDO $pdo, int $limit, array $agirlikIndex = [], array $csvAgirlikIndex = [], array $filters = [], int $offset = 0): array
     {
         [$where, $params] = $this->dateWhereSql($filters, 'g');
         $stmt = $pdo->prepare(
@@ -519,10 +587,11 @@ class CanliDataService
              INNER JOIN araclar a ON a.id = g.id
              {$where}
              ORDER BY g.gecis_zamani DESC
-             LIMIT :limit"
+             LIMIT :limit OFFSET :offset"
         );
         $this->bindDateParams($stmt, $params);
         $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
+        $stmt->bindValue(':offset', max(0, $offset), PDO::PARAM_INT);
         $stmt->execute();
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
@@ -562,7 +631,12 @@ class CanliDataService
     private function dbKayitSayisi(PDO $pdo, array $filters = []): int
     {
         [$where, $params] = $this->dateWhereSql($filters, 'g');
-        $stmt = $pdo->prepare("SELECT COUNT(*) FROM gecisler g {$where}");
+        $stmt = $pdo->prepare(
+            "SELECT COUNT(*)
+             FROM gecisler g
+             INNER JOIN araclar a ON a.id = g.id
+             {$where}"
+        );
         $this->bindDateParams($stmt, $params);
         $stmt->execute();
 
@@ -587,6 +661,7 @@ class CanliDataService
             'year' => preg_match('/^\d{4}$/', (string) ($filters['year'] ?? '')) === 1
                 ? (string) $filters['year']
                 : date('Y'),
+            'plate' => strtoupper(trim((string) ($filters['plate'] ?? $filters['plaka'] ?? ''))),
         ];
     }
 
@@ -595,12 +670,26 @@ class CanliDataService
         $filters = $this->normalizeFilters($filters);
         $column = $alias.'.gecis_zamani';
 
-        return match ($filters['period']) {
-            'day' => ["WHERE DATE({$column}) = :filter_date", ['filter_date' => $filters['date']]],
-            'month' => ["WHERE DATE_FORMAT({$column}, '%Y-%m') = :filter_month", ['filter_month' => $filters['month']]],
-            'year' => ["WHERE YEAR({$column}) = :filter_year", ['filter_year' => (int) $filters['year']]],
+        [$dateSql, $params] = match ($filters['period']) {
+            'day' => ["DATE({$column}) = :filter_date", ['filter_date' => $filters['date']]],
+            'month' => ["DATE_FORMAT({$column}, '%Y-%m') = :filter_month", ['filter_month' => $filters['month']]],
+            'year' => ["YEAR({$column}) = :filter_year", ['filter_year' => (int) $filters['year']]],
             default => ['', []],
         };
+
+        $conditions = [];
+        if ($dateSql !== '') {
+            $conditions[] = $dateSql;
+        }
+        if ($filters['plate'] !== '') {
+            $conditions[] = 'UPPER(a.plaka) LIKE :filter_plate';
+            $params['filter_plate'] = '%'.$filters['plate'].'%';
+        }
+
+        return [
+            $conditions === [] ? '' : 'WHERE '.implode(' AND ', $conditions),
+            $params,
+        ];
     }
 
     private function bindDateParams(\PDOStatement $stmt, array $params): void
@@ -625,6 +714,9 @@ class CanliDataService
     private function csvSatiriFiltreyeUyar(array $row, array $filters): bool
     {
         $filters = $this->normalizeFilters($filters);
+        if ($filters['plate'] !== '' && !str_contains(strtoupper((string) ($row['Plaka'] ?? $row['plaka'] ?? '')), $filters['plate'])) {
+            return false;
+        }
         if ($filters['period'] === 'all') {
             return true;
         }
@@ -645,6 +737,9 @@ class CanliDataService
     private function kayitFiltreyeUyar(array $row, array $filters): bool
     {
         $filters = $this->normalizeFilters($filters);
+        if ($filters['plate'] !== '' && !str_contains(strtoupper((string) ($row['plaka'] ?? '')), $filters['plate'])) {
+            return false;
+        }
         if ($filters['period'] === 'all') {
             return true;
         }

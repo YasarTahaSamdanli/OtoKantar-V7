@@ -40,7 +40,7 @@
         <div class="grow">
             <div class="eyebrow">Anlik kantar</div>
             <div class="weight" id="kg">--</div>
-            <div class="metric-s status-text" id="kg-status">Agirlik verisi bekleniyor (/canli/api)</div>
+            <div class="metric-s status-text" id="kg-status">Agirlik verisi bekleniyor (/canli/live-ticker)</div>
             <div class="bar"><span id="stale-bar"></span></div>
         </div>
         <div class="hero-grid">
@@ -120,6 +120,10 @@
                     <span>Yil</span>
                     <input id="filter-year" type="number" min="2000" max="2100" step="1" value="{{ date('Y') }}">
                 </label>
+                <label class="field">
+                    <span>Plaka</span>
+                    <input id="filter-plate" type="search" placeholder="Tum plakalar">
+                </label>
                 <button class="btn compact" id="apply-record-filter" type="button">Uygula</button>
                 @if (Auth::user()->isAdmin())
                     <a class="btn compact primary" href="{{ route('canli.csv') }}" id="records-csv">CSV indir</a>
@@ -129,6 +133,7 @@
         <div class="records-list" id="records-list">
             <div class="empty-row">Henuz kayit yok. Sistem dosya akisina baglanmayi bekliyor.</div>
         </div>
+        <div class="pagination" id="records-pagination"></div>
     </section>
 </main>
 
@@ -145,6 +150,9 @@ const Config = {
 
 const State = {
   records: [],
+  archivePage: 1,
+  pagination: { current_page: 1, per_page: 50, total: 0, last_page: 1 },
+  activeTab: 'genel',
   bars: new Array(Config.chartHours).fill(0),
   total: 0,
   lastSignature: '',
@@ -160,6 +168,7 @@ const State = {
     date: @json(date('Y-m-d')),
     month: @json(date('Y-m')),
     year: @json(date('Y')),
+    plate: '',
   },
 };
 
@@ -300,12 +309,34 @@ const UI = {
     Utils.el('table-count').textContent = `${State.total} kayit`;
     if (!State.records.length) {
       Utils.el('records-list').innerHTML = this.emptyTableRow();
+      this.drawPagination();
       return;
     }
     Utils.el('records-list').innerHTML = State.records
       .slice(0, Config.tableLimit)
       .map((record) => this.renderRecordRow(record))
       .join('');
+    this.drawPagination();
+  },
+  drawPagination() {
+    const box = Utils.el('records-pagination');
+    if (!box) return;
+    const meta = State.pagination || {};
+    const last = Math.max(1, Number(meta.last_page || 1));
+    const current = Math.max(1, Number(meta.current_page || 1));
+    if (last <= 1) {
+      box.innerHTML = '';
+      return;
+    }
+    const pages = [];
+    for (let i = 1; i <= last; i += 1) {
+      if (i === 1 || i === last || Math.abs(i - current) <= 2) {
+        pages.push(`<button class="page-btn${i === current ? ' active' : ''}" type="button" data-page="${i}">${i}</button>`);
+      } else if (pages[pages.length - 1] !== '<span class="page-gap">...</span>') {
+        pages.push('<span class="page-gap">...</span>');
+      }
+    }
+    box.innerHTML = pages.join('');
   },
   drawChart() {
     const max = Math.max(...State.bars, 1);
@@ -392,7 +423,7 @@ const Panel = {
     const next = this.detectState(durum);
     if (next === State.status) return;
     UI.setStatus(next);
-    if (next === 'live') UI.log('info', 'Canli veri akisi kuruldu: /canli/api');
+    if (next === 'live') UI.log('info', 'Canli veri akisi kuruldu: /canli/live-ticker');
     else if (next === 'stale') UI.log('warn', 'Canli dosya akisi yavasladi');
     else if (next === 'offline' && !State.demoOn) UI.log('warn', 'Canli veri yok, dosya akisi bekleniyor');
     else if (next === 'demo') UI.log('info', 'Demo modu aktif');
@@ -454,17 +485,23 @@ const Panel = {
 };
 
 const Api = {
-  panelUrl() {
+  liveTickerUrl() {
     const params = new URLSearchParams({
-      action: 'panel',
-      limit: String(Config.tableLimit),
+      t: String(Date.now()),
+    });
+    return `/canli/live-ticker?${params.toString()}`;
+  },
+  archiveUrl(page = State.archivePage) {
+    const params = new URLSearchParams({
       period: State.filters.period,
       date: State.filters.date,
       month: State.filters.month,
       year: State.filters.year,
+      plate: State.filters.plate,
+      page: String(page),
       t: String(Date.now()),
     });
-    return `/canli/api?${params.toString()}`;
+    return `/canli/archive?${params.toString()}`;
   },
   durumUrl() {
     const params = new URLSearchParams({
@@ -479,13 +516,14 @@ const Api = {
       date: State.filters.date,
       month: State.filters.month,
       year: State.filters.year,
+      plate: State.filters.plate,
     });
     return `/canli/csv?${params.toString()}`;
   },
   async poll() {
     if (State.demoOn) return;
     try {
-      const r = await fetch(this.panelUrl(), { cache: 'no-store' });
+      const r = await fetch(this.liveTickerUrl(), { cache: 'no-store' });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const payload = await r.json();
       if (payload?.hata) throw new Error(payload.hata);
@@ -493,9 +531,33 @@ const Api = {
     } catch (e) {
       if (State.status !== 'offline') {
         UI.setStatus('offline');
-        UI.log('warn', 'Canli veri okunamadi, /canli/api bekleniyor');
+        UI.log('warn', 'Canli veri okunamadi, /canli/live-ticker bekleniyor');
       }
       Utils.el('kg-status').textContent = 'Panel baglantisi bekleniyor. MySQL veya durum kaynagi yanit vermiyor.';
+    }
+  },
+  async loadArchive(page = 1) {
+    State.archivePage = Math.max(1, Number(page) || 1);
+    try {
+      const r = await fetch(this.archiveUrl(State.archivePage), { cache: 'no-store' });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const payload = await r.json();
+      if (payload?.hata) throw new Error(payload.hata);
+      State.records = Array.isArray(payload?.kayitlar) ? payload.kayitlar.map((record) => Utils.normalizeRecord(record)) : [];
+      State.total = Number(payload?.toplam ?? State.records.length);
+      State.pagination = payload?.pagination || {
+        current_page: State.archivePage,
+        per_page: 50,
+        total: State.total,
+        last_page: 1,
+      };
+      Store.calcBars();
+      UI.drawTable();
+      UI.drawChart();
+    } catch (e) {
+      UI.log('warn', 'Kayit arsivi okunamadi');
+      Utils.el('records-list').innerHTML = '<div class="empty-row">Kayit arsivi su anda okunamiyor.</div>';
+      Utils.el('records-pagination').innerHTML = '';
     }
   },
   async checkEvent() {
@@ -606,17 +668,34 @@ const Demo = {
     UI.resetPlate();
     UI.log('warn', 'Demo modu durduruldu, canli dosya akisina donuluyor');
     Api.poll();
-    State.intervals.event = setInterval(() => Api.checkEvent(), Config.eventCheckMs);
+    App.startLivePolling();
   },
 };
 
 const App = {
+  startLivePolling() {
+    if (State.demoOn || State.activeTab === 'kayitlar') return;
+    clearInterval(State.intervals.event);
+    Api.poll();
+    State.intervals.event = setInterval(() => Api.poll(), Config.eventCheckMs);
+  },
+  stopLivePolling() {
+    clearInterval(State.intervals.event);
+    State.intervals.event = null;
+  },
   bindTabs() {
     const buttons = Array.from(document.querySelectorAll('[data-tab]'));
     const panels = Array.from(document.querySelectorAll('[data-panel]'));
     const activate = (tab) => {
+      State.activeTab = tab;
       buttons.forEach((btn) => btn.classList.toggle('active', btn.dataset.tab === tab));
       panels.forEach((panel) => panel.classList.toggle('active', panel.dataset.panel === tab));
+      if (tab === 'kayitlar') {
+        this.stopLivePolling();
+        Api.loadArchive(State.archivePage);
+      } else {
+        this.startLivePolling();
+      }
     };
     buttons.forEach((btn) => btn.addEventListener('click', () => activate(btn.dataset.tab)));
     activate('genel');
@@ -647,19 +726,24 @@ const App = {
     }
     Utils.el('apply-record-filter').addEventListener('click', () => {
       this.syncRecordFilters();
-      Api.poll();
+      Api.loadArchive(1);
       UI.log('info', 'Kayit filtresi guncellendi');
     });
     Utils.el('period').addEventListener('change', () => {
       this.syncRecordFilters();
       this.updateFilterFields();
-      Api.poll();
+      Api.loadArchive(1);
     });
-    ['filter-date', 'filter-month', 'filter-year'].forEach((id) => {
+    ['filter-date', 'filter-month', 'filter-year', 'filter-plate'].forEach((id) => {
       Utils.el(id).addEventListener('change', () => {
         this.syncRecordFilters();
-        Api.poll();
+        Api.loadArchive(1);
       });
+    });
+    Utils.el('records-pagination').addEventListener('click', (event) => {
+      const btn = event.target.closest('[data-page]');
+      if (!btn) return;
+      Api.loadArchive(Number(btn.dataset.page || 1));
     });
   },
   syncRecordFilters() {
@@ -667,6 +751,7 @@ const App = {
     State.filters.date = Utils.el('filter-date').value || State.filters.date;
     State.filters.month = Utils.el('filter-month').value || State.filters.month;
     State.filters.year = Utils.el('filter-year').value || State.filters.year;
+    State.filters.plate = Utils.el('filter-plate').value.trim();
     const url = Api.csvUrl();
     const csv = Utils.el('csv');
     const recordsCsv = Utils.el('records-csv');
@@ -697,10 +782,8 @@ const App = {
     UI.drawChart();
     UI.setStatus('offline');
     UI.log('info', 'OtoKantar paneli yuklendi');
-    UI.log('info', 'Kaynak: MySQL + /canli/api + /canli/kare');
+    UI.log('info', 'Kaynak: MySQL + /canli/live-ticker + /canli/archive + /canli/kare');
     UI.refreshCam();
-    Api.poll();
-    State.intervals.event = setInterval(() => Api.checkEvent(), Config.eventCheckMs);
   },
 };
 
