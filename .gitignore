@@ -1,4 +1,7 @@
 *.log
+*.py[cod]
+*$py.class
+__pycache__/
 .DS_Store
 .env
 .env.backup
@@ -37,6 +40,8 @@
 /legacy/canli_kare.jpg
 /legacy/otokantar.log
 /legacy/kantar_raporu.csv
+/legacy/**/__pycache__/
+/legacy/**/*.pyc
 /legacy_python/canli_durum.json
 /legacy_python/canli_kare.jpg
 /legacy_python/*.event.*.jpg
