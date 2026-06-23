@@ -31,12 +31,11 @@
 
 <div class="view-switch">
     <x-panel.tab-button tab="genel" active>Genel</x-panel.tab-button>
-    <x-panel.tab-button tab="canli">Canli</x-panel.tab-button>
     <x-panel.tab-button tab="kayitlar">Kayitlar</x-panel.tab-button>
 </div>
 
 <main class="tab-panel active" data-panel="genel">
-    <section class="card hero">
+    <section class="card hero span2">
         <div class="grow">
             <div class="eyebrow">Anlik kantar</div>
             <div class="weight" id="kg">--</div>
@@ -45,25 +44,18 @@
         </div>
         <div class="hero-grid">
             <x-panel.hero-stat title="Plaka tampon" value-id="buffer" />
-            <x-panel.hero-stat title="Canli veri yasi" value-id="fresh" subtitle="guncelleme bekleniyor" subtitle-id="fresh-sub" />
+            <x-panel.hero-stat title="Veri yasi" value-id="fresh" subtitle="guncelleme bekleniyor" subtitle-id="fresh-sub" />
         </div>
     </section>
 
-    <x-panel.metric-card title="Bugun kayit" value-id="m1" value-class="acc" subtitle="MySQL tabanli gunluk toplam" subtitle-id="m1s" />
-    <x-panel.metric-card title="Aktif seans" value-id="m2" subtitle="tamamlanan seans: 0" subtitle-id="m2s" />
-    <x-panel.metric-card title="Ortalama guven" value="--" value-id="m3" value-class="warn" subtitle="% OCR skoru" />
-    <x-panel.metric-card title="Son 1 saat" value-id="m4" subtitle="kayit hareketi" />
-</main>
-
-<main class="tab-panel" data-panel="canli">
     <section class="card span2">
-        <x-panel.card-head title="Canli kare" badge="/canli/kare" />
+        <x-panel.card-head title="Arac goruntusu" badge="canli" />
         <img class="frame" id="cam" src="" alt="Canli kare">
         <div class="note" id="cam-note">Kamera karesi bekleniyor...</div>
     </section>
 
     <section class="card span2">
-        <x-panel.card-head title="Aktif tespit" badge="dogrulama" />
+        <x-panel.card-head title="Okunan plaka" badge="aktif" />
         <div class="plate" id="plate"><b class="empty">BEKLENIYOR</b></div>
         <div class="track"><div class="seg" id="vd1"></div><div class="seg" id="vd2"></div><div class="seg" id="vd3"></div><div class="seg" id="vd4"></div></div>
         <div class="verify" id="verify">Dogrulama bekleniyor</div>
@@ -76,25 +68,13 @@
         </div>
     </section>
 
-    <section class="card span2">
-        <x-panel.card-head title="Panel olay akisi" badge="0 satir" badge-id="log-count" />
-        <div class="log" id="log"></div>
-    </section>
+    <x-panel.metric-card title="Icerdeki arac sayisi" value-id="m2" value-class="acc" subtitle="cikisi bekleyen arac" subtitle-id="m2s" />
+    <x-panel.metric-card title="Bugun kayit" value-id="m1" subtitle="gunluk toplam" subtitle-id="m1s" />
+    <x-panel.metric-card title="Son 1 saat" value-id="m4" value-class="warn" subtitle="kayit hareketi" />
+    <x-panel.metric-card title="Tamamlanan" value-id="m3" subtitle="bugunku cikis" />
 </main>
 
 <main class="tab-panel" data-panel="kayitlar">
-    <section class="card span2">
-        <x-panel.card-head title="Sistem bilgisi" badge="uretim paneli" />
-        <div class="info-grid">
-            <x-panel.info-item label="AI yigin" value="YOLOv8 + OCR" value-id="ai" />
-            <x-panel.info-item label="Calisma modu" value="Bekleniyor" value-id="mode" />
-            <x-panel.info-item label="Esik" value="4 / canli durum dosyasi" value-id="esik" />
-            <x-panel.info-item label="Rapor" value="MySQL / otokantar" />
-            <x-panel.info-item label="OCR kare atlama" value="Dinamik" value-id="ocr" />
-            <x-panel.info-item label="Mimari" value="MySQL + JSON + JPG" value-id="arch" />
-        </div>
-        <div class="mini-chart" id="chart"></div>
-    </section>
     <section class="card span4">
         <div class="records-head">
             <x-panel.card-head title="Kayitlar" badge="0 kayit" badge-id="table-count" />
@@ -248,13 +228,15 @@ const Utils = {
 const UI = {
   log(level, message) {
     const box = Utils.el('log');
+    if (!box) return;
     const row = document.createElement('div');
     row.className = 'row';
     row.innerHTML = `<span class="time">${Utils.now()}</span><span class="${Utils.escapeHtml(level)}">${Utils.escapeHtml(level.toUpperCase())}</span><span class="msg">${Utils.escapeHtml(message)}</span>`;
     box.appendChild(row);
     while (box.children.length > Config.maxLog) box.removeChild(box.firstChild);
     box.scrollTop = box.scrollHeight;
-    Utils.el('log-count').textContent = `${box.children.length} satir`;
+    const count = Utils.el('log-count');
+    if (count) count.textContent = `${box.children.length} satir`;
   },
   setStatus(next) {
     State.status = next;
@@ -369,26 +351,32 @@ const UI = {
     box.innerHTML = pages.join('');
   },
   drawChart() {
+    const chart = Utils.el('chart');
+    if (!chart) return;
     const max = Math.max(...State.bars, 1);
     const hour = new Date().getHours();
-    Utils.el('chart').innerHTML = State.bars
+    chart.innerHTML = State.bars
       .map((value, index) => this.renderChartColumn(value, index, max, hour))
       .join('');
   },
   setInfo(durum) {
     const s = durum?.sistem || {};
     const fallback = s.ocr_fallback ? ` / ${s.ocr_fallback}` : '';
-    Utils.el('ai').textContent = `YOLOv8 + ${s.ocr_backend || 'OCR'}${fallback}`;
-    Utils.el('mode').textContent = s.simulasyon_modu ? 'SIMULASYON' : 'CANLI';
-    Utils.el('ocr').textContent = s.ocr_kare_atlama ? `Her ${s.ocr_kare_atlama}. kare` : 'Dinamik';
-    Utils.el('arch').textContent = s?.mimari || 'MySQL + JSON + JPG';
+    const ai = Utils.el('ai');
+    const mode = Utils.el('mode');
+    const ocr = Utils.el('ocr');
+    const arch = Utils.el('arch');
+    if (ai) ai.textContent = `YOLOv8 + ${s.ocr_backend || 'OCR'}${fallback}`;
+    if (mode) mode.textContent = s.simulasyon_modu ? 'SIMULASYON' : 'CANLI';
+    if (ocr) ocr.textContent = s.ocr_kare_atlama ? `Her ${s.ocr_kare_atlama}. kare` : 'Dinamik';
+    if (arch) arch.textContent = s?.mimari || 'MySQL + JSON + JPG';
   },
   setMetrics(summary, durum) {
     Utils.el('m1').textContent = String(Number(summary?.bugun_kayit ?? 0));
     Utils.el('m1s').textContent = `${Number(summary?.son_saat_kayit ?? 0)} kayit son 1 saatte`;
     Utils.el('m2').textContent = String(Number(summary?.aktif_seans ?? 0));
-    Utils.el('m2s').textContent = `tamamlanan seans: ${Number(summary?.tamamlanan ?? 0)}`;
-    Utils.el('m3').textContent = Utils.toNum(summary?.ortalama_guven_yuzde) === null ? '--' : `%${Number(summary.ortalama_guven_yuzde)}`;
+    Utils.el('m2s').textContent = 'cikisi bekleyen arac';
+    Utils.el('m3').textContent = String(Number(summary?.tamamlanan ?? 0));
     Utils.el('m4').textContent = String(Number(summary?.son_saat_kayit ?? 0));
     this.updateFresh(durum?._durum_yasi_saniye ?? null);
   },
