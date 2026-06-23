@@ -728,7 +728,7 @@ class CanliDataService
         $todayCount = 0;
         $lastHourCount = 0;
         $completed = 0;
-        $active = 0;
+        $latestByPlate = [];
         $guven = [];
 
         foreach ($kayitlar as $row) {
@@ -736,10 +736,9 @@ class CanliDataService
                 continue;
             }
 
-            $date = (string) ($row['giris_tarih'] ?? $row['tarih'] ?? $row['cikis_tarih'] ?? '');
-            $time = (string) ($row['giris_saat'] ?? $row['saat'] ?? $row['cikis_saat'] ?? '');
-            $ts = strtotime(trim($date.' '.$time));
-            $tip = strtoupper((string) ($row['durum'] ?? $row['tip'] ?? ''));
+            $date = $this->kayitTarihi($row);
+            $ts = $this->kayitTimestamp($row);
+            $tip = $this->kayitTipi($row);
 
             if ($date === $today) {
                 $todayCount++;
@@ -747,10 +746,13 @@ class CanliDataService
             if ($ts !== false && $ts >= $oneHourAgo) {
                 $lastHourCount++;
             }
-            if ($tip === 'TAMAMLANDI' || $tip === 'CIKIS') {
+            if ($tip === 'CIKIS') {
                 $completed++;
-            } else {
-                $active++;
+            }
+
+            $plate = strtoupper(trim((string) ($row['plaka'] ?? '')));
+            if ($plate !== '' && $ts !== false && (!isset($latestByPlate[$plate]) || $ts > $latestByPlate[$plate]['ts'])) {
+                $latestByPlate[$plate] = ['ts' => $ts, 'tip' => $tip];
             }
 
             $parsedGuven = $this->parseGuven($row['guven'] ?? null);
@@ -760,6 +762,7 @@ class CanliDataService
         }
 
         $avg = $guven !== [] ? array_sum($guven) / count($guven) : null;
+        $active = count(array_filter($latestByPlate, fn (array $row): bool => $row['tip'] === 'GIRIS'));
 
         return [
             'bugun_kayit' => $todayCount,
@@ -990,11 +993,13 @@ class CanliDataService
 
     private function csvSatirTarihi(array $row): ?string
     {
-        $value = $row['Tarih']
-            ?? $row['GirisTarih']
-            ?? $row['CikisTarih']
-            ?? $row['GecisZamani']
-            ?? null;
+        $tip = $this->kayitTipi([
+            'tip' => $row['Tip'] ?? null,
+            'durum' => $row['Durum'] ?? $row['Yon'] ?? null,
+        ]);
+        $value = $tip === 'CIKIS'
+            ? ($row['CikisTarih'] ?? $row['Tarih'] ?? $row['GecisZamani'] ?? $row['GirisTarih'] ?? null)
+            : ($row['GirisTarih'] ?? $row['Tarih'] ?? $row['GecisZamani'] ?? $row['CikisTarih'] ?? null);
 
         if ($value === null || trim((string) $value) === '') {
             return null;
@@ -1098,12 +1103,35 @@ class CanliDataService
                 'plaka' => (string) ($son['plaka'] ?? ''),
                 'durum' => $tip,
                 'tip' => $tip,
-                'giris_tarih' => $ts ? date('Y-m-d', $ts) : '',
-                'giris_saat' => $ts ? date('H:i:s', $ts) : '',
+                'giris_tarih' => $tip === 'GIRIS' && $ts ? date('Y-m-d', $ts) : '',
+                'giris_saat' => $tip === 'GIRIS' && $ts ? date('H:i:s', $ts) : '',
+                'cikis_tarih' => $tip === 'CIKIS' && $ts ? date('Y-m-d', $ts) : '',
+                'cikis_saat' => $tip === 'CIKIS' && $ts ? date('H:i:s', $ts) : '',
                 'guven' => $this->parseGuven($son['guven'] ?? null),
+                'gecis_zamani' => $ts ? date('Y-m-d H:i:s', $ts) : null,
             ];
         }
 
         return $durum;
+    }
+
+    private function kayitTimestamp(array $row): int|false
+    {
+        if (!empty($row['gecis_zamani'])) {
+            $timestamp = strtotime((string) $row['gecis_zamani']);
+            if ($timestamp !== false) {
+                return $timestamp;
+            }
+        }
+
+        $tip = $this->kayitTipi($row);
+        $date = $tip === 'CIKIS'
+            ? (string) ($row['cikis_tarih'] ?? $row['tarih'] ?? $row['giris_tarih'] ?? '')
+            : (string) ($row['giris_tarih'] ?? $row['tarih'] ?? $row['cikis_tarih'] ?? '');
+        $time = $tip === 'CIKIS'
+            ? (string) ($row['cikis_saat'] ?? $row['saat'] ?? $row['giris_saat'] ?? '')
+            : (string) ($row['giris_saat'] ?? $row['saat'] ?? $row['cikis_saat'] ?? '');
+
+        return strtotime(trim($date.' '.$time));
     }
 }

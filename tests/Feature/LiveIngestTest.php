@@ -133,6 +133,77 @@ class LiveIngestTest extends TestCase
         $this->assertSame(30000.0, $payload['kayitlar'][0]['net_agirlik']);
     }
 
+    public function test_json_summary_uses_exit_time_and_latest_plate_state(): void
+    {
+        $today = date('Y-m-d');
+        $yesterday = date('Y-m-d', strtotime($today.' -1 day'));
+        $runtimePath = storage_path('framework/testing/live-ingest/'.__FUNCTION__);
+
+        config([
+            'services.legacy_runtime.path' => $runtimePath,
+        ]);
+
+        File::ensureDirectoryExists($runtimePath);
+        File::put($runtimePath.DIRECTORY_SEPARATOR.'canli_durum.json', json_encode([
+            'son_guncelleme' => $today.'T12:00:00',
+            'son_10' => [],
+        ]));
+        File::put($runtimePath.DIRECTORY_SEPARATOR.'gecis_gecmisi.jsonl', implode(PHP_EOL, [
+            json_encode([
+                'plaka' => '34SUM001',
+                'durum' => 'GIRIS',
+                'tip' => 'GIRIS',
+                'giris_tarih' => $yesterday,
+                'giris_saat' => '10:00:00',
+                'giris_agirlik' => 42000,
+                'guven' => 0.9,
+                'gecis_zamani' => $yesterday.' 10:00:00',
+                '_event_id' => 'summary-entry',
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+            json_encode([
+                'plaka' => '34SUM001',
+                'durum' => 'CIKIS',
+                'tip' => 'CIKIS',
+                'giris_tarih' => $yesterday,
+                'giris_saat' => '10:00:00',
+                'giris_agirlik' => 42000,
+                'cikis_tarih' => $today,
+                'cikis_saat' => '11:00:00',
+                'cikis_agirlik' => 12000,
+                'net_agirlik' => 30000,
+                'guven' => 0.95,
+                'gecis_zamani' => $today.' 11:00:00',
+                '_event_id' => 'summary-exit',
+            ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES),
+        ]).PHP_EOL);
+
+        $payload = $this->app->make(CanliDataService::class)->jsonOnlyPanelPayload(200);
+
+        $this->assertSame(1, $payload['ozet']['bugun_kayit']);
+        $this->assertSame(0, $payload['ozet']['aktif_seans']);
+        $this->assertSame(1, $payload['ozet']['tamamlanan']);
+    }
+
+    public function test_csv_file_export_filters_completed_rows_by_exit_date(): void
+    {
+        $runtimePath = storage_path('framework/testing/live-ingest/'.__FUNCTION__);
+        $csvPath = $runtimePath.DIRECTORY_SEPARATOR.'kantar_raporu.csv';
+
+        File::ensureDirectoryExists($runtimePath);
+        File::put($csvPath, implode(PHP_EOL, [
+            'Plaka;Durum;GirisTarih;GirisSaat;GirisAgirlik(kg);CikisTarih;CikisSaat;CikisAgirlik(kg);NetAgirlik(kg);Guven;Operator;FirmaAdi;SoforAdi;SoforTel;MalzemeCinsi;IrsaliyeNo',
+            '34CSV999;TAMAMLANDI;2026-06-22;23:55:00;42000;2026-06-23;00:10:00;12000;30000;0.95;AUTO;;;;;',
+        ]).PHP_EOL);
+
+        $export = $this->app->make(CanliDataService::class)->csvDosyaIcerikOlustur($csvPath, [
+            'period' => 'day',
+            'date' => '2026-06-23',
+        ]);
+
+        $this->assertSame(1, $export['row_count']);
+        $this->assertStringContainsString('34CSV999', $export['content']);
+    }
+
     public function test_live_ingest_ignores_non_event_image_when_status_json_exists(): void
     {
         $runtimePath = storage_path('framework/testing/live-ingest/'.__FUNCTION__);

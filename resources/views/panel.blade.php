@@ -186,10 +186,29 @@ const Utils = {
       .replaceAll("'", '&#39;');
   },
   recordTs(record) {
+    if (record.gecis_zamani) {
+      const direct = Date.parse(String(record.gecis_zamani).replace(' ', 'T'));
+      if (Number.isFinite(direct)) return direct;
+    }
     const date = record.tip === 'CIKIS' && record.cikis_tarih ? record.cikis_tarih : record.giris_tarih;
     const time = record.tip === 'CIKIS' && record.cikis_saat ? record.cikis_saat : record.giris_saat;
     const v = Date.parse(`${date || ''}T${time || ''}`);
     return Number.isFinite(v) ? v : null;
+  },
+  splitDateTime(value) {
+    const parsed = Date.parse(String(value || '').replace(' ', 'T'));
+    if (!Number.isFinite(parsed)) return { date: '', time: '' };
+    const d = new Date(parsed);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    return {
+      date: `${y}-${m}-${day}`,
+      time: `${hh}:${mm}:${ss}`,
+    };
   },
   normalizeRecord(record = {}) {
     const raw = String(record.durum || record.tip || 'ICERIDE').toUpperCase();
@@ -198,21 +217,32 @@ const Utils = {
       : raw.includes('KARA') || raw.includes('ALARM')
         ? 'ALARM'
         : 'GIRIS';
+    const fallback = this.splitDateTime(record.gecis_zamani);
+    const girisTarih = String(record.giris_tarih || record.tarih || (tip === 'GIRIS' ? fallback.date : '') || '').trim();
+    const girisSaat = String(record.giris_saat || record.saat || (tip === 'GIRIS' ? fallback.time : '') || '').trim();
+    const cikisTarih = String(record.cikis_tarih || (tip === 'CIKIS' ? (record.tarih || fallback.date) : '') || '').trim();
+    const cikisSaat = String(record.cikis_saat || (tip === 'CIKIS' ? (record.saat || fallback.time) : '') || '').trim();
     return {
       plaka: String(record.plaka || '').trim(),
       tip,
       durum: raw,
-      giris_tarih: String(record.giris_tarih || record.tarih || '').trim(),
-      giris_saat: String(record.giris_saat || record.saat || '').trim(),
+      giris_tarih: girisTarih,
+      giris_saat: girisSaat,
       giris_agirlik: this.toNum(record.giris_agirlik),
-      cikis_tarih: String(record.cikis_tarih || '').trim(),
-      cikis_saat: String(record.cikis_saat || '').trim(),
+      cikis_tarih: cikisTarih,
+      cikis_saat: cikisSaat,
       cikis_agirlik: this.toNum(record.cikis_agirlik),
       net_agirlik: this.toNum(record.net_agirlik),
       guven: this.toNum(record.guven) || 0,
+      gecis_zamani: String(record.gecis_zamani || '').trim(),
     };
   },
-  recordStamp(record) { if (!record || !record.plaka) return ''; return [record.plaka, record.giris_tarih, record.giris_saat, record.tip].join('|'); },
+  recordStamp(record) {
+    if (!record || !record.plaka) return '';
+    const date = record.tip === 'CIKIS' && record.cikis_tarih ? record.cikis_tarih : record.giris_tarih;
+    const time = record.tip === 'CIKIS' && record.cikis_saat ? record.cikis_saat : record.giris_saat;
+    return [record.plaka, record.tip, date, time, record.gecis_zamani || ''].join('|');
+  },
 };
 
 const UI = {
