@@ -108,6 +108,16 @@ Laravel'in hazır geliştirme komutu da kullanılabilir:
 composer run dev
 ```
 
+### Docker ile lokal geliştirme
+
+XAMPP kullanmadan Docker ile çalışmak için:
+
+```bash
+docker compose up --build
+```
+
+Uygulama `http://localhost:8080`, Vite dev server `http://localhost:5173` üzerinden açılır. Detaylı rehber için [docs/LOCAL_DOCKER.md](docs/LOCAL_DOCKER.md) dosyasına bak.
+
 ## Ortam Değişkenleri
 
 Temel değişkenler:
