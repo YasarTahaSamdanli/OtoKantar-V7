@@ -25,7 +25,7 @@ class LiveIngestController extends Controller
         $expectedToken = (string) config('services.legacy_runtime.api_token', '');
         $givenToken = $request->bearerToken() ?: (string) $request->header('X-API-Token', '');
 
-        if ($expectedToken === '' || !hash_equals($expectedToken, $givenToken)) {
+        if ($expectedToken === '' || ! hash_equals($expectedToken, $givenToken)) {
             $this->audit->record('live_ingest.rejected', $request, metadata: [
                 'reason' => $expectedToken === '' ? 'token_not_configured' : 'invalid_token',
                 'has_json' => $request->input('json') !== null || $request->input('payload') !== null || $request->json()->all() !== [],
@@ -35,12 +35,29 @@ class LiveIngestController extends Controller
             return response()->json(['hata' => 'Yetkisiz istek'], Response::HTTP_UNAUTHORIZED);
         }
 
+        if ($this->requestBodyTooLarge($request)) {
+            $this->audit->record('live_ingest.rejected', $request, metadata: [
+                'reason' => 'request_too_large',
+                'content_length' => $request->server('CONTENT_LENGTH'),
+            ]);
+
+            return response()->json(['hata' => 'Istek boyutu cok buyuk.'], Response::HTTP_REQUEST_ENTITY_TOO_LARGE);
+        }
+
         $root = $this->runtimeRoot();
 
         try {
             $wrote = [];
 
             $payload = $this->extractJsonPayload($request);
+            if ($payload === false) {
+                $this->audit->record('live_ingest.rejected', $request, metadata: [
+                    'reason' => 'invalid_or_too_large_json',
+                ]);
+
+                return response()->json(['hata' => 'JSON verisi gecersiz veya cok buyuk.'], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+
             if ($this->isTransitionEvent($payload)) {
                 $payload = $this->enrichTransitionWeights($payload);
             }
@@ -55,6 +72,14 @@ class LiveIngestController extends Controller
             }
 
             $imageBytes = $this->extractImageBytes($request);
+            if ($imageBytes === false) {
+                $this->audit->record('live_ingest.rejected', $request, metadata: [
+                    'reason' => 'invalid_or_too_large_image',
+                ]);
+
+                return response()->json(['hata' => 'Gorsel gecersiz, JPG degil veya cok buyuk.'], Response::HTTP_UNPROCESSABLE_ENTITY);
+            }
+
             if ($imageBytes !== null) {
                 if ($this->isTransitionEvent($payload)) {
                     $this->atomicWrite($root.DIRECTORY_SEPARATOR.'canli_kare.jpg', $imageBytes);
@@ -121,11 +146,11 @@ class LiveIngestController extends Controller
     private function runtimeRoot(): string
     {
         $root = rtrim((string) config('services.legacy_runtime.path'), '\\/');
-        if (!$this->isAbsolutePath($root)) {
+        if (! $this->isAbsolutePath($root)) {
             $root = base_path($root);
         }
 
-        if (!is_dir($root)) {
+        if (! is_dir($root)) {
             mkdir($root, 0775, true);
         }
 
@@ -137,43 +162,95 @@ class LiveIngestController extends Controller
         return $path !== '' && (str_starts_with($path, '/') || preg_match('/^[A-Za-z]:[\/\\\\]/', $path) === 1);
     }
 
-    private function extractJsonPayload(Request $request): ?array
+    private function requestBodyTooLarge(Request $request): bool
+    {
+        $contentLength = (int) $request->server('CONTENT_LENGTH', 0);
+        if ($contentLength <= 0) {
+            return false;
+        }
+
+        $max = $this->maxJsonBytes() + $this->maxImageBytes() + 65536;
+
+        return $contentLength > $max;
+    }
+
+    private function extractJsonPayload(Request $request): array|false|null
     {
         $json = $request->input('json');
 
         if (is_string($json) && trim($json) !== '') {
-            $decoded = json_decode($json, true);
+            if (strlen($json) > $this->maxJsonBytes()) {
+                return false;
+            }
 
-            return is_array($decoded) ? $decoded : null;
+            $decoded = json_decode($json, true, 64);
+
+            return is_array($decoded) ? $decoded : false;
         }
 
         $payload = $request->input('payload');
         if (is_array($payload)) {
+            if (strlen(json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '') > $this->maxJsonBytes()) {
+                return false;
+            }
+
             return $payload;
         }
 
         $body = $request->json()->all();
+        if ($body !== [] && strlen((string) $request->getContent()) > $this->maxJsonBytes()) {
+            return false;
+        }
 
         return $body !== [] ? $body : null;
     }
 
-    private function extractImageBytes(Request $request): ?string
+    private function extractImageBytes(Request $request): string|false|null
     {
         if ($request->hasFile('image')) {
             $file = $request->file('image');
 
-            return $file?->isValid() ? file_get_contents($file->getRealPath()) ?: null : null;
+            if (! $file?->isValid() || $file->getSize() > $this->maxImageBytes()) {
+                return false;
+            }
+
+            $bytes = file_get_contents($file->getRealPath()) ?: null;
+
+            return $this->validJpegBytes($bytes) ? $bytes : false;
         }
 
         $imageBase64 = $request->input('image_base64');
         if (is_string($imageBase64) && trim($imageBase64) !== '') {
+            if (strlen($imageBase64) > (int) ceil($this->maxImageBytes() * 1.4)) {
+                return false;
+            }
+
             $imageBase64 = preg_replace('/^data:image\/[a-zA-Z0-9.+-]+;base64,/', '', $imageBase64) ?: $imageBase64;
             $decoded = base64_decode($imageBase64, true);
 
-            return $decoded === false ? null : $decoded;
+            return $this->validJpegBytes($decoded) ? $decoded : false;
         }
 
         return null;
+    }
+
+    private function validJpegBytes(?string $bytes): bool
+    {
+        if ($bytes === null || strlen($bytes) < 4 || strlen($bytes) > $this->maxImageBytes()) {
+            return false;
+        }
+
+        return str_starts_with($bytes, "\xFF\xD8") && str_ends_with($bytes, "\xFF\xD9");
+    }
+
+    private function maxJsonBytes(): int
+    {
+        return max(1024, (int) config('services.legacy_runtime.max_json_bytes', 262144));
+    }
+
+    private function maxImageBytes(): int
+    {
+        return max(1024, (int) config('services.legacy_runtime.max_image_bytes', 2097152));
     }
 
     private function isTransitionEvent(?array $payload): bool
@@ -237,7 +314,7 @@ class LiveIngestController extends Controller
             $select->execute(['plaka' => $plate]);
             $vehicleId = $select->fetchColumn();
 
-            if (!$vehicleId) {
+            if (! $vehicleId) {
                 $insertVehicle = $pdo->prepare('INSERT INTO araclar (plaka) VALUES (:plaka)');
                 $insertVehicle->execute(['plaka' => $plate]);
                 $vehicleId = (int) $pdo->lastInsertId();
@@ -267,6 +344,7 @@ class LiveIngestController extends Controller
             }
 
             $pdo->commit();
+
             return true;
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) {
@@ -528,7 +606,7 @@ class LiveIngestController extends Controller
 
         $path = $root.DIRECTORY_SEPARATOR.'gecis_gecmisi.jsonl';
         $directory = dirname($path);
-        if (!is_dir($directory)) {
+        if (! is_dir($directory)) {
             mkdir($directory, 0775, true);
         }
 
@@ -565,7 +643,7 @@ class LiveIngestController extends Controller
     private function atomicWrite(string $path, string $contents): void
     {
         $directory = dirname($path);
-        if (!is_dir($directory)) {
+        if (! is_dir($directory)) {
             mkdir($directory, 0775, true);
         }
 
@@ -584,7 +662,7 @@ class LiveIngestController extends Controller
             usleep(50_000);
         }
 
-        if (!@copy($tmp, $path)) {
+        if (! @copy($tmp, $path)) {
             @unlink($tmp);
             throw new \RuntimeException('Dosya atomik olarak yazilamadi: '.$path);
         }

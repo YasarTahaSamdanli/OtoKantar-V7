@@ -2,8 +2,8 @@
 
 namespace Tests\Feature;
 
-use Illuminate\Support\Facades\File;
 use App\Services\CanliDataService;
+use Illuminate\Support\Facades\File;
 use Tests\TestCase;
 
 class LiveIngestTest extends TestCase
@@ -49,7 +49,7 @@ class LiveIngestTest extends TestCase
                     ],
                     'son_10' => [],
                 ]),
-                'image_base64' => base64_encode('fake-jpg'),
+                'image_base64' => base64_encode($this->tinyJpeg()),
             ])
             ->assertOk()
             ->assertJsonPath('ok', true);
@@ -291,7 +291,7 @@ class LiveIngestTest extends TestCase
                     'son_guncelleme' => '2026-06-08T12:00:00',
                     'kantar_kg' => 1234.5,
                 ]),
-                'image_base64' => base64_encode('fake-jpg'),
+                'image_base64' => base64_encode($this->tinyJpeg()),
             ])
             ->assertOk()
             ->assertJsonMissing(['canli_kare.jpg']);
@@ -316,5 +316,56 @@ class LiveIngestTest extends TestCase
             ->assertUnprocessable();
 
         $this->assertFileDoesNotExist($runtimePath.DIRECTORY_SEPARATOR.'canli_kare.jpg');
+    }
+
+    public function test_live_ingest_rejects_fake_jpeg_bytes(): void
+    {
+        $runtimePath = storage_path('framework/testing/live-ingest/'.__FUNCTION__);
+
+        config([
+            'services.legacy_runtime.api_token' => 'secret-token',
+            'services.legacy_runtime.path' => $runtimePath,
+        ]);
+
+        $this->withHeader('Authorization', 'Bearer secret-token')
+            ->post('/api/live-ingest', [
+                'json' => json_encode([
+                    'event_type' => 'GIRIS',
+                    'son_kayit' => [
+                        'plaka' => '06BADJPG',
+                        'durum' => 'GIRIS',
+                    ],
+                ]),
+                'image_base64' => base64_encode('fake-jpg'),
+            ])
+            ->assertUnprocessable();
+
+        $this->assertFileDoesNotExist($runtimePath.DIRECTORY_SEPARATOR.'canli_kare.jpg');
+    }
+
+    public function test_live_ingest_rejects_oversized_json_payload(): void
+    {
+        config([
+            'services.legacy_runtime.api_token' => 'secret-token',
+            'services.legacy_runtime.max_json_bytes' => 1024,
+        ]);
+
+        $this->withHeader('Authorization', 'Bearer secret-token')
+            ->post('/api/live-ingest', [
+                'json' => json_encode([
+                    'event_type' => 'GIRIS',
+                    'son_kayit' => [
+                        'plaka' => '06BIGJSON',
+                        'durum' => 'GIRIS',
+                    ],
+                    'padding' => str_repeat('A', 2048),
+                ]),
+            ])
+            ->assertUnprocessable();
+    }
+
+    private function tinyJpeg(): string
+    {
+        return base64_decode('/9j/4AAQSkZJRgABAQEASABIAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAH/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAEFAqf/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAEDAQE/ASP/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oACAECAQE/ASP/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAY/Al//xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oACAEBAAE/IV//2gAMAwEAAgADAAAAEP/EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQMBAT8QH//EABQRAQAAAAAAAAAAAAAAAAAAABD/2gAIAQIBAT8QH//EABQQAQAAAAAAAAAAAAAAAAAAABD/2gAIAQEAAT8QH//Z', true) ?: "\xFF\xD8\xFF\xD9";
     }
 }

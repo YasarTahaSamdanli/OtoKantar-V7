@@ -1,11 +1,12 @@
 <?php
 
+use App\Models\User;
+use App\Models\VehiclePass;
+use App\Services\ProjectBackupService;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use App\Models\VehiclePass;
-use App\Models\User;
 
 Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
@@ -16,7 +17,7 @@ Artisan::command('otokantar:ensure-admin', function () {
     $password = env('ADMIN_PASSWORD');
     $name = env('ADMIN_NAME', 'Admin');
 
-    if (!$email || !$password) {
+    if (! $email || ! $password) {
         $this->warn('ADMIN_EMAIL veya ADMIN_PASSWORD tanimli degil; admin olusturulmadi.');
 
         return 0;
@@ -111,7 +112,7 @@ Artisan::command('vehicle-passes:verify {--sample=10 : Number of missing/extra r
 
     $runtimePath = function (string $name): string {
         $root = rtrim((string) config('services.legacy_runtime.path', base_path('legacy')), '\\/');
-        if ($root === '' || !(str_starts_with($root, '/') || preg_match('/^[A-Za-z]:[\/\\\\]/', $root) === 1)) {
+        if ($root === '' || ! (str_starts_with($root, '/') || preg_match('/^[A-Za-z]:[\/\\\\]/', $root) === 1)) {
             $root = base_path($root);
         }
 
@@ -175,7 +176,7 @@ Artisan::command('vehicle-passes:verify {--sample=10 : Number of missing/extra r
         if (is_file($jsonl)) {
             foreach (file($jsonl, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [] as $line) {
                 $decoded = json_decode((string) $line, true);
-                if (!is_array($decoded)) {
+                if (! is_array($decoded)) {
                     continue;
                 }
 
@@ -326,3 +327,94 @@ Artisan::command('vehicle-passes:verify {--sample=10 : Number of missing/extra r
 
     return $missing->isEmpty() && $extra->isEmpty() ? 0 : 1;
 })->purpose('Compare VehiclePass records with current dashboard data sources');
+
+Artisan::command('backup:run {--connection= : Database connection to dump} {--path= : Backup destination directory} {--keep= : Number of backup folders to keep} {--without-legacy-runtime : Skip legacy runtime file archive} {--sync-remote : Copy this backup to configured remote storage after creation}', function () {
+    $manifest = app(ProjectBackupService::class)->run(
+        connection: $this->option('connection') ?: null,
+        destination: $this->option('path') ?: null,
+        includeLegacyRuntime: ! (bool) $this->option('without-legacy-runtime'),
+        keep: $this->option('keep') !== null ? (int) $this->option('keep') : null,
+        syncRemote: (bool) $this->option('sync-remote'),
+    );
+
+    $this->info('Backup hazir: '.$manifest['backup_dir']);
+
+    $database = is_array($manifest['database'] ?? null) ? $manifest['database'] : [];
+    $this->line('Database: '.($database['status'] ?? 'unknown').' '.($database['file'] ?? ''));
+
+    $runtime = is_array($manifest['legacy_runtime'] ?? null) ? $manifest['legacy_runtime'] : [];
+    if ($runtime !== []) {
+        $this->line('Legacy runtime: '.($runtime['status'] ?? 'unknown').' '.($runtime['file'] ?? ''));
+    }
+
+    foreach (($manifest['warnings'] ?? []) as $warning) {
+        $this->warn((string) $warning);
+    }
+
+    return 0;
+})->purpose('Create a local database and runtime backup bundle');
+
+Artisan::command('backup:list {--path= : Backup root directory}', function () {
+    $backups = app(ProjectBackupService::class)->list($this->option('path') ?: null);
+
+    if ($backups === []) {
+        $this->warn('Backup bulunamadi.');
+
+        return 0;
+    }
+
+    $this->table(
+        ['Ad', 'Tarih', 'Database', 'Runtime', 'MB', 'Path'],
+        collect($backups)->map(fn (array $backup): array => [
+            $backup['name'],
+            $backup['created_at'],
+            $backup['database'],
+            $backup['runtime'],
+            number_format(((int) $backup['bytes']) / 1024 / 1024, 2),
+            $backup['path'],
+        ])->all()
+    );
+
+    return 0;
+})->purpose('List available local backup bundles');
+
+Artisan::command('backup:restore {--backup=latest : Backup folder name, full path, or latest} {--connection= : Target database connection} {--database-only : Restore only database, skip legacy runtime files} {--force : Required confirmation flag for destructive restore}', function () {
+    if (! (bool) $this->option('force')) {
+        $this->error('Restore mevcut database/runtime dosyalarini ezebilir. Calistirmak icin --force ekle.');
+
+        return 1;
+    }
+
+    $result = app(ProjectBackupService::class)->restore(
+        backup: (string) $this->option('backup'),
+        connection: $this->option('connection') ?: null,
+        restoreRuntime: ! (bool) $this->option('database-only'),
+    );
+
+    $this->info('Restore tamamlandi: '.$result['backup_dir']);
+    $database = is_array($result['database'] ?? null) ? $result['database'] : [];
+    $this->line('Database: '.($database['status'] ?? 'unknown').' '.($database['target'] ?? ''));
+
+    $runtime = is_array($result['legacy_runtime'] ?? null) ? $result['legacy_runtime'] : [];
+    if ($runtime !== []) {
+        $this->line('Legacy runtime: '.($runtime['status'] ?? 'unknown').' '.($runtime['target'] ?? ($runtime['reason'] ?? '')));
+    }
+
+    return 0;
+})->purpose('Restore database and runtime files from a local backup bundle');
+
+Artisan::command('backup:sync {backup=latest : Backup folder name, full path, or latest}', function () {
+    if (! (bool) config('backup.remote.enabled')) {
+        $this->error('Remote backup kapali. BACKUP_REMOTE_ENABLED=true ve BACKUP_REMOTE_DESTINATION ayarla.');
+
+        return 1;
+    }
+
+    $result = app(ProjectBackupService::class)->sync((string) $this->argument('backup'));
+
+    $this->info('Remote backup sync tamamlandi.');
+    $this->line('Source: '.$result['source']);
+    $this->line('Destination: '.$result['destination']);
+
+    return 0;
+})->purpose('Copy a local backup bundle to configured remote storage');

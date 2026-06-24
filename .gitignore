@@ -28,6 +28,7 @@ __pycache__/
 /storage/framework/testing/*
 /storage/framework/views/*
 /storage/logs/*
+/storage/app/backups/*
 
 # Local artifacts / runtime outputs
 /database/database.sqlite
