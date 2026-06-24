@@ -1,0 +1,103 @@
+name: otokantar-v7
+region: fra
+
+services:
+  - name: web
+    dockerfile_path: ./Dockerfile
+    source_dir: /
+    github:
+      repo: your-github-user/your-repo
+      branch: main
+      deploy_on_push: true
+    http_port: 80
+    instance_count: 1
+    instance_size_slug: basic-xxs
+    health_check:
+      http_path: /up
+      port: 80
+      initial_delay_seconds: 30
+      period_seconds: 10
+      timeout_seconds: 5
+      success_threshold: 1
+      failure_threshold: 5
+    envs:
+      - key: APP_ENV
+        value: production
+        scope: RUN_TIME
+      - key: APP_DEBUG
+        value: "false"
+        scope: RUN_TIME
+      - key: APP_TIMEZONE
+        value: Europe/Istanbul
+        scope: RUN_TIME
+      - key: APP_LOCALE
+        value: tr
+        scope: RUN_TIME
+      - key: APP_FALLBACK_LOCALE
+        value: tr
+        scope: RUN_TIME
+      - key: APP_URL
+        value: https://your-domain.example
+        scope: RUN_TIME
+      - key: APP_KEY
+        value: base64:replace-with-laravel-app-key
+        scope: RUN_TIME
+        type: secret
+      - key: ALLOW_PUBLIC_REGISTRATION
+        value: "false"
+        scope: RUN_TIME
+      - key: RUN_MIGRATIONS
+        value: "true"
+        scope: RUN_TIME
+      - key: ENSURE_ADMIN
+        value: "true"
+        scope: RUN_TIME
+      - key: ADMIN_EMAIL
+        value: admin@example.com
+        scope: RUN_TIME
+        type: secret
+      - key: ADMIN_PASSWORD
+        value: replace-with-strong-password
+        scope: RUN_TIME
+        type: secret
+      - key: ADMIN_NAME
+        value: Admin
+        scope: RUN_TIME
+      - key: DB_CONNECTION
+        value: pgsql
+        scope: RUN_TIME
+      - key: DB_URL
+        value: ${otokantar-db.DATABASE_URL}
+        scope: RUN_TIME
+        type: secret
+      - key: DATABASE_URL
+        value: ${otokantar-db.DATABASE_URL}
+        scope: RUN_TIME
+        type: secret
+      - key: DB_SSLMODE
+        value: require
+        scope: RUN_TIME
+      - key: CACHE_STORE
+        value: database
+        scope: RUN_TIME
+      - key: SESSION_DRIVER
+        value: database
+        scope: RUN_TIME
+      - key: SESSION_ENCRYPT
+        value: "true"
+        scope: RUN_TIME
+      - key: QUEUE_CONNECTION
+        value: database
+        scope: RUN_TIME
+      - key: LEGACY_RUNTIME_PATH
+        value: /var/www/html/storage/app/legacy_python
+        scope: RUN_TIME
+      - key: LIVE_INGEST_API_TOKEN
+        value: replace-with-long-random-token
+        scope: RUN_TIME
+        type: secret
+
+databases:
+  - name: otokantar-db
+    engine: PG
+    production: true

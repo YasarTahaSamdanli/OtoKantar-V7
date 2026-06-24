@@ -42,5 +42,8 @@ RUN chmod +x /entrypoint.sh \
 
 EXPOSE 80
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD php -r "exit(@file_get_contents('http://127.0.0.1/up') === false ? 1 : 0);"
+
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["apache2-foreground"]

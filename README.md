@@ -1,261 +1,283 @@
-# 🚛 OtoKantar V7
+# OtoKantar V7
 
-## Yapay Zeka Destekli Araç Kantar Otomasyon Sistemi
+OtoKantar V7, araç kantar operasyonlarını dijitalleştirmek için geliştirilen Laravel tabanlı bir canlı izleme, kayıt ve yönetim platformudur. Sistem; saha tarafındaki kamera, plaka tanıma ve kantar akışlarından gelen verileri merkezi bir web panelinde toplar, giriş-çıkış kayıtlarını saklar, raporlama ve kullanıcı yönetimi sağlar.
 
-OtoKantar V7, araç kantar operasyonlarını tamamen otomatik hale getirmek amacıyla geliştirilmiş, yapay zeka destekli plaka tanıma ve tartım yönetim sistemidir.
+Bu repo şu an Render üzerinde Docker ile çalışabilecek şekilde hazırlanmıştır. Aynı yapı ileride DigitalOcean App Platform, DigitalOcean Droplet veya benzeri production ortamlarına taşınabilecek şekilde düzenlenmektedir.
 
-Sistem; kameradan gelen görüntüler üzerinden araçları algılar, plakaları otomatik olarak okur, kantar verilerini toplar, giriş-çıkış kayıtlarını oluşturur, fiş basar ve tüm süreci merkezi bir yönetim paneli üzerinden takip etmenizi sağlar.
+## Öne Çıkanlar
 
----
+- Canlı kantar paneli: ağırlık, plaka tamponu, kamera karesi, sistem durumu ve son kayıtlar
+- Araç geçiş kayıtları: giriş, çıkış, net ağırlık, güven skoru, snapshot ve kaynak payload
+- Yetkili kullanım: admin ve employee rolleri
+- Admin kullanıcı yönetimi
+- CSV dışa aktarım
+- Legacy uyumluluk: eski PHP URL yönlendirmeleri ve legacy MySQL/JSON/CSV fallback desteği
+- Remote ingest API: saha bilgisayarından canlı JSON/JPG verisi alma
+- Docker tabanlı deployment
+- Render ve DigitalOcean geçiş hazırlığı
+- Feature ve unit testleri
 
-# 🎯 Amaç
+## Kullanılan Teknolojiler
 
-Manuel veri girişini ortadan kaldırarak:
+- PHP 8.2+
+- Laravel 12
+- Laravel Breeze
+- MySQL/MariaDB veya PostgreSQL
+- Vite
+- Tailwind CSS
+- Docker
+- PHPUnit
 
-- İşlem sürelerini azaltmak
-- Operatör hatalarını önlemek
-- Tartım süreçlerini otomatikleştirmek
-- Araç hareketlerini kayıt altına almak
-- Güvenilir raporlama sağlamak
+Legacy saha uygulaması tarafında Python, OpenCV, OCR ve kantar/yazıcı entegrasyonları bulunabilir. Bu Laravel uygulaması, o saha akışının web paneli ve merkezi kayıt katmanı olarak konumlanır.
 
----
-
-# ✨ Özellikler
-
-## 🚘 Otomatik Plaka Tanıma
-
-- Yapay zeka destekli araç tespiti
-- Gerçek zamanlı plaka algılama
-- OCR ile plaka okuma
-- Akıllı doğrulama sistemi
-- Gürültülü görüntülerde hata toleransı
-- Bilinen araç veritabanı desteği
-
----
-
-## ⚖️ Otomatik Tartım Sistemi
-
-- Giriş tartımı
-- Çıkış tartımı
-- Net ağırlık hesaplama
-- Açık seans yönetimi
-- Tekrar kayıt koruması
-- Otomatik işlem kilitleme
-
----
-
-## 📷 Kamera Entegrasyonu
-
-- USB Kamera
-- IP Kamera
-- RTSP Akış Desteği
-- Canlı görüntü işleme
-- Snapshot kaydetme
-
----
-
-## 🧠 Yapay Zeka Motoru
-
-Sistem içerisinde:
-
-- Araç tespiti
-- Plaka tespiti
-- OCR işlemleri
-- Takip (Tracking)
-- Doğrulama algoritmaları
-
-birlikte çalışmaktadır.
-
----
-
-## 🖨️ Fiş Yazdırma
-
-- Otomatik fiş oluşturma
-- Giriş fişi
-- Çıkış fişi
-- Net ağırlık bilgileri
-- Yazıcı entegrasyonu
-
----
-
-## 📊 Yönetim Paneli
-
-Dashboard üzerinden:
-
-- Canlı sistem takibi
-- Güncel araçlar
-- Tartım geçmişi
-- Kara liste yönetimi
-- Sistem durumu
-- İstatistikler
-
-izlenebilir.
-
----
-
-## 🔒 Güvenlik ve Kararlılık
-
-- Çoklu iş parçacığı (Multi Thread)
-- Thread-safe mimari
-- Otomatik hata yakalama
-- Güvenli dosya işlemleri
-- Graceful Shutdown
-- Log kayıt sistemi
-
----
-
-# 🏗️ Sistem Mimarisi
+## Mimari
 
 ```text
-Kamera
-   │
-   ▼
-Araç Tespiti
-   │
-   ▼
-Plaka Tespiti
-   │
-   ▼
-OCR Motoru
-   │
-   ▼
-Doğrulama Sistemi
-   │
-   ▼
-Kantar Verisi
-   │
-   ▼
-Kayıt Motoru
-   │
-   ▼
-Fiş Yazdırma
-   │
-   ▼
-Dashboard + API
+Saha sistemi
+  Kamera / OCR / Kantar / Yazıcı
+          |
+          |  POST /api/live-ingest
+          v
+Laravel uygulaması
+  Auth + Role kontrolü
+  Canlı panel API'leri
+  VehiclePass kayıt modeli
+  Legacy JSON/JPG/CSV fallback
+          |
+          v
+Database + Runtime dosyaları
+  vehicle_passes
+  canli_durum.json
+  canli_kare.jpg
+  gecis_gecmisi.jsonl
 ```
 
----
+## Ana Modüller
 
-# 📂 Proje Yapısı
+| Alan | Açıklama |
+| --- | --- |
+| `app/Http/Controllers/CanliController.php` | Canlı panel, arşiv, CSV ve kamera karesi endpointleri |
+| `app/Http/Controllers/LiveIngestController.php` | Saha sisteminden gelen JSON/JPG verisini alır |
+| `app/Services/CanliDataService.php` | VehiclePass, legacy DB, JSONL ve CSV kaynaklarından panel payload üretir |
+| `app/Models/VehiclePass.php` | Merkezi araç geçiş kaydı modeli |
+| `resources/views/panel.blade.php` | Canlı izleme paneli |
+| `routes/web.php` | Panel, admin ve auth rotaları |
+| `routes/api.php` | Remote ingest API rotası |
+| `docker/entrypoint.sh` | Production başlangıç işlemleri |
+| `docs/DEPLOYMENT.md` | Render ve DigitalOcean deployment rehberi |
+
+## Roller
+
+| Rol | Yetki |
+| --- | --- |
+| `admin` | Dashboard, canlı panel, kullanıcı yönetimi, CSV export |
+| `employee` | Canlı panel görüntüleme |
+
+Public registration varsayılan olarak kapalı tutulmalıdır. Production ortamında ilk admin kullanıcı `ENSURE_ADMIN=true`, `ADMIN_EMAIL` ve `ADMIN_PASSWORD` ile oluşturulabilir.
+
+## Kurulum
+
+### Gereksinimler
+
+- PHP 8.2 veya üzeri
+- Composer
+- Node.js 22 veya uyumlu güncel LTS
+- MySQL/MariaDB ya da PostgreSQL
+
+### Lokal kurulum
+
+```bash
+composer install
+npm install
+cp .env.example .env
+php artisan key:generate
+php artisan migrate
+npm run build
+php artisan serve
+```
+
+Geliştirme sırasında Vite için:
+
+```bash
+npm run dev
+```
+
+Laravel'in hazır geliştirme komutu da kullanılabilir:
+
+```bash
+composer run dev
+```
+
+## Ortam Değişkenleri
+
+Temel değişkenler:
+
+```env
+APP_ENV=production
+APP_DEBUG=false
+APP_URL=https://example.com
+
+DB_CONNECTION=pgsql
+DATABASE_URL=
+DB_URL=
+
+ALLOW_PUBLIC_REGISTRATION=false
+ENSURE_ADMIN=true
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=strong-password
+
+LEGACY_RUNTIME_PATH=/var/www/html/storage/app/legacy_python
+LIVE_INGEST_API_TOKEN=long-random-token
+```
+
+Production için örnek şablon:
+
+- [.env.production.example](.env.production.example)
+
+## Canlı Veri Akışı
+
+Saha uygulaması canlı durum ve geçiş olaylarını şu endpoint'e gönderir:
+
+```http
+POST /api/live-ingest
+Authorization: Bearer <LIVE_INGEST_API_TOKEN>
+```
+
+Örnek JSON payload:
+
+```json
+{
+  "event_type": "GIRIS",
+  "son_guncelleme": "2026-06-24T12:00:00",
+  "kantar_kg": 12450.5,
+  "son_kayit": {
+    "plaka": "34ABC123",
+    "durum": "GIRIS",
+    "giris_tarih": "2026-06-24",
+    "giris_saat": "12:00:00",
+    "giris_agirlik": 12450.5,
+    "guven": 0.94
+  }
+}
+```
+
+`GIRIS` ve `CIKIS` olaylarında sistem:
+
+- `canli_durum.json` dosyasını günceller
+- varsa `canli_kare.jpg` dosyasını günceller
+- `gecis_gecmisi.jsonl` içine olay geçmişi yazar
+- legacy MySQL uygunsa `araclar/gecisler` tablolarına yazar
+- merkezi `vehicle_passes` tablosuna kayıt açar veya günceller
+
+## Testler
+
+```bash
+php artisan test
+```
+
+Windows/XAMPP kullanıyorsan:
+
+```powershell
+C:\xampp\php\php.exe artisan test
+```
+
+Mevcut test kapsamı auth, kullanıcı yönetimi, canlı panel erişimi, remote ingest, CSV export ve VehiclePass panel okuma akışlarını kapsar.
+
+## Deployment
+
+Bu proje Docker ile deploy edilmeye hazırdır.
+
+Render:
+
+- `render.yaml` Docker runtime kullanır
+- Health check path: `/up`
+- Database env değerleri Render managed database üzerinden bağlanır
+
+DigitalOcean:
+
+- Örnek app spec: [deploy/digitalocean-app.yaml.example](deploy/digitalocean-app.yaml.example)
+- Detaylı rehber: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+
+Docker imajı production başlangıcında şunları yapar:
 
 ```text
-OtoKantar-V7
-│
-├── otokantar_app
-│   ├── api
-│   ├── core
-│   ├── db
-│   ├── donanim
-│   ├── utils
-│   ├── models.py
-│   ├── logger.py
-│   ├── config.py
-│   └── main.py
-│
-├── dashboard.html
-├── dashboard_server.py
-└── Otokantar.py
+storage/bootstrap cache dizinlerini hazırlar
+APP_KEY_BASE64 varsa APP_KEY üretir
+config cache temizler
+RUN_MIGRATIONS=true ise migrate --force çalıştırır
+ENSURE_ADMIN=true ise admin kullanıcısını hazırlar
+config, route ve view cache oluşturur
+Apache başlatır
 ```
 
----
+## Health Check
 
-# 🧩 Ana Bileşenler
+Laravel health endpoint:
 
-## Core
+```http
+GET /up
+```
 
-Sistemin yapay zeka ve karar verme katmanı.
+Dockerfile içinde konteyner healthcheck olarak kullanılır. Render ve DigitalOcean App Platform tarafında da aynı endpoint kullanılmalıdır.
 
-- AI Motoru
-- OCR Worker
-- Takip Sistemi
-- Doğrulama Motoru
+## Faydalı Artisan Komutları
 
----
+Admin kullanıcı oluşturma/güncelleme:
 
-## Donanım Katmanı
+```bash
+php artisan otokantar:ensure-admin
+```
 
-Fiziksel cihazlarla haberleşir.
+Son araç geçiş kayıtları:
 
-- Kantar Okuyucu
-- Yazıcı Kontrolü
+```bash
+php artisan vehicle-passes:latest --limit=10
+```
 
----
+VehiclePass ile dashboard kaynaklarını karşılaştırma:
 
-## Veritabanı Katmanı
+```bash
+php artisan vehicle-passes:verify
+```
 
-- Tartım kayıtları
-- Araç bilgileri
-- Kara liste kayıtları
-- Sistem geçmişi
+## Proje Yapısı
 
----
+```text
+app/
+  Http/Controllers/
+  Models/
+  Services/
+database/
+  migrations/
+  seeders/
+deploy/
+  digitalocean-app.yaml.example
+docs/
+  DEPLOYMENT.md
+legacy/
+legacy_python/
+resources/
+  css/
+  js/
+  views/
+routes/
+  api.php
+  web.php
+tests/
+Dockerfile
+render.yaml
+```
 
-## API Katmanı
+## Yol Haritası
 
-FastAPI tabanlı servisler.
+Kısa vadeli profesyonelleştirme sırası:
 
-- Dashboard veri servisi
-- Sistem durumu
-- Araç sorguları
-- Yönetim işlemleri
+1. README ve deployment dokümantasyonu
+2. Dashboard arayüzünü kurumsallaştırma
+3. Audit log altyapısı
+4. Docker ile local geliştirme ortamı
+5. GitHub Actions CI iyileştirmesi
 
----
+## Lisans
 
-# 📈 Kullanım Alanları
-
-- Hafriyat Sahaları
-- Maden İşletmeleri
-- Geri Dönüşüm Tesisleri
-- Lojistik Merkezleri
-- Fabrikalar
-- Depolar
-- Tarım Ürün Alım Noktaları
-- Organize Sanayi Bölgeleri
-
----
-
-# 🚀 Avantajlar
-
-### Daha Hızlı İşlem
-
-Araç geçişleri manuel girişe ihtiyaç duymadan tamamlanır.
-
-### Daha Az Hata
-
-Operatör kaynaklı veri giriş hataları minimize edilir.
-
-### Tam Kayıt Takibi
-
-Tüm giriş ve çıkış işlemleri kayıt altına alınır.
-
-### Düşük İş Gücü Maliyeti
-
-Tekrarlayan işlemler otomatikleştirilir.
-
-### Kolay Raporlama
-
-Geçmiş işlemler ve araç hareketleri kolayca incelenebilir.
-
----
-
-# 🛠️ Kullanılan Teknolojiler
-
-- Python
-- FastAPI
-- OpenCV
-- SQLite
-- OCR Teknolojileri
-- REST API
-- Multi-threading
-- Yapay Zeka Destekli Görüntü İşleme
-
----
-
-# 📌 Proje Durumu
-
-OtoKantar V7 aktif olarak geliştirilen, gerçek saha kullanımı için tasarlanmış profesyonel bir araç kantar otomasyon çözümüdür.
-
----
-
-© OtoKantar V7
-Akıllı Kantar Otomasyon Sistemi
+Bu repo şu an özel ürün geliştirme projesi olarak ele alınmaktadır. Lisans ve ticari kullanım koşulları ürünleşme aşamasında ayrıca netleştirilmelidir.

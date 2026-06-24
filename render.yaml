@@ -3,6 +3,7 @@ services:
     name: otokantar-v7
     runtime: docker
     plan: free
+    healthCheckPath: /up
     envVars:
       - key: APP_ENV
         value: production
