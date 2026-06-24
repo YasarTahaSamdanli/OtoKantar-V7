@@ -3,11 +3,14 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class VehiclePass extends Model
 {
     protected $fillable = [
         'event_id',
+        'vehicle_profile_id',
+        'vehicle_recognition_status',
         'plate',
         'direction',
         'status',
@@ -50,5 +53,10 @@ class VehiclePass extends Model
             'legacy_vehicle_id' => 'integer',
             'is_blacklisted' => 'boolean',
         ];
+    }
+
+    public function vehicleProfile(): BelongsTo
+    {
+        return $this->belongsTo(VehicleProfile::class);
     }
 }

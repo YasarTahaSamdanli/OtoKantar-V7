@@ -4,6 +4,8 @@ use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\Admin\UserController as AdminUserController;
 use App\Http\Controllers\Admin\AuditLogController as AdminAuditLogController;
 use App\Http\Controllers\CanliController;
+use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\VehicleProfileController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -37,12 +39,13 @@ Route::middleware(['auth', 'role:admin,employee'])->group(function () {
     Route::get('/canli/archive', [CanliController::class, 'getArchive'])->middleware('throttle:canli-api')->name('canli.archive');
     Route::get('/canli/csv', [CanliController::class, 'csv'])->name('canli.csv');
     Route::get('/canli/kare', [CanliController::class, 'kare'])->middleware('throttle:canli-kare')->name('canli.kare');
+    Route::get('/araclar', [VehicleProfileController::class, 'index'])->name('vehicle-profiles.index');
+    Route::get('/araclar/{vehicleProfile}', [VehicleProfileController::class, 'show'])->name('vehicle-profiles.show');
+    Route::patch('/araclar/{vehicleProfile}', [VehicleProfileController::class, 'update'])->name('vehicle-profiles.update');
 });
 
 Route::middleware(['auth', 'role:admin'])->group(function () {
-    Route::get('/dashboard', function () {
-        return view('dashboard');
-    })->middleware('verified')->name('dashboard');
+    Route::get('/dashboard', DashboardController::class)->middleware('verified')->name('dashboard');
 });
 
 Route::middleware('auth')->group(function () {

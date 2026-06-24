@@ -1,0 +1,64 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\VehicleProfile;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Illuminate\View\View;
+
+class VehicleProfileController extends Controller
+{
+    public function index(Request $request): View
+    {
+        $tab = (string) $request->query('tab', 'recent');
+        $search = trim((string) $request->query('q', ''));
+
+        $query = VehicleProfile::query();
+
+        if ($search !== '') {
+            $query->where(function ($query) use ($search): void {
+                $query->where('plate', 'like', '%'.$search.'%')
+                    ->orWhere('company_name', 'like', '%'.$search.'%')
+                    ->orWhere('driver_name', 'like', '%'.$search.'%');
+            });
+        }
+
+        match ($tab) {
+            'new' => $query->latest('first_seen_at'),
+            'frequent' => $query->orderByDesc('total_entry_count')->orderByDesc('last_seen_at'),
+            default => $query->latest('last_seen_at'),
+        };
+
+        return view('vehicle-profiles.index', [
+            'profiles' => $query->paginate(20)->withQueryString(),
+            'tab' => in_array($tab, ['new', 'frequent', 'recent'], true) ? $tab : 'recent',
+            'search' => $search,
+        ]);
+    }
+
+    public function show(VehicleProfile $vehicleProfile): View
+    {
+        return view('vehicle-profiles.show', [
+            'profile' => $vehicleProfile,
+            'passes' => $vehicleProfile->passes()
+                ->latest('passed_at')
+                ->paginate(20),
+        ]);
+    }
+
+    public function update(Request $request, VehicleProfile $vehicleProfile): RedirectResponse
+    {
+        $validated = $request->validate([
+            'company_name' => ['nullable', 'string', 'max:255'],
+            'driver_name' => ['nullable', 'string', 'max:255'],
+            'notes' => ['nullable', 'string', 'max:5000'],
+        ]);
+
+        $vehicleProfile->update($validated);
+
+        return redirect()
+            ->route('vehicle-profiles.show', $vehicleProfile)
+            ->with('status', 'Arac karti guncellendi.');
+    }
+}

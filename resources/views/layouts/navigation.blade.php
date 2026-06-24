@@ -15,18 +15,18 @@
                 <div class="hidden items-center gap-2 lg:flex">
                     @if (Auth::user()->isAdmin())
                         <x-nav-link :href="route('dashboard')" :active="request()->routeIs('dashboard')">
-                            Yonetim
+                            Ozet
                         </x-nav-link>
                     @endif
                     <x-nav-link :href="route('canli.view')" :active="request()->routeIs('canli.*')">
                         Canli Panel
                     </x-nav-link>
+                    <x-nav-link :href="route('vehicle-profiles.index')" :active="request()->routeIs('vehicle-profiles.*')">
+                        Arac Kartlari
+                    </x-nav-link>
                     @if (Auth::user()->isAdmin())
                         <x-nav-link :href="route('admin.users.index')" :active="request()->routeIs('admin.users.*')">
                             Kullanicilar
-                        </x-nav-link>
-                        <x-nav-link :href="route('admin.audit-logs.index')" :active="request()->routeIs('admin.audit-logs.*')">
-                            Audit Log
                         </x-nav-link>
                     @endif
                 </div>
@@ -79,18 +79,18 @@
         <div class="space-y-1 py-2">
             @if (Auth::user()->isAdmin())
                 <x-responsive-nav-link :href="route('dashboard')" :active="request()->routeIs('dashboard')">
-                    Yonetim
+                    Ozet
                 </x-responsive-nav-link>
             @endif
             <x-responsive-nav-link :href="route('canli.view')" :active="request()->routeIs('canli.*')">
                 Canli Panel
             </x-responsive-nav-link>
+            <x-responsive-nav-link :href="route('vehicle-profiles.index')" :active="request()->routeIs('vehicle-profiles.*')">
+                Arac Kartlari
+            </x-responsive-nav-link>
             @if (Auth::user()->isAdmin())
                 <x-responsive-nav-link :href="route('admin.users.index')" :active="request()->routeIs('admin.users.*')">
                     Kullanicilar
-                </x-responsive-nav-link>
-                <x-responsive-nav-link :href="route('admin.audit-logs.index')" :active="request()->routeIs('admin.audit-logs.*')">
-                    Audit Log
                 </x-responsive-nav-link>
             @endif
         </div>

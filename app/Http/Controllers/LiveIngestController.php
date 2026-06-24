@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\VehiclePass;
 use App\Services\AuditLogService;
+use App\Services\VehicleProfileService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -16,6 +17,7 @@ class LiveIngestController extends Controller
 {
     public function __construct(
         private readonly AuditLogService $audit,
+        private readonly VehicleProfileService $vehicleProfiles,
     ) {}
 
     public function store(Request $request)
@@ -379,11 +381,11 @@ class LiveIngestController extends Controller
             'dispatch_no' => $record['irsaliye_no'] ?? null,
         ];
 
-        if ($eventId !== '') {
-            VehiclePass::updateOrCreate(['event_id' => $eventId], $values);
-        } else {
-            VehiclePass::updateOrCreate(['legacy_pass_key' => $legacyPassKey], $values);
-        }
+        $vehiclePass = $eventId !== ''
+            ? VehiclePass::updateOrCreate(['event_id' => $eventId], $values)
+            : VehiclePass::updateOrCreate(['legacy_pass_key' => $legacyPassKey], $values);
+
+        $this->vehicleProfiles->syncForPass($vehiclePass, $vehiclePass->wasRecentlyCreated);
 
         return true;
     }
