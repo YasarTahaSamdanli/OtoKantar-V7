@@ -103,6 +103,78 @@ class LiveIngestTest extends TestCase
         $this->assertSame('06TST012', $payload['kayitlar'][0]['plaka']);
     }
 
+    public function test_live_ingest_fills_zero_entry_weight_from_scale_and_keeps_net_empty(): void
+    {
+        $runtimePath = storage_path('framework/testing/live-ingest/'.__FUNCTION__);
+
+        config([
+            'services.legacy_runtime.api_token' => 'secret-token',
+            'services.legacy_runtime.path' => $runtimePath,
+        ]);
+
+        $this->withHeader('Authorization', 'Bearer secret-token')
+            ->post('/api/live-ingest', [
+                'json' => json_encode([
+                    'event_type' => 'GIRIS',
+                    'son_guncelleme' => '2026-06-08T12:00:00',
+                    'kantar_kg' => 18500,
+                    'son_kayit' => [
+                        'plaka' => '06ZERO01',
+                        'durum' => 'GIRIS',
+                        'giris_tarih' => '2026-06-08',
+                        'giris_saat' => '12:00:00',
+                        'giris_agirlik' => 0,
+                        'net_agirlik' => 999,
+                        'guven' => 0.9,
+                    ],
+                ]),
+            ])
+            ->assertOk();
+
+        $durum = json_decode(File::get($runtimePath.DIRECTORY_SEPARATOR.'canli_durum.json'), true);
+
+        $this->assertSame(18500, $durum['son_kayit']['giris_agirlik']);
+        $this->assertNull($durum['son_kayit']['net_agirlik']);
+    }
+
+    public function test_live_ingest_calculates_net_vehicle_and_material_weight_on_exit(): void
+    {
+        $runtimePath = storage_path('framework/testing/live-ingest/'.__FUNCTION__);
+
+        config([
+            'services.legacy_runtime.api_token' => 'secret-token',
+            'services.legacy_runtime.path' => $runtimePath,
+        ]);
+
+        $this->withHeader('Authorization', 'Bearer secret-token')
+            ->post('/api/live-ingest', [
+                'json' => json_encode([
+                    'event_type' => 'CIKIS',
+                    'son_guncelleme' => '2026-06-08T14:00:00',
+                    'kantar_kg' => 12000,
+                    'son_kayit' => [
+                        'plaka' => '06NET001',
+                        'durum' => 'CIKIS',
+                        'giris_tarih' => '2026-06-08',
+                        'giris_saat' => '12:00:00',
+                        'giris_agirlik' => 42000,
+                        'cikis_tarih' => '2026-06-08',
+                        'cikis_saat' => '14:00:00',
+                        'cikis_agirlik' => 0,
+                        'guven' => 0.9,
+                    ],
+                ]),
+            ])
+            ->assertOk();
+
+        $durum = json_decode(File::get($runtimePath.DIRECTORY_SEPARATOR.'canli_durum.json'), true);
+
+        $this->assertSame(12000, $durum['son_kayit']['cikis_agirlik']);
+        $this->assertSame(12000, $durum['son_kayit']['arac_agirlik']);
+        $this->assertSame(30000, $durum['son_kayit']['malzeme_agirlik']);
+        $this->assertSame(30000, $durum['son_kayit']['net_agirlik']);
+    }
+
     public function test_json_panel_fallback_reads_csv_history_when_jsonl_is_missing(): void
     {
         $runtimePath = storage_path('framework/testing/live-ingest/'.__FUNCTION__);

@@ -398,6 +398,14 @@ main{
 .record-summary::-webkit-details-marker{display:none}
 .record-summary::after{content:"+";justify-self:end;color:var(--dim);font:700 15px var(--mono)}
 .record-item[open] .record-summary::after{content:"-"}
+.record-summary small{
+  display:block;
+  margin-bottom:3px;
+  color:var(--dim);
+  font:10px var(--mono);
+  letter-spacing:.07em;
+  text-transform:uppercase;
+}
 .plate-td{color:var(--text);font-weight:700;letter-spacing:.07em}
 .record-detail{
   display:grid;

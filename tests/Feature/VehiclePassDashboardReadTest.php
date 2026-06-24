@@ -69,6 +69,27 @@ class VehiclePassDashboardReadTest extends TestCase
             ->assertJsonPath('kayitlar.0.net_agirlik', 4050);
     }
 
+    public function test_exit_record_exposes_vehicle_and_material_weight_difference(): void
+    {
+        $user = User::factory()->create(['role' => 'employee']);
+        $this->createVehiclePass([
+            'event_id' => '34NET001-CIKIS-2026-06-23-18-15-00',
+            'plate' => '34NET001',
+            'direction' => 'CIKIS',
+            'passed_at' => '2026-06-23 18:15:00',
+            'entry_weight_kg' => 42000,
+            'exit_weight_kg' => 12000,
+            'net_weight_kg' => null,
+        ]);
+
+        $this->actingAs($user)
+            ->getJson('/canli/archive?period=day&date=2026-06-23&plate=34NET')
+            ->assertOk()
+            ->assertJsonPath('kayitlar.0.arac_agirlik', 12000)
+            ->assertJsonPath('kayitlar.0.malzeme_agirlik', 30000)
+            ->assertJsonPath('kayitlar.0.net_agirlik', 30000);
+    }
+
     public function test_admin_csv_export_prefers_vehicle_passes_when_records_exist(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);

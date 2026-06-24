@@ -262,6 +262,8 @@ const Utils = {
       cikis_saat: cikisSaat,
       cikis_agirlik: this.toNum(record.cikis_agirlik),
       net_agirlik: this.toNum(record.net_agirlik),
+      arac_agirlik: this.toNum(record.arac_agirlik),
+      malzeme_agirlik: this.toNum(record.malzeme_agirlik),
       guven: this.toNum(record.guven) || 0,
       gecis_zamani: String(record.gecis_zamani || '').trim(),
     };
@@ -343,8 +345,11 @@ const UI = {
   },
   recordWeight(record) {
     return record.tip === 'CIKIS'
-      ? (record.net_agirlik ?? record.cikis_agirlik ?? record.giris_agirlik)
+      ? (record.malzeme_agirlik ?? record.net_agirlik ?? record.cikis_agirlik ?? record.giris_agirlik)
       : record.giris_agirlik;
+  },
+  recordWeightLabel(record) {
+    return record.tip === 'CIKIS' ? 'Malzeme' : 'Tartim';
   },
   recordDateTime(record) {
     return {
@@ -358,8 +363,10 @@ const UI = {
   renderRecordRow(record) {
     const percent = Math.max(0, Math.min(100, Math.round((record.guven || 0) * 100)));
     const { date, time } = this.recordDateTime(record);
-    const net = record.net_agirlik ?? this.recordWeight(record);
-    return `<details class="record-item"><summary class="record-summary"><span class="plate-td">${Utils.escapeHtml(record.plaka || '--')}</span><span>${Utils.escapeHtml(date || '--')}</span><span>${Utils.escapeHtml(Utils.kg(net))} kg</span><span><span class="tag ${this.recordTag(record.tip)}">${Utils.escapeHtml(record.tip)}</span></span></summary><div class="record-detail"><div><span>Giris</span><b>${Utils.escapeHtml(record.giris_tarih || '--')} ${Utils.escapeHtml(record.giris_saat || '--')}</b></div><div><span>Giris kg</span><b>${Utils.escapeHtml(Utils.kg(record.giris_agirlik))}</b></div><div><span>Cikis</span><b>${Utils.escapeHtml(record.cikis_tarih || '--')} ${Utils.escapeHtml(record.cikis_saat || '--')}</b></div><div><span>Cikis kg</span><b>${Utils.escapeHtml(Utils.kg(record.cikis_agirlik))}</b></div><div><span>Net kg</span><b>${Utils.escapeHtml(Utils.kg(record.net_agirlik))}</b></div><div><span>Guven</span><b class="conf"><span class="conf-track"><span class="conf-fill${this.confidenceClass(percent)}" style="width:${percent}%"></span></span><span>%${percent}</span></b></div></div></details>`;
+    const weight = this.recordWeight(record);
+    const weightLabel = this.recordWeightLabel(record);
+    const materialWeight = record.malzeme_agirlik ?? record.net_agirlik;
+    return `<details class="record-item"><summary class="record-summary"><span class="plate-td">${Utils.escapeHtml(record.plaka || '--')}</span><span>${Utils.escapeHtml(date || '--')}</span><span><small>${Utils.escapeHtml(weightLabel)}</small>${Utils.escapeHtml(Utils.kg(weight))} kg</span><span><span class="tag ${this.recordTag(record.tip)}">${Utils.escapeHtml(record.tip)}</span></span></summary><div class="record-detail"><div><span>Giris</span><b>${Utils.escapeHtml(record.giris_tarih || '--')} ${Utils.escapeHtml(record.giris_saat || '--')}</b></div><div><span>Giris kg</span><b>${Utils.escapeHtml(Utils.kg(record.giris_agirlik))}</b></div><div><span>Cikis</span><b>${Utils.escapeHtml(record.cikis_tarih || '--')} ${Utils.escapeHtml(record.cikis_saat || '--')}</b></div><div><span>Cikis kg</span><b>${Utils.escapeHtml(Utils.kg(record.cikis_agirlik))}</b></div><div><span>Arac / Dara kg</span><b>${Utils.escapeHtml(Utils.kg(record.arac_agirlik))}</b></div><div><span>Malzeme / Net kg</span><b>${Utils.escapeHtml(Utils.kg(materialWeight))}</b></div><div><span>Guven</span><b class="conf"><span class="conf-track"><span class="conf-fill${this.confidenceClass(percent)}" style="width:${percent}%"></span></span><span>%${percent}</span></b></div></div></details>`;
   },
   renderChartColumn(value, index, max, hour) {
     const height = Math.max(4, Math.round((value / max) * 92));
@@ -683,6 +690,8 @@ const Demo = {
       cikis_saat: tip === 'CIKIS' ? saat : '',
       cikis_agirlik: tip === 'CIKIS' ? 42000 : null,
       net_agirlik: tip === 'CIKIS' ? 30000 : null,
+      arac_agirlik: tip === 'CIKIS' ? 12000 : null,
+      malzeme_agirlik: tip === 'CIKIS' ? 30000 : null,
       guven,
     });
     State.total += 1;

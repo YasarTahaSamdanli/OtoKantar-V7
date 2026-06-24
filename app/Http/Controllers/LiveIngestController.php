@@ -41,6 +41,10 @@ class LiveIngestController extends Controller
             $wrote = [];
 
             $payload = $this->extractJsonPayload($request);
+            if ($this->isTransitionEvent($payload)) {
+                $payload = $this->enrichTransitionWeights($payload);
+            }
+
             if ($payload !== null) {
                 $payload['_remote_ingest_at'] = now()->toIso8601String();
                 $this->atomicWrite($root.DIRECTORY_SEPARATOR.'canli_durum.json', json_encode(
@@ -311,6 +315,65 @@ class LiveIngestController extends Controller
         }
 
         return max(0.0, min(1.0, $confidence));
+    }
+
+    private function enrichTransitionWeights(?array $payload): ?array
+    {
+        if ($payload === null) {
+            return null;
+        }
+
+        $record = is_array($payload['son_kayit'] ?? null) ? $payload['son_kayit'] : $payload;
+        $direction = strtoupper(trim((string) (
+            $payload['event_type']
+            ?? $payload['olay_tipi']
+            ?? $payload['_event_type']
+            ?? $record['tip']
+            ?? $record['durum']
+            ?? 'GIRIS'
+        )));
+        $direction = $direction === 'CIKIS' ? 'CIKIS' : 'GIRIS';
+
+        $scaleWeight = $this->positiveWeight($payload['kantar_kg'] ?? null);
+        $entryWeight = $this->positiveWeight($record['giris_agirlik'] ?? null);
+        $exitWeight = $this->positiveWeight($record['cikis_agirlik'] ?? null);
+
+        if ($direction === 'GIRIS') {
+            if ($entryWeight === null && $scaleWeight !== null) {
+                $record['giris_agirlik'] = $scaleWeight;
+            }
+
+            $record['net_agirlik'] = null;
+            $record['malzeme_agirlik'] = null;
+            $record['arac_agirlik'] = null;
+        } else {
+            if ($exitWeight === null && $scaleWeight !== null) {
+                $exitWeight = $scaleWeight;
+                $record['cikis_agirlik'] = $scaleWeight;
+            }
+
+            if ($entryWeight !== null && $exitWeight !== null) {
+                $netWeight = abs($exitWeight - $entryWeight);
+                $record['net_agirlik'] = $netWeight;
+                $record['malzeme_agirlik'] = $netWeight;
+                $record['arac_agirlik'] = min($entryWeight, $exitWeight);
+            }
+        }
+
+        if (is_array($payload['son_kayit'] ?? null)) {
+            $payload['son_kayit'] = $record;
+        } else {
+            $payload = array_merge($payload, $record);
+        }
+
+        return $payload;
+    }
+
+    private function positiveWeight(mixed $value): ?float
+    {
+        $weight = $this->parseWeight($value);
+
+        return $weight !== null && $weight > 0 ? $weight : null;
     }
 
     private function storeVehiclePass(?array $payload, string $root, bool $snapshotWritten): bool

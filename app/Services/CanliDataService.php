@@ -180,7 +180,7 @@ class CanliDataService
             ->get();
 
         $filename = 'kantar_raporu_vehicle_passes_' . $this->filterSlug($filters) . '_' . date('Ymd_His') . '.csv';
-        $header = ['Plaka', 'Yon', 'GecisZamani', 'GirisKg', 'CikisKg', 'NetKg', 'Guven', 'Snapshot'];
+        $header = ['Plaka', 'Yon', 'GecisZamani', 'GirisKg', 'CikisKg', 'AracKg', 'MalzemeKg', 'NetKg', 'Guven', 'Snapshot'];
 
         $out = fopen('php://temp', 'w+');
         fwrite($out, "\xEF\xBB\xBF");
@@ -193,6 +193,8 @@ class CanliDataService
                 $record['gecis_zamani'] ?? '',
                 $record['giris_agirlik'] ?? '',
                 $record['cikis_agirlik'] ?? '',
+                $record['arac_agirlik'] ?? '',
+                $record['malzeme_agirlik'] ?? '',
                 $record['net_agirlik'] ?? '',
                 $record['guven'] ?? '',
                 $pass->snapshot_url ?: $pass->snapshot_path,
@@ -500,22 +502,26 @@ class CanliDataService
             : (string) ($row['GirisSaat'] ?? $row['CikisSaat'] ?? '');
         $timestamp = strtotime(trim($date.' '.$time));
 
-        return [
+        $entryWeight = $this->agirlikService->parseAgirlik($row['GirisAgirlik(kg)'] ?? null);
+        $exitWeight = $this->agirlikService->parseAgirlik($row['CikisAgirlik(kg)'] ?? null);
+        $netWeight = $this->agirlikService->parseAgirlik($row['NetAgirlik(kg)'] ?? null);
+
+        return array_merge([
             'arac_id' => 0,
             'plaka' => (string) ($row['Plaka'] ?? ''),
             'durum' => $tip,
             'tip' => $tip,
             'giris_tarih' => (string) ($row['GirisTarih'] ?? ''),
             'giris_saat' => (string) ($row['GirisSaat'] ?? ''),
-            'giris_agirlik' => $this->agirlikService->parseAgirlik($row['GirisAgirlik(kg)'] ?? null),
+            'giris_agirlik' => $entryWeight,
             'cikis_tarih' => (string) ($row['CikisTarih'] ?? ''),
             'cikis_saat' => (string) ($row['CikisSaat'] ?? ''),
-            'cikis_agirlik' => $this->agirlikService->parseAgirlik($row['CikisAgirlik(kg)'] ?? null),
-            'net_agirlik' => $this->agirlikService->parseAgirlik($row['NetAgirlik(kg)'] ?? null),
+            'cikis_agirlik' => $exitWeight,
+            'net_agirlik' => $netWeight,
             'guven' => $this->parseGuven($row['Guven'] ?? null),
             'kara_liste' => false,
             'gecis_zamani' => $timestamp !== false ? date('Y-m-d H:i:s', $timestamp) : null,
-        ];
+        ], $this->agirlikDetayi($tip, $entryWeight, $exitWeight, $netWeight));
     }
 
     private function kayitlariBirlestir(array $primary, array $secondary, int $limit): array
@@ -601,21 +607,53 @@ class CanliDataService
             $time = $time !== '' ? $time : date('H:i:s', $timestamp);
         }
 
-        return [
+        $entryWeight = $this->agirlikService->parseAgirlik($row['giris_agirlik'] ?? null);
+        $exitWeight = $this->agirlikService->parseAgirlik($row['cikis_agirlik'] ?? null);
+        $netWeight = $this->agirlikService->parseAgirlik($row['net_agirlik'] ?? null);
+
+        return array_merge([
             'arac_id' => (int) ($row['arac_id'] ?? 0),
             'plaka' => (string) ($row['plaka'] ?? ''),
             'durum' => $tip,
             'tip' => $tip,
             'giris_tarih' => $tip === 'GIRIS' ? $date : (string) ($row['giris_tarih'] ?? ''),
             'giris_saat' => $tip === 'GIRIS' ? $time : (string) ($row['giris_saat'] ?? ''),
-            'giris_agirlik' => $this->agirlikService->parseAgirlik($row['giris_agirlik'] ?? null),
+            'giris_agirlik' => $entryWeight,
             'cikis_tarih' => $tip === 'CIKIS' ? $date : (string) ($row['cikis_tarih'] ?? ''),
             'cikis_saat' => $tip === 'CIKIS' ? $time : (string) ($row['cikis_saat'] ?? ''),
-            'cikis_agirlik' => $this->agirlikService->parseAgirlik($row['cikis_agirlik'] ?? null),
-            'net_agirlik' => $this->agirlikService->parseAgirlik($row['net_agirlik'] ?? null),
+            'cikis_agirlik' => $exitWeight,
+            'net_agirlik' => $netWeight,
             'guven' => $this->parseGuven($row['guven'] ?? null),
             'kara_liste' => (bool) ($row['kara_liste'] ?? false),
             'gecis_zamani' => $timestamp !== false ? date('Y-m-d H:i:s', $timestamp) : null,
+        ], $this->agirlikDetayi($tip, $entryWeight, $exitWeight, $netWeight));
+    }
+
+    private function agirlikDetayi(string $tip, ?float $entryWeight, ?float $exitWeight, ?float $netWeight): array
+    {
+        if ($tip !== 'CIKIS') {
+            return [
+                'arac_agirlik' => null,
+                'malzeme_agirlik' => null,
+            ];
+        }
+
+        if ($entryWeight !== null && $entryWeight <= 0) {
+            $entryWeight = null;
+        }
+        if ($exitWeight !== null && $exitWeight <= 0) {
+            $exitWeight = null;
+        }
+
+        $materialWeight = $netWeight !== null && $netWeight > 0 ? $netWeight : null;
+        if ($materialWeight === null && $entryWeight !== null && $exitWeight !== null) {
+            $materialWeight = abs($exitWeight - $entryWeight);
+        }
+
+        return [
+            'arac_agirlik' => $entryWeight !== null && $exitWeight !== null ? min($entryWeight, $exitWeight) : null,
+            'malzeme_agirlik' => $materialWeight,
+            'net_agirlik' => $materialWeight,
         ];
     }
 
@@ -660,23 +698,27 @@ class CanliDataService
         $entryAt = $pass->entry_at ?: ($direction === 'GIRIS' ? $passedAt : null);
         $exitAt = $pass->exit_at ?: ($direction === 'CIKIS' ? $passedAt : null);
 
-        return [
+        $entryWeight = $pass->entry_weight_kg !== null ? (float) $pass->entry_weight_kg : null;
+        $exitWeight = $pass->exit_weight_kg !== null ? (float) $pass->exit_weight_kg : null;
+        $netWeight = $pass->net_weight_kg !== null ? (float) $pass->net_weight_kg : null;
+
+        return array_merge([
             'arac_id' => $pass->legacy_vehicle_id ?: $pass->id,
             'plaka' => (string) $pass->plate,
             'durum' => $direction,
             'tip' => $direction,
             'giris_tarih' => $entryAt ? $entryAt->format('Y-m-d') : '',
             'giris_saat' => $entryAt ? $entryAt->format('H:i:s') : '',
-            'giris_agirlik' => $pass->entry_weight_kg !== null ? (float) $pass->entry_weight_kg : null,
+            'giris_agirlik' => $entryWeight,
             'cikis_tarih' => $exitAt ? $exitAt->format('Y-m-d') : '',
             'cikis_saat' => $exitAt ? $exitAt->format('H:i:s') : '',
-            'cikis_agirlik' => $pass->exit_weight_kg !== null ? (float) $pass->exit_weight_kg : null,
-            'net_agirlik' => $pass->net_weight_kg !== null ? (float) $pass->net_weight_kg : null,
+            'cikis_agirlik' => $exitWeight,
+            'net_agirlik' => $netWeight,
             'guven' => $this->parseGuven($pass->confidence),
             'kara_liste' => (bool) $pass->is_blacklisted,
             'gecis_zamani' => $passedAt ? $passedAt->format('Y-m-d H:i:s') : null,
             'snapshot' => $pass->snapshot_url ?: $pass->snapshot_path,
-        ];
+        ], $this->agirlikDetayi($direction, $entryWeight, $exitWeight, $netWeight));
     }
 
     private function vehiclePassDurumPayload(?array $sonKayit): array
@@ -814,23 +856,26 @@ class CanliDataService
             }
             $plaka = strtoupper(trim((string) ($r['plaka'] ?? '')));
             $weights = $this->agirlikService->agirlikBul($plaka, $tip, $tarih, $saat, $agirlikIndex, $csvAgirlikIndex);
+            $entryWeight = is_array($weights) ? ($weights['giris_agirlik'] ?? null) : null;
+            $exitWeight = is_array($weights) ? ($weights['cikis_agirlik'] ?? null) : null;
+            $netWeight = is_array($weights) ? ($weights['net_agirlik'] ?? null) : null;
 
-            $kayitlar[] = [
+            $kayitlar[] = array_merge([
                 'arac_id' => (int) ($r['arac_id'] ?? 0),
                 'plaka' => (string) ($r['plaka'] ?? ''),
                 'durum' => $tip,
                 'tip' => $tip,
                 'giris_tarih' => $tip === 'GIRIS' ? $tarih : '',
                 'giris_saat' => $tip === 'GIRIS' ? $saat : '',
-                'giris_agirlik' => is_array($weights) ? ($weights['giris_agirlik'] ?? null) : null,
+                'giris_agirlik' => $entryWeight,
                 'cikis_tarih' => $tip === 'CIKIS' ? $tarih : '',
                 'cikis_saat' => $tip === 'CIKIS' ? $saat : '',
-                'cikis_agirlik' => is_array($weights) ? ($weights['cikis_agirlik'] ?? null) : null,
-                'net_agirlik' => is_array($weights) ? ($weights['net_agirlik'] ?? null) : null,
+                'cikis_agirlik' => $exitWeight,
+                'net_agirlik' => $netWeight,
                 'guven' => $this->parseGuven($r['guven'] ?? null),
                 'kara_liste' => (bool) ($r['kara_liste'] ?? false),
                 'gecis_zamani' => $r['gecis_zamani'] ?? null,
-            ];
+            ], $this->agirlikDetayi($tip, $entryWeight, $exitWeight, $netWeight));
         }
 
         return $kayitlar;
