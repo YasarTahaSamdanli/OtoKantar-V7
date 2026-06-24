@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Services\CanliDataService;
+use App\Services\AuditLogService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -15,6 +16,7 @@ class CanliController extends Controller
 {
     public function __construct(
         private readonly CanliDataService $canliData,
+        private readonly AuditLogService $audit,
     ) {}
 
     public function view(Request $request)
@@ -233,6 +235,12 @@ class CanliController extends Controller
                     }
                 }
             }
+
+            $this->audit->record('canli.csv.exported', $request, metadata: [
+                'filters' => $filters,
+                'filename' => $export['filename'] ?? null,
+                'row_count' => $export['row_count'] ?? null,
+            ]);
 
             return Response::make($export['content'], 200, [
                 'Content-Type' => 'text/csv; charset=utf-8',

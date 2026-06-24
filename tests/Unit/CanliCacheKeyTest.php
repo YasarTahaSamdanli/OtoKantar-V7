@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Http\Controllers\CanliController;
+use App\Services\AuditLogService;
 use App\Services\CanliDataService;
 use Illuminate\Http\Request;
 use ReflectionMethod;
@@ -76,7 +77,10 @@ class CanliCacheKeyTest extends TestCase
         $method->setAccessible(true);
 
         return $method->invoke(
-            new CanliController($this->app->make(CanliDataService::class)),
+            new CanliController(
+                $this->app->make(CanliDataService::class),
+                $this->app->make(AuditLogService::class),
+            ),
             $request,
             (string) ($query['action'] ?? 'panel'),
             min(200, max(1, (int) ($query['limit'] ?? 40)))

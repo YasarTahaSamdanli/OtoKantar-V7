@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\VehiclePass;
+use App\Services\AuditLogService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -13,12 +14,22 @@ use Throwable;
 
 class LiveIngestController extends Controller
 {
+    public function __construct(
+        private readonly AuditLogService $audit,
+    ) {}
+
     public function store(Request $request)
     {
         $expectedToken = (string) config('services.legacy_runtime.api_token', '');
         $givenToken = $request->bearerToken() ?: (string) $request->header('X-API-Token', '');
 
         if ($expectedToken === '' || !hash_equals($expectedToken, $givenToken)) {
+            $this->audit->record('live_ingest.rejected', $request, metadata: [
+                'reason' => $expectedToken === '' ? 'token_not_configured' : 'invalid_token',
+                'has_json' => $request->input('json') !== null || $request->input('payload') !== null || $request->json()->all() !== [],
+                'has_image' => $request->hasFile('image') || $request->input('image_base64') !== null,
+            ]);
+
             return response()->json(['hata' => 'Yetkisiz istek'], Response::HTTP_UNAUTHORIZED);
         }
 
@@ -72,10 +83,20 @@ class LiveIngestController extends Controller
             }
 
             if ($wrote === []) {
+                $this->audit->record('live_ingest.rejected', $request, metadata: [
+                    'reason' => 'empty_payload',
+                ]);
+
                 return response()->json([
                     'hata' => 'JSON veya JPG verisi bulunamadi.',
                 ], Response::HTTP_UNPROCESSABLE_ENTITY);
             }
+
+            $this->audit->record('live_ingest.accepted', $request, metadata: [
+                'wrote' => $wrote,
+                'runtime_path' => $root,
+                'event_type' => $payload['event_type'] ?? $payload['olay_tipi'] ?? $payload['_event_type'] ?? null,
+            ]);
 
             return response()->json([
                 'ok' => true,

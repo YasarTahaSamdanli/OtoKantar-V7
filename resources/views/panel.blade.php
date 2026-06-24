@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>OtoKantar V7 | Canli Izleme</title>
+    <title>OtoKantar V7 | Canli Operasyon</title>
     @vite(['resources/css/panel.css'])
 </head>
 <body>
@@ -17,12 +17,13 @@
                 <path d="M4.4 5V3.7C4.4 2.76 5.16 2 6.1 2H9.9C10.84 2 11.6 2.76 11.6 3.7V5" stroke="#21d19f" stroke-width="1.1"/>
             </svg>
         </div>
-        <div><h1>OtoKantar</h1><p>Canli panel | MySQL + JSON durum + JPG</p></div>
+        <div><h1>OtoKantar</h1><p>Canli operasyon merkezi</p></div>
     </div>
     <div class="side">
         @if (Auth::user()->isAdmin())
             <a class="toplink" href="{{ route('dashboard') }}">Yonetim</a>
             <a class="toplink" href="{{ route('admin.users.index') }}">Kullanicilar</a>
+            <a class="toplink" href="{{ route('admin.audit-logs.index') }}">Audit Log</a>
         @endif
         <div class="pill" id="pill"><span class="dot"></span><span id="pill-text">BEKLENIYOR</span></div>
         <div class="clock" id="clock">--:--:--</div>
@@ -35,6 +36,25 @@
 </div>
 
 <main class="tab-panel active" data-panel="genel">
+    <section class="ops-strip span4">
+        <div>
+            <span class="ops-label">Saha akisi</span>
+            <strong>Remote ingest + merkezi kayit</strong>
+        </div>
+        <div>
+            <span class="ops-label">Health</span>
+            <strong>/up aktif</strong>
+        </div>
+        <div>
+            <span class="ops-label">Kaynak</span>
+            <strong id="arch">VehiclePass + JSON</strong>
+        </div>
+        <div>
+            <span class="ops-label">Saat</span>
+            <strong id="ops-clock">--:--:--</strong>
+        </div>
+    </section>
+
     <section class="card hero span2">
         <div class="grow">
             <div class="eyebrow">Anlik kantar</div>
@@ -72,6 +92,26 @@
     <x-panel.metric-card title="Bugun kayit" value-id="m1" subtitle="gunluk toplam" subtitle-id="m1s" />
     <x-panel.metric-card title="Son 1 saat" value-id="m4" value-class="warn" subtitle="kayit hareketi" />
     <x-panel.metric-card title="Tamamlanan" value-id="m3" subtitle="bugunku cikis" />
+
+    <section class="card span2">
+        <x-panel.card-head title="Saatlik hareket" badge="12 saat" />
+        <div class="mini-chart" id="chart"></div>
+    </section>
+
+    <section class="card">
+        <x-panel.card-head title="Sistem" badge="durum" />
+        <div class="info-grid">
+            <x-panel.info-item label="Mod" value="--" value-id="mode" />
+            <x-panel.info-item label="OCR" value="--" value-id="ocr" />
+            <x-panel.info-item label="AI" value="--" value-id="ai" />
+            <x-panel.info-item label="Mimari" value="--" value-id="arch-card" />
+        </div>
+    </section>
+
+    <section class="card">
+        <x-panel.card-head title="Olay akisi" badge="log" badge-id="log-count" />
+        <div class="log" id="log"></div>
+    </section>
 </main>
 
 <main class="tab-panel" data-panel="kayitlar">
@@ -370,6 +410,8 @@ const UI = {
     if (mode) mode.textContent = s.simulasyon_modu ? 'SIMULASYON' : 'CANLI';
     if (ocr) ocr.textContent = s.ocr_kare_atlama ? `Her ${s.ocr_kare_atlama}. kare` : 'Dinamik';
     if (arch) arch.textContent = s?.mimari || 'MySQL + JSON + JPG';
+    const archCard = Utils.el('arch-card');
+    if (archCard) archCard.textContent = s?.mimari || 'MySQL + JSON + JPG';
   },
   setMetrics(summary, durum) {
     Utils.el('m1').textContent = String(Number(summary?.bugun_kayit ?? 0));
@@ -785,6 +827,8 @@ const App = {
   startClock() {
     setInterval(() => {
       Utils.el('clock').textContent = Utils.now();
+      const opsClock = Utils.el('ops-clock');
+      if (opsClock) opsClock.textContent = Utils.now();
       if (State.lastUpdateMs !== null && !State.demoOn) {
         UI.updateFresh((Date.now() - State.lastUpdateMs) / 1000);
       }
