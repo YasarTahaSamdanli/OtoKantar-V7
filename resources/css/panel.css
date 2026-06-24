@@ -101,6 +101,7 @@ header{
   text-transform:uppercase;
 }
 .toplink:hover,.btn:hover,.page-btn:hover{background:var(--surface-3);color:var(--text)}
+.toplink.primary-link{border-color:rgba(24,195,143,.32);background:var(--acc-soft);color:var(--acc)}
 
 .view-switch{
   gap:8px;
@@ -140,6 +141,57 @@ main{
   box-shadow:0 12px 30px rgba(0,0,0,.22);
 }
 .card{padding:14px}
+.drawer{padding:0;overflow:hidden}
+.drawer summary{
+  min-height:64px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:14px;
+  padding:14px;
+  cursor:pointer;
+  list-style:none;
+}
+.drawer summary::-webkit-details-marker{display:none}
+.drawer summary b{
+  display:block;
+  font-size:15px;
+  color:var(--text);
+}
+.drawer summary small{
+  display:block;
+  margin-top:4px;
+  color:var(--muted);
+  font:12px 'Inter',sans-serif;
+}
+.drawer summary i{
+  flex:0 0 auto;
+  min-height:28px;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  border-radius:8px;
+  border:1px solid var(--line);
+  padding:0 10px;
+  color:var(--muted);
+  font:600 12px 'Inter',sans-serif;
+  font-style:normal;
+}
+.drawer[open] summary{border-bottom:1px solid var(--line-soft)}
+.drawer[open] summary i{background:var(--surface-3);color:var(--text)}
+.drawer-body{padding:14px}
+.metrics-grid{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:10px;
+}
+.metric-tile{
+  min-width:0;
+  border:1px solid var(--line-soft);
+  border-radius:8px;
+  background:rgba(255,255,255,.025);
+  padding:14px;
+}
 .hero{
   display:flex;
   justify-content:space-between;
@@ -387,6 +439,7 @@ main{
   .span4{grid-column:1/-1}
   .span2{grid-column:span 2}
   .ops-strip{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .metrics-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 
 @media(max-width:760px){
@@ -396,6 +449,7 @@ main{
   .view-switch{padding:12px 12px 0}
   .span2,.span4{grid-column:span 1}
   .ops-strip{grid-template-columns:1fr}
+  .metrics-grid{grid-template-columns:1fr}
   .hero-grid{min-width:0;flex:1 1 100%}
   .info-grid{grid-template-columns:1fr}
   .records-head,.record-tools{align-items:stretch}

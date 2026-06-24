@@ -13,11 +13,9 @@
                 </a>
 
                 <div class="hidden items-center gap-2 lg:flex">
-                    @if (Auth::user()->isAdmin())
-                        <x-nav-link :href="route('dashboard')" :active="request()->routeIs('dashboard')">
-                            Ozet
-                        </x-nav-link>
-                    @endif
+                    <x-nav-link :href="route('dashboard')" :active="request()->routeIs('dashboard')">
+                        Ozet
+                    </x-nav-link>
                     <x-nav-link :href="route('canli.view')" :active="request()->routeIs('canli.*')">
                         Canli Panel
                     </x-nav-link>
@@ -77,11 +75,9 @@
 
     <div :class="{'block': open, 'hidden': ! open}" class="hidden border-t border-white/10 bg-[#0f151f] lg:hidden">
         <div class="space-y-1 py-2">
-            @if (Auth::user()->isAdmin())
-                <x-responsive-nav-link :href="route('dashboard')" :active="request()->routeIs('dashboard')">
-                    Ozet
-                </x-responsive-nav-link>
-            @endif
+            <x-responsive-nav-link :href="route('dashboard')" :active="request()->routeIs('dashboard')">
+                Ozet
+            </x-responsive-nav-link>
             <x-responsive-nav-link :href="route('canli.view')" :active="request()->routeIs('canli.*')">
                 Canli Panel
             </x-responsive-nav-link>

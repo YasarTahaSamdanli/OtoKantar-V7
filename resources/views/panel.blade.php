@@ -20,11 +20,11 @@
         <div><h1>OtoKantar</h1><p>Canli operasyon merkezi</p></div>
     </div>
     <div class="side">
+        <a class="toplink primary-link" href="{{ route('dashboard') }}">Ozet Sayfasi</a>
         @if (Auth::user()->isAdmin())
-            <a class="toplink" href="{{ route('dashboard') }}">Yonetim</a>
             <a class="toplink" href="{{ route('admin.users.index') }}">Kullanicilar</a>
-            <a class="toplink" href="{{ route('admin.audit-logs.index') }}">Audit Log</a>
         @endif
+        <a class="toplink" href="{{ route('vehicle-profiles.index') }}">Arac Kartlari</a>
         <div class="pill" id="pill"><span class="dot"></span><span id="pill-text">BEKLENIYOR</span></div>
         <div class="clock" id="clock">--:--:--</div>
     </div>
@@ -36,35 +36,16 @@
 </div>
 
 <main class="tab-panel active" data-panel="genel">
-    <section class="ops-strip span4">
-        <div>
-            <span class="ops-label">Saha akisi</span>
-            <strong>Remote ingest + merkezi kayit</strong>
-        </div>
-        <div>
-            <span class="ops-label">Health</span>
-            <strong>/up aktif</strong>
-        </div>
-        <div>
-            <span class="ops-label">Kaynak</span>
-            <strong id="arch">VehiclePass + JSON</strong>
-        </div>
-        <div>
-            <span class="ops-label">Saat</span>
-            <strong id="ops-clock">--:--:--</strong>
-        </div>
-    </section>
-
     <section class="card hero span2">
         <div class="grow">
             <div class="eyebrow">Anlik kantar</div>
             <div class="weight" id="kg">--</div>
-            <div class="metric-s status-text" id="kg-status">Agirlik verisi bekleniyor (/canli/live-ticker)</div>
+            <div class="metric-s status-text" id="kg-status">Agirlik verisi bekleniyor</div>
             <div class="bar"><span id="stale-bar"></span></div>
         </div>
         <div class="hero-grid">
             <x-panel.hero-stat title="Plaka tampon" value-id="buffer" />
-            <x-panel.hero-stat title="Veri yasi" value-id="fresh" subtitle="guncelleme bekleniyor" subtitle-id="fresh-sub" />
+            <x-panel.hero-stat title="Son sinyal" value-id="fresh" subtitle="guncelleme bekleniyor" subtitle-id="fresh-sub" />
         </div>
     </section>
 
@@ -81,41 +62,68 @@
         <div class="verify" id="verify">Dogrulama bekleniyor</div>
         <div class="btns">
             <button class="btn" id="refresh" type="button">Simdi yenile</button>
-            <button class="btn primary" id="demo" type="button">Demo modu</button>
             @if (Auth::user()->isAdmin())
                 <a class="btn" href="{{ route('canli.csv') }}" id="csv">CSV indir</a>
             @endif
         </div>
     </section>
 
-    <x-panel.metric-card title="Icerdeki arac sayisi" value-id="m2" value-class="acc" subtitle="cikisi bekleyen arac" subtitle-id="m2s" />
-    <x-panel.metric-card title="Bugun kayit" value-id="m1" subtitle="gunluk toplam" subtitle-id="m1s" />
-    <x-panel.metric-card title="Son 1 saat" value-id="m4" value-class="warn" subtitle="kayit hareketi" />
-    <x-panel.metric-card title="Tamamlanan" value-id="m3" subtitle="bugunku cikis" />
-
-    <section class="card span2">
-        <x-panel.card-head title="Saatlik hareket" badge="12 saat" />
-        <div class="mini-chart" id="chart"></div>
-    </section>
-
-    <section class="card">
-        <x-panel.card-head title="Sistem" badge="durum" />
-        <div class="info-grid">
-            <x-panel.info-item label="Mod" value="--" value-id="mode" />
-            <x-panel.info-item label="OCR" value="--" value-id="ocr" />
-            <x-panel.info-item label="AI" value="--" value-id="ai" />
-            <x-panel.info-item label="Mimari" value="--" value-id="arch-card" />
+    <details class="card drawer span4">
+        <summary>
+            <span>
+                <b>Gunluk Ozet</b>
+                <small>Icerdeki arac, bugunku kayit ve tamamlanan cikislar</small>
+            </span>
+            <i>Ac / Kapat</i>
+        </summary>
+        <div class="drawer-body metrics-grid">
+            <div class="metric-tile">
+                <div class="title">Icerdeki arac sayisi</div>
+                <div class="metric-v acc" id="m2">0</div>
+                <div class="metric-s" id="m2s">cikisi bekleyen arac</div>
+            </div>
+            <div class="metric-tile">
+                <div class="title">Bugun kayit</div>
+                <div class="metric-v" id="m1">0</div>
+                <div class="metric-s" id="m1s">gunluk toplam</div>
+            </div>
+            <div class="metric-tile">
+                <div class="title">Son 1 saat</div>
+                <div class="metric-v warn" id="m4">0</div>
+                <div class="metric-s">kayit hareketi</div>
+            </div>
+            <div class="metric-tile">
+                <div class="title">Tamamlanan</div>
+                <div class="metric-v" id="m3">0</div>
+                <div class="metric-s">bugunku cikis</div>
+            </div>
         </div>
-    </section>
+    </details>
 
-    <section class="card">
-        <x-panel.card-head title="Olay akisi" badge="log" badge-id="log-count" />
-        <div class="log" id="log"></div>
-    </section>
+    <details class="card drawer span4">
+        <summary>
+            <span>
+                <b>Saatlik Hareket</b>
+                <small>Son 12 saatin yogunlugu</small>
+            </span>
+            <i>Ac / Kapat</i>
+        </summary>
+        <div class="drawer-body">
+            <div class="mini-chart" id="chart"></div>
+        </div>
+    </details>
 </main>
 
 <main class="tab-panel" data-panel="kayitlar">
-    <section class="card span4">
+    <details class="card drawer span4" open>
+        <summary>
+            <span>
+                <b>Kayitlari Goster</b>
+                <small id="records-summary">Filtre secip gecisleri goruntule</small>
+            </span>
+            <i>Ac / Kapat</i>
+        </summary>
+        <div class="drawer-body">
         <div class="records-head">
             <x-panel.card-head title="Kayitlar" badge="0 kayit" badge-id="table-count" />
             <div class="record-tools">
@@ -151,10 +159,11 @@
             </div>
         </div>
         <div class="records-list" id="records-list">
-            <div class="empty-row">Henuz kayit yok. Sistem dosya akisina baglanmayi bekliyor.</div>
+            <div class="empty-row">Henuz kayit yok. Canli gecis bekleniyor.</div>
         </div>
         <div class="pagination" id="records-pagination"></div>
-    </section>
+        </div>
+    </details>
 </main>
 
 <script>
@@ -304,7 +313,7 @@ const UI = {
     }
     State.lastUpdateMs = Date.now() - n * 1000;
     Utils.el('fresh').textContent = `${Math.floor(n)} sn`;
-    Utils.el('fresh-sub').textContent = n <= 2 ? 'dosya yeni guncellendi' : 'son canli durum yazimi';
+    Utils.el('fresh-sub').textContent = n <= 2 ? 'az once guncellendi' : 'son sinyal zamani';
     Utils.el('stale-bar').style.width = `${Math.min(100, (n / 15) * 100)}%`;
   },
   resetPlate() {
@@ -344,7 +353,7 @@ const UI = {
     };
   },
   emptyTableRow() {
-    return '<div class="empty-row">Henuz kayit yok. Sistem dosya akisina baglanmayi bekliyor.</div>';
+    return '<div class="empty-row">Henuz kayit yok. Canli gecis bekleniyor.</div>';
   },
   renderRecordRow(record) {
     const percent = Math.max(0, Math.min(100, Math.round((record.guven || 0) * 100)));
@@ -406,12 +415,12 @@ const UI = {
     const mode = Utils.el('mode');
     const ocr = Utils.el('ocr');
     const arch = Utils.el('arch');
-    if (ai) ai.textContent = `YOLOv8 + ${s.ocr_backend || 'OCR'}${fallback}`;
+    if (ai) ai.textContent = `Otomatik okuma${fallback}`;
     if (mode) mode.textContent = s.simulasyon_modu ? 'SIMULASYON' : 'CANLI';
-    if (ocr) ocr.textContent = s.ocr_kare_atlama ? `Her ${s.ocr_kare_atlama}. kare` : 'Dinamik';
-    if (arch) arch.textContent = s?.mimari || 'MySQL + JSON + JPG';
+    if (ocr) ocr.textContent = 'Aktif';
+    if (arch) arch.textContent = 'Canli kayit';
     const archCard = Utils.el('arch-card');
-    if (archCard) archCard.textContent = s?.mimari || 'MySQL + JSON + JPG';
+    if (archCard) archCard.textContent = 'Canli kayit';
   },
   setMetrics(summary, durum) {
     Utils.el('m1').textContent = String(Number(summary?.bugun_kayit ?? 0));
@@ -428,13 +437,13 @@ const UI = {
     Utils.el('buffer').textContent = buffer || '--';
     if (k === null) {
       Utils.el('kg').textContent = '--';
-      Utils.el('kg-status').textContent = 'Kantar verisi yok. Python sureci veya COM akisi bekleniyor.';
+      Utils.el('kg-status').textContent = 'Kantar verisi bekleniyor.';
       return;
     }
     Utils.el('kg').textContent = `${Utils.kg(k)} kg`;
     Utils.el('kg-status').textContent = durum?.seans_kilitli
-      ? 'Seans kilitli. Arac cikisi ve sifirlama guardi bekleniyor.'
-      : (durum?.kantar_sabit ? 'Olcu sabit. Kantar karar vermeye hazir.' : 'Olcu degisiyor. Kantarin sabitlenmesi bekleniyor.');
+      ? 'Kayit alindi. Aracin hareketi bekleniyor.'
+      : (durum?.kantar_sabit ? 'Olcu sabit. Kayit icin hazir.' : 'Olcu degisiyor. Sabitlenmesi bekleniyor.');
   },
   refreshCam() {
     if (State.demoOn) return;
@@ -447,7 +456,7 @@ const UI = {
         img.src = `/canli/kare?t=${Date.now()}`;
         return;
       }
-      note.textContent = 'Canli kare yok. Otokantar calisinca canli_kare.jpg guncellenecek.';
+      note.textContent = 'Canli kare bekleniyor.';
     };
     img.onload = () => {
       retry = false;
@@ -483,9 +492,9 @@ const Panel = {
     const next = this.detectState(durum);
     if (next === State.status) return;
     UI.setStatus(next);
-    if (next === 'live') UI.log('info', 'Canli veri akisi kuruldu: /canli/live-ticker');
+    if (next === 'live') UI.log('info', 'Canli veri akisi kuruldu');
     else if (next === 'stale') UI.log('warn', 'Canli dosya akisi yavasladi');
-    else if (next === 'offline' && !State.demoOn) UI.log('warn', 'Canli veri yok, dosya akisi bekleniyor');
+    else if (next === 'offline' && !State.demoOn) UI.log('warn', 'Canli veri bekleniyor');
     else if (next === 'demo') UI.log('info', 'Demo modu aktif');
   },
   latestEvent(durum, canTreatAsNew) {
@@ -591,9 +600,9 @@ const Api = {
     } catch (e) {
       if (State.status !== 'offline') {
         UI.setStatus('offline');
-        UI.log('warn', 'Canli veri okunamadi, /canli/live-ticker bekleniyor');
+        UI.log('warn', 'Canli veri okunamadi');
       }
-      Utils.el('kg-status').textContent = 'Panel baglantisi bekleniyor. MySQL veya durum kaynagi yanit vermiyor.';
+      Utils.el('kg-status').textContent = 'Panel baglantisi bekleniyor.';
     }
   },
   async loadArchive(page = 1) {
@@ -611,12 +620,14 @@ const Api = {
         total: State.total,
         last_page: 1,
       };
+      const recordsSummary = Utils.el('records-summary');
+      if (recordsSummary) recordsSummary.textContent = `${State.total} kayit listeleniyor`;
       Store.calcBars();
       UI.drawTable();
       UI.drawChart();
     } catch (e) {
-      UI.log('warn', 'Kayit arsivi okunamadi');
-      Utils.el('records-list').innerHTML = '<div class="empty-row">Kayit arsivi su anda okunamiyor.</div>';
+      UI.log('warn', 'Kayitlar okunamadi');
+      Utils.el('records-list').innerHTML = '<div class="empty-row">Kayitlar su anda okunamiyor.</div>';
       Utils.el('records-pagination').innerHTML = '';
     }
   },
@@ -766,10 +777,13 @@ const App = {
       UI.refreshCam();
       UI.log('info', 'Panel verisi manuel yenilendi');
     });
-    Utils.el('demo').addEventListener('click', () => {
-      if (State.demoOn) Demo.stop();
-      else Demo.start();
-    });
+    const demo = Utils.el('demo');
+    if (demo) {
+      demo.addEventListener('click', () => {
+        if (State.demoOn) Demo.stop();
+        else Demo.start();
+      });
+    }
     const csv = Utils.el('csv');
     if (csv) {
       csv.addEventListener('click', () => {
@@ -827,8 +841,6 @@ const App = {
   startClock() {
     setInterval(() => {
       Utils.el('clock').textContent = Utils.now();
-      const opsClock = Utils.el('ops-clock');
-      if (opsClock) opsClock.textContent = Utils.now();
       if (State.lastUpdateMs !== null && !State.demoOn) {
         UI.updateFresh((Date.now() - State.lastUpdateMs) / 1000);
       }
@@ -844,7 +856,6 @@ const App = {
     UI.drawChart();
     UI.setStatus('offline');
     UI.log('info', 'OtoKantar paneli yuklendi');
-    UI.log('info', 'Kaynak: MySQL + /canli/live-ticker + /canli/archive + /canli/kare');
     UI.refreshCam();
   },
 };

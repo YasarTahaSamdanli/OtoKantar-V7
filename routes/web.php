@@ -42,9 +42,6 @@ Route::middleware(['auth', 'role:admin,employee'])->group(function () {
     Route::get('/araclar', [VehicleProfileController::class, 'index'])->name('vehicle-profiles.index');
     Route::get('/araclar/{vehicleProfile}', [VehicleProfileController::class, 'show'])->name('vehicle-profiles.show');
     Route::patch('/araclar/{vehicleProfile}', [VehicleProfileController::class, 'update'])->name('vehicle-profiles.update');
-});
-
-Route::middleware(['auth', 'role:admin'])->group(function () {
     Route::get('/dashboard', DashboardController::class)->middleware('verified')->name('dashboard');
 });
 
