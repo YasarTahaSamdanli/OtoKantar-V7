@@ -61,6 +61,7 @@ from otokantar_app.config import CONFIG, PLAKA_REGEX, PLAKA_REGEX_TAM, _HARF_DUZ
 from otokantar_app.core.plaka_aday_motoru import en_iyi_aday_sec
 from otokantar_app.logger import log
 from otokantar_app.models import OcrGorevi, TespitSonucu
+from otokantar_app.stress_logger import stress_metrics
 
 
 # ---------------------------------------------------------------------------
@@ -162,8 +163,14 @@ class PlakaTespitci:
         Returns:
             List of (x1, y1, x2, y2, conf) sorted by confidence descending.
         """
+        baslangic = time.perf_counter()
         sonuclar = self.model(bgr, verbose=False)[0]
         if sonuclar.boxes is None or len(sonuclar.boxes) == 0:
+            stress_metrics.record_yolo(
+                (time.perf_counter() - baslangic) * 1000,
+                detections=0,
+                frame_shape=tuple(bgr.shape[:2]),
+            )
             return []
         names: dict = sonuclar.names or {}
         cikti: list[tuple[float, float, float, float, float]] = []
@@ -190,6 +197,11 @@ class PlakaTespitci:
             cikti.append((x1, y1, x2, y2, conf))
         cikti.sort(key=lambda t: t[4], reverse=True)
         log.debug("bbox tespit ozeti adet=%d frame_shape=%s", len(cikti), tuple(bgr.shape[:2]))
+        stress_metrics.record_yolo(
+            (time.perf_counter() - baslangic) * 1000,
+            detections=len(cikti),
+            frame_shape=tuple(bgr.shape[:2]),
+        )
         return cikti
 
 
@@ -1041,6 +1053,7 @@ class OcrWorker(threading.Thread):
 
     def _isle(self, gorev: OcrGorevi) -> None:
         """Process one task and push raw result to the output queue."""
+        baslangic = time.perf_counter()
         log.debug(
             "OCR isle basladi arac_id=%s bbox=%s crop_shape=%s yolo_conf=%.3f",
             gorev.arac_id,
@@ -1049,13 +1062,24 @@ class OcrWorker(threading.Thread):
             float(gorev.yolo_conf),
         )
         sonuc = self._cozucu.coz(gorev.roi_bgr, gorev.bbox)
+        sure_ms = (time.perf_counter() - baslangic) * 1000
+        stress_metrics.record_ocr(
+            sure_ms,
+            success=bool(sonuc.gecerli),
+            arac_id=gorev.arac_id,
+            bbox=gorev.bbox,
+            yolo_conf=round(float(gorev.yolo_conf), 3),
+            plaka=sonuc.plaka,
+            confidence=round(float(sonuc.guven or 0.0), 3),
+        )
         log.debug(
-            "OCR isle bitti arac_id=%s ham=%r plaka=%s guven=%.3f gecerli=%s",
+            "OCR isle bitti arac_id=%s ham=%r plaka=%s guven=%.3f gecerli=%s sure_ms=%.1f",
             gorev.arac_id,
             sonuc.ham_metin,
             sonuc.plaka,
             float(sonuc.guven or 0.0),
             sonuc.gecerli,
+            sure_ms,
         )
         self._cikis_kuyrugu.put((gorev.arac_id, sonuc, gorev.yolo_conf, gorev.bbox))
 
@@ -1078,6 +1102,11 @@ class OcrWorker(threading.Thread):
                 self._isle(gorev)
             except Exception as exc:
                 log.error("OcrWorker işleme hatası (%s): %s", type(exc).__name__, exc)
+                stress_metrics.record_exception(
+                    source="OcrWorker",
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                )
         log.info("OcrWorker durduruldu.")
 
 

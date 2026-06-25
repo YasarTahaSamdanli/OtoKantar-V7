@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from otokantar_app.config import CONFIG
+from otokantar_app.stress_logger import setup_stress_logging
 
 
 def debug_log_aktif_mi() -> bool:
@@ -48,6 +49,7 @@ def _logger_kur(log_dosya: str) -> logging.Logger:
     ch.addFilter(_DebugLogFilter())
     logger.addHandler(fh)
     logger.addHandler(ch)
+    setup_stress_logging(logger)
     return logger
 
 

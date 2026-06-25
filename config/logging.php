@@ -65,6 +65,34 @@ return [
             'replace_placeholders' => true,
         ],
 
+        'stress_laravel' => [
+            'driver' => 'single',
+            'path' => base_path('stress_test_logs/laravel.log'),
+            'level' => env('STRESS_LOG_LEVEL', env('LOG_LEVEL', 'debug')),
+            'replace_placeholders' => true,
+        ],
+
+        'stress_api' => [
+            'driver' => 'single',
+            'path' => base_path('stress_test_logs/api.log'),
+            'level' => env('STRESS_LOG_LEVEL', env('LOG_LEVEL', 'debug')),
+            'replace_placeholders' => true,
+        ],
+
+        'stress_live_ingest' => [
+            'driver' => 'single',
+            'path' => base_path('stress_test_logs/live_ingest.log'),
+            'level' => env('STRESS_LOG_LEVEL', env('LOG_LEVEL', 'debug')),
+            'replace_placeholders' => true,
+        ],
+
+        'stress_exceptions' => [
+            'driver' => 'single',
+            'path' => base_path('stress_test_logs/exceptions.log'),
+            'level' => env('STRESS_LOG_LEVEL', env('LOG_LEVEL', 'debug')),
+            'replace_placeholders' => true,
+        ],
+
         'daily' => [
             'driver' => 'daily',
             'path' => storage_path('logs/laravel.log'),

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from otokantar_app.logger import log
+from otokantar_app.stress_logger import stress_metrics
 
 try:
     import requests
@@ -214,6 +215,13 @@ class RemoteCanliSync:
 
             last_status = status_code
             last_error = error
+            stress_metrics.record_api_error(
+                url=self.url,
+                status_code=status_code,
+                error=error,
+                attempt=attempt + 1,
+                queue_id=queue_id,
+            )
             if status_code is not None and 400 <= status_code < 500 and status_code != 429:
                 log.warning(
                     "Remote sync kalici hata nedeniyle kuyruktan silindi: HTTP %s",

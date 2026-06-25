@@ -95,6 +95,12 @@ _CONFIG_VARSAYILAN = {
     "REMOTE_SYNC_TOKEN": "",
     "REMOTE_SYNC_TIMEOUT": 4.0,
     "REMOTE_SYNC_MIN_INTERVAL": 2.0,
+    # --- Stress test logging ---
+    "STRESS_TEST_LOGGING": True,
+    "STRESS_PERFORMANCE_INTERVAL": 5.0,
+    "STRESS_FPS_LOG_INTERVAL": 1.0,
+    "STRESS_LOG_MAX_BYTES": 20 * 1024 * 1024,
+    "STRESS_LOG_BACKUP_COUNT": 10,
 }
 
 _TUPLE_ANAHTARLAR = {"MORPH_KERNEL", "CLAHE_GRID", "KANTAR_ROI_NORM"}
@@ -138,11 +144,14 @@ def _config_yukle(dosya: str = "config.json") -> dict:
         "REMOTE_SYNC_TOKEN",
         "REMOTE_SYNC_TIMEOUT",
         "REMOTE_SYNC_MIN_INTERVAL",
+        "STRESS_TEST_LOGGING",
     ):
         if anahtar not in os.environ:
             continue
         deger = os.environ[anahtar]
         if anahtar == "REMOTE_SYNC_ENABLED":
+            cfg[anahtar] = deger.strip().lower() in {"1", "true", "yes", "on"}
+        elif anahtar == "STRESS_TEST_LOGGING":
             cfg[anahtar] = deger.strip().lower() in {"1", "true", "yes", "on"}
         elif anahtar in {"REMOTE_SYNC_TIMEOUT", "REMOTE_SYNC_MIN_INTERVAL"}:
             cfg[anahtar] = float(deger)

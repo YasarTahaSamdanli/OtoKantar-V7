@@ -26,6 +26,11 @@ class LiveIngestController extends Controller
         $givenToken = $request->bearerToken() ?: (string) $request->header('X-API-Token', '');
 
         if ($expectedToken === '' || ! hash_equals($expectedToken, $givenToken)) {
+            Log::channel('stress_live_ingest')->warning('live_ingest_rejected', [
+                'reason' => $expectedToken === '' ? 'token_not_configured' : 'invalid_token',
+                'ip' => $request->ip(),
+                'content_length' => $request->server('CONTENT_LENGTH'),
+            ]);
             $this->audit->record('live_ingest.rejected', $request, metadata: [
                 'reason' => $expectedToken === '' ? 'token_not_configured' : 'invalid_token',
                 'has_json' => $request->input('json') !== null || $request->input('payload') !== null || $request->json()->all() !== [],
@@ -36,6 +41,11 @@ class LiveIngestController extends Controller
         }
 
         if ($this->requestBodyTooLarge($request)) {
+            Log::channel('stress_live_ingest')->warning('live_ingest_rejected', [
+                'reason' => 'request_too_large',
+                'ip' => $request->ip(),
+                'content_length' => $request->server('CONTENT_LENGTH'),
+            ]);
             $this->audit->record('live_ingest.rejected', $request, metadata: [
                 'reason' => 'request_too_large',
                 'content_length' => $request->server('CONTENT_LENGTH'),
@@ -51,6 +61,10 @@ class LiveIngestController extends Controller
 
             $payload = $this->extractJsonPayload($request);
             if ($payload === false) {
+                Log::channel('stress_live_ingest')->warning('live_ingest_rejected', [
+                    'reason' => 'invalid_or_too_large_json',
+                    'ip' => $request->ip(),
+                ]);
                 $this->audit->record('live_ingest.rejected', $request, metadata: [
                     'reason' => 'invalid_or_too_large_json',
                 ]);
@@ -73,6 +87,10 @@ class LiveIngestController extends Controller
 
             $imageBytes = $this->extractImageBytes($request);
             if ($imageBytes === false) {
+                Log::channel('stress_live_ingest')->warning('live_ingest_rejected', [
+                    'reason' => 'invalid_or_too_large_image',
+                    'ip' => $request->ip(),
+                ]);
                 $this->audit->record('live_ingest.rejected', $request, metadata: [
                     'reason' => 'invalid_or_too_large_image',
                 ]);
@@ -114,6 +132,10 @@ class LiveIngestController extends Controller
             }
 
             if ($wrote === []) {
+                Log::channel('stress_live_ingest')->warning('live_ingest_rejected', [
+                    'reason' => 'empty_payload',
+                    'ip' => $request->ip(),
+                ]);
                 $this->audit->record('live_ingest.rejected', $request, metadata: [
                     'reason' => 'empty_payload',
                 ]);
@@ -128,6 +150,12 @@ class LiveIngestController extends Controller
                 'runtime_path' => $root,
                 'event_type' => $payload['event_type'] ?? $payload['olay_tipi'] ?? $payload['_event_type'] ?? null,
             ]);
+            Log::channel('stress_live_ingest')->info('live_ingest_accepted', [
+                'wrote' => $wrote,
+                'runtime_path' => $root,
+                'event_type' => $payload['event_type'] ?? $payload['olay_tipi'] ?? $payload['_event_type'] ?? null,
+                'ip' => $request->ip(),
+            ]);
 
             return response()->json([
                 'ok' => true,
@@ -136,6 +164,12 @@ class LiveIngestController extends Controller
             ]);
         } catch (Throwable $e) {
             Log::error('Live ingest kayit hatasi', ['exception' => $e]);
+            Log::channel('stress_exceptions')->error('live_ingest_exception', [
+                'exception' => $e::class,
+                'message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
 
             return response()->json([
                 'hata' => 'Canli veri kaydedilemedi.',

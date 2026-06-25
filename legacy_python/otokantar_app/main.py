@@ -43,6 +43,7 @@ from otokantar_app.donanim.yazici import FisYazdirici
 from otokantar_app.logger import periyodik_temizlik_baslat, eski_snapshot_temizle, log
 from otokantar_app.models import OcrGorevi, PlakaBuffer, PlakaKayit
 from otokantar_app.remote_sync import RemoteCanliSync
+from otokantar_app.stress_logger import stress_metrics
 from otokantar_app.utils.cizici import EkranCizici
 
 if platform.system() == "Windows":
@@ -192,6 +193,7 @@ class OtoKantar:
         self._son_canli_kare_hash: Optional[str] = None
         self._canli_kare_write_future = None
         self._son_canli_durum_yazimi = 0.0
+        self._son_stress_fps_log = 0.0
         self._ocr_bekleyen_araclar: set[int] = set()
         self._ocr_bekleyen_lock = threading.Lock()
 
@@ -594,6 +596,24 @@ class OtoKantar:
         self.kaydedici.kapat()
 
         cv2.destroyAllWindows()
+        stress_metrics.stop_performance_sampler()
+        summary = stress_metrics.write_summary(len(self.kaydedici.son_kayitlar))
+        if summary:
+            log.info("Stress test ozeti:")
+            log.info("  Toplam calisma suresi: %.1f sn", summary["runtime_sec"])
+            log.info("  Toplam arac: %d", summary["total_vehicles"])
+            log.info(
+                "  FPS ort/min/max: %.2f / %.2f / %.2f",
+                summary["average_fps"],
+                summary["min_fps"],
+                summary["max_fps"],
+            )
+            log.info("  Maks CPU: %.1f%%", summary["max_cpu_percent"])
+            log.info("  Maks RAM: %.1f MB", summary["max_ram_mb"])
+            log.info("  OCR basari/hata: %d / %d", summary["ocr_success_count"], summary["ocr_error_count"])
+            log.info("  API hata: %d", summary["api_error_count"])
+            log.info("  Exception: %d", summary["exception_count"])
+            log.info("  Log klasoru: %s", summary["log_dir"])
         log.info("OtoKantar V12 temiz kapandı.")
 
     # -----------------------------------------------------------------------
@@ -708,6 +728,10 @@ class OtoKantar:
             toplam_sure = self._fps_zamanlar[-1] - self._fps_zamanlar[0]
             if toplam_sure > 0:
                 self._fps = (len(self._fps_zamanlar) - 1) / toplam_sure
+        aralik = max(0.2, float(CONFIG.get("STRESS_FPS_LOG_INTERVAL", 1.0)))
+        if su_an - self._son_stress_fps_log >= aralik:
+            self._son_stress_fps_log = su_an
+            stress_metrics.record_fps(self._fps, self._yakalama_fps)
 
     def _yakalama_fps_guncelle(self) -> None:
         su_an = time.monotonic()
@@ -741,6 +765,12 @@ class OtoKantar:
         yuk = kare.copy()
         with self._kuyruk_lock:
             if q.full():
+                stress_metrics.event(
+                    "queue",
+                    "frame_queue_drop_oldest",
+                    queue_size=q.qsize(),
+                    queue_max=q.maxsize,
+                )
                 try:
                     q.get_nowait()          # eski kareyi at
                 except queue.Empty:
@@ -748,6 +778,12 @@ class OtoKantar:
             try:
                 q.put_nowait(yuk)
             except queue.Full:
+                stress_metrics.event(
+                    "queue",
+                    "frame_queue_put_full",
+                    queue_size=q.qsize(),
+                    queue_max=q.maxsize,
+                )
                 # Teorik olarak buraya gelmemeli; paranoya guard.
                 log.debug("Kuyruk beklenmedik şekilde dolu, kare atlandı.")
 
@@ -779,6 +815,14 @@ class OtoKantar:
         except RuntimeError as e:
             if not self._cikis_istendi.is_set():
                 log.error(str(e))
+        except Exception as exc:
+            stress_metrics.record_exception(
+                source="OtoKantar._kamera_uretici",
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+            log.exception("Kamera uretici beklenmeyen hata ile durdu")
+            raise
         finally:
             if kamera is not None:
                 kamera.release()
@@ -1220,6 +1264,9 @@ class OtoKantar:
     def calistir(self) -> None:
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
+        stress_metrics.start_performance_sampler(
+            float(CONFIG.get("STRESS_PERFORMANCE_INTERVAL", 5.0))
+        )
 
         self.kantar_okuyucu.start()
         log.info("KantarOkuyucu başlatıldı.")
@@ -1296,6 +1343,14 @@ class OtoKantar:
 
         except KeyboardInterrupt:
             log.info("Ctrl+C (KeyboardInterrupt) — graceful shutdown tetiklendi.")
+        except Exception as exc:
+            stress_metrics.record_exception(
+                source="OtoKantar.calistir",
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+            log.exception("Ana dongu beklenmeyen hata ile durdu")
+            raise
         finally:
             # FIX #6: dur_event parametresi yok
             self._kapat(uretici)
