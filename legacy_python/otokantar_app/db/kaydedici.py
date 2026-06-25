@@ -39,7 +39,8 @@ class KantarKaydedici:
         self._csv_aktif = True
         self._acik_seanslar: dict[str, dict] = {}
         self.mysql = mysql_db
-        self._acik_seans_max_saat = float(CONFIG.get("ACIK_SEANS_MAX_SAAT", 24.0))
+        self._acik_seans_max_saat = float(CONFIG.get("ACIK_SEANS_MAX_SAAT", 2.0))
+        self._min_cikis_net_agirlik = max(0.0, float(CONFIG.get("MIN_CIKIS_NET_AGIRLIK", 500.0)))
         self._csv_baslik_yaz()
         self._csvden_durum_yukle()
         log.info("KantarKaydedici %s modu aktif.", "MySQL" if self.mysql is not None else "CSV")
@@ -163,6 +164,13 @@ class KantarKaydedici:
             return None
         giris_agirlik = float(acik.get("giris_agirlik") or 0.0)
         cikis_agirlik = float(agirlik)
+        net_agirlik = abs(giris_agirlik - cikis_agirlik)
+        if self._min_cikis_net_agirlik > 0 and net_agirlik < self._min_cikis_net_agirlik:
+            log.warning(
+                "Çıkış kaydı atlandı: net ağırlık farkı düşük (%s giris=%.1fkg cikis=%.1fkg net=%.1fkg min=%.1fkg)",
+                plaka, giris_agirlik, cikis_agirlik, net_agirlik, self._min_cikis_net_agirlik,
+            )
+            return None
         kayit = PlakaKayit(
             plaka=plaka,
             giris_tarih=str(acik.get("giris_tarih") or simdi.strftime("%Y-%m-%d")),
@@ -172,7 +180,7 @@ class KantarKaydedici:
             cikis_tarih=simdi.strftime("%Y-%m-%d"),
             cikis_saat=simdi.strftime("%H:%M:%S"),
             cikis_agirlik=cikis_agirlik,
-            net_agirlik=abs(giris_agirlik - cikis_agirlik),
+            net_agirlik=net_agirlik,
             durum="TAMAMLANDI",
             firma_adi=acik.get("firma_adi"),
             sofor_adi=acik.get("sofor_adi"),

@@ -81,6 +81,9 @@ class OtoKantar:
         # hem yavaşlatıyordu hem de KeyError'ı geç fark ettiriyordu.
         # ------------------------------------------------------------------
         self._cfg_min_kilit_agirlik   = float(CONFIG["MIN_KILIT_AGIRLIK"])
+        self._cfg_min_cikis_net_agirlik = max(
+            0.0, float(CONFIG.get("MIN_CIKIS_NET_AGIRLIK", 500.0))
+        )
         self._cfg_seans_sifir_bekleme = float(CONFIG["SEANS_SIFIR_BEKLEME"])
         self._cfg_plaka_buffer_ttl    = float(CONFIG["PLAKA_BUFFER_TTL"])
         self._cfg_ocr_kare_atlama     = int(CONFIG["OCR_KARE_ATLAMA"])
@@ -249,6 +252,18 @@ class OtoKantar:
             )
             self.cizici.giris_yapildi(kare, bbox, plaka)
         else:
+            giris_agirlik = float(acik_seans.get("giris_agirlik") or 0.0)
+            cikis_agirlik = float(agirlik)
+            net_fark = abs(giris_agirlik - cikis_agirlik)
+            if self._cfg_min_cikis_net_agirlik > 0 and net_fark < self._cfg_min_cikis_net_agirlik:
+                log.warning(
+                    "OCR_KAYIT red=ayni_agirlik_cikis plaka=%s giris=%.1fkg cikis=%.1fkg net=%.1fkg min=%.1fkg",
+                    plaka, giris_agirlik, cikis_agirlik, net_fark, self._cfg_min_cikis_net_agirlik,
+                )
+                with self._durum_lock:
+                    self._kantar_seans_kilitli = True
+                    self._plaka_buffer = None
+                return None
             kayit = self.kaydedici.cikis_kaydet(plaka, agirlik, final_conf)
             if kayit is None:
                 return None

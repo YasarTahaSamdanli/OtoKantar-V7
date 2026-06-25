@@ -41,6 +41,9 @@ class DogrulamaMotoru:
         self.min_lider_guven = 1.0
         self.bilinen_plaka_otoduzelt = bool(CONFIG.get("BILINEN_PLAKA_OTODUZELT", False))
         self.bilinen_plaka_kume_bonusu = bool(CONFIG.get("BILINEN_PLAKA_KUME_BONUSU", False))
+        self.manuel_duzeltmeler = self._manuel_duzeltmeler_yukle(
+            CONFIG.get("PLAKA_MANUEL_DUZELTMELER", {})
+        )
         self.erken_cikis_guven = 2.5   # toplam güven bu değere ulaşırsa
                                        # esik kare beklenmeden kabul edilir
 
@@ -95,6 +98,17 @@ class DogrulamaMotoru:
             if self._tr_plaka_gecerli_mi(a):
                 temiz.add(a)
         return temiz
+
+    def _manuel_duzeltmeler_yukle(self, duzeltmeler) -> dict:
+        if not isinstance(duzeltmeler, dict):
+            return {}
+        sonuc = {}
+        for kaynak, hedef in duzeltmeler.items():
+            kaynak_norm = self._normalize(str(kaynak))
+            hedef_norm = self._normalize(str(hedef))
+            if self._tr_plaka_gecerli_mi(kaynak_norm) and self._tr_plaka_gecerli_mi(hedef_norm):
+                sonuc[kaynak_norm] = hedef_norm
+        return sonuc
 
     def _tr_plaka_gecerli_mi(self, plaka: str) -> bool:
         return bool(self.TR_PLAKA_REGEX.match(plaka))
@@ -255,11 +269,20 @@ class DogrulamaMotoru:
             return (False, None, 0.0, 0)
 
         normalize_plaka = plaka
+        manuel_plaka = self.manuel_duzeltmeler.get(plaka)
+        if manuel_plaka:
+            log.debug(
+                "OCR_DOGRULAMA manuel_duzelt arac_id=%s normalize=%s duzeltilen=%s guven=%.3f",
+                arac_id, plaka, manuel_plaka, gelen_guven,
+            )
+            plaka = manuel_plaka
+
+        oto_giris_plaka = plaka
         plaka = self._oto_duzelt(plaka, gelen_guven)
-        if plaka != normalize_plaka:
+        if plaka != oto_giris_plaka:
             log.debug(
                 "OCR_DOGRULAMA oto_duzelt arac_id=%s normalize=%s duzeltilen=%s guven=%.3f",
-                arac_id, normalize_plaka, plaka, gelen_guven,
+                arac_id, oto_giris_plaka, plaka, gelen_guven,
             )
 
         # ── DÜZELTME 3: Güven klamp aralığı genişletildi ─────────────────────
