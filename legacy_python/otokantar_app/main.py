@@ -192,6 +192,8 @@ class OtoKantar:
         self._son_canli_kare_hash: Optional[str] = None
         self._canli_kare_write_future = None
         self._son_canli_durum_yazimi = 0.0
+        self._ocr_bekleyen_araclar: set[int] = set()
+        self._ocr_bekleyen_lock = threading.Lock()
 
         # ------------------------------------------------------------------
         # FIX #5: Ağır IO (snapshot kaydetme) ana döngüyü bloklamasın.
@@ -354,6 +356,26 @@ class OtoKantar:
                 upload_path.unlink(missing_ok=True)
             except Exception:
                 pass
+
+    def _ocr_bekliyor_mu(self, arac_id: int) -> bool:
+        with self._ocr_bekleyen_lock:
+            return int(arac_id) in self._ocr_bekleyen_araclar
+
+    def _ocr_bekleyen_ekle(self, arac_id: int) -> None:
+        with self._ocr_bekleyen_lock:
+            self._ocr_bekleyen_araclar.add(int(arac_id))
+
+    def _ocr_bekleyen_sil(self, arac_id: int) -> None:
+        with self._ocr_bekleyen_lock:
+            self._ocr_bekleyen_araclar.discard(int(arac_id))
+
+    def _ocr_bekleyen_temizle(self) -> None:
+        with self._ocr_bekleyen_lock:
+            self._ocr_bekleyen_araclar.clear()
+
+    def _ocr_sonuclarini_at(self) -> None:
+        for (arac_id, *_rest) in self.ocr_worker.sonuclari_topla():
+            self._ocr_bekleyen_sil(arac_id)
 
     def _canli_durum_payload(self, guncel_kg: float, agirlik_sabit: bool) -> dict:
         with self._durum_lock:
@@ -605,6 +627,7 @@ class OtoKantar:
             self.plaka_hafizasi.clear()
         self.dogrulama.sifirla()
         self.tracker.sifirla()
+        self._ocr_bekleyen_temizle()
         log.info("Seans sıfırlandı — guard tamamlandı, tüm hafızalar temizlendi.")
 
     # -----------------------------------------------------------------------
@@ -892,6 +915,7 @@ class OtoKantar:
     ) -> None:
         sonuclar = self.ocr_worker.sonuclari_topla()
         for (arac_id, sonuc, yolo_conf, bbox) in sonuclar:
+            self._ocr_bekleyen_sil(arac_id)
             if not sonuc.gecerli or sonuc.plaka is None:
                 log.debug(
                     "OCR_RED neden=sonuc_gecersiz arac_id=%s ham=%r plaka=%s guven=%.3f yolo_conf=%.3f bbox=%s",
@@ -1051,7 +1075,7 @@ class OtoKantar:
                 (tx, y1),
                 cv2.FONT_HERSHEY_SIMPLEX, fs_normal, (0, 255, 0), 2,
             )
-            self.ocr_worker.sonuclari_topla()
+            self._ocr_sonuclarini_at()
             return
 
         if kantar_dolu:
@@ -1104,7 +1128,7 @@ class OtoKantar:
                 (tx, y2),
                 cv2.FONT_HERSHEY_SIMPLEX, fs_normal, (0, 80, 255), 2,
             )
-            self.ocr_worker.sonuclari_topla()
+            self._ocr_sonuclarini_at()
             return
 
         self._ocr_sonuclarini_isle(kare, guncel_kg, agirlik_sabit, kare_w, kare_h)
@@ -1116,6 +1140,7 @@ class OtoKantar:
         for silinen_id in self.tracker.purge_expired():
             with self._durum_lock:
                 self.plaka_hafizasi.pop(silinen_id, None)
+            self._ocr_bekleyen_sil(silinen_id)
             self.dogrulama.sil(silinen_id)
 
         if not plaka_listesi:
@@ -1160,6 +1185,8 @@ class OtoKantar:
 
             if not ocr_calis:
                 continue
+            if self._ocr_bekliyor_mu(arac_id):
+                continue
 
             w_roi = ix2 - ix1
             pad   = int(w_roi * 0.10)
@@ -1167,6 +1194,7 @@ class OtoKantar:
             if roi.size == 0:
                 continue
 
+            self._ocr_bekleyen_ekle(arac_id)
             gonderildi = self.ocr_worker.gorevi_gonder_bekle(
                 OcrGorevi(
                     roi_bgr=roi.copy(),
@@ -1177,6 +1205,7 @@ class OtoKantar:
                 timeout=self._cfg_ocr_gonder_timeout,
             )
             if not gonderildi:
+                self._ocr_bekleyen_sil(arac_id)
                 log.debug(
                     "OCR kuyruğu dolu — kare %d için araç %d atlandı.",
                     self._kare_sayaci, arac_id,

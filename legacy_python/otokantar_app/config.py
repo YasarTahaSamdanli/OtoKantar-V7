@@ -53,8 +53,8 @@ _CONFIG_VARSAYILAN = {
     "CANLI_KARE_JPEG_KALITE": 55,
     "CANLI_DURUM_YAZIM_ARALIK": 2.0,
     "KARE_KUYRUK_BOYUTU": 1,
-    "OCR_WORKER_KUYRUK": 8,
-    "OCR_WORKER_SAYISI": 2,
+    "OCR_WORKER_KUYRUK": 2,
+    "OCR_WORKER_SAYISI": 1,
     "OCR_WORKER_GONDER_TIMEOUT": 0.05,
     "PLATE_WEIGHTS_URL": (
         "https://raw.githubusercontent.com/Muhammad-Zeerak-Khan/"
