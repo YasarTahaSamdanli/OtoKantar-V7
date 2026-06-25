@@ -33,7 +33,7 @@
                 </section>
             </div>
 
-            <div class="mt-6 grid gap-5 xl:grid-cols-3">
+            <div class="mt-6 grid items-start gap-5 xl:grid-cols-3">
                 @include('vehicle-profiles.partials.profile-list', [
                     'title' => 'Yeni Araclar',
                     'profiles' => $newVehicles,
