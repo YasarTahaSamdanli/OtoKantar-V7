@@ -26,13 +26,17 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->report(function (Throwable $e): void {
             if (filter_var(env('STRESS_TEST_LOGGING', true), FILTER_VALIDATE_BOOL)) {
-                Log::channel('stress_exceptions')->error('laravel_exception', [
-                    'ts' => now()->toIso8601String(),
-                    'exception' => $e::class,
-                    'message' => $e->getMessage(),
-                    'file' => $e->getFile(),
-                    'line' => $e->getLine(),
-                ]);
+                try {
+                    Log::channel('stress_exceptions')->error('laravel_exception', [
+                        'ts' => now()->toIso8601String(),
+                        'exception' => $e::class,
+                        'message' => $e->getMessage(),
+                        'file' => $e->getFile(),
+                        'line' => $e->getLine(),
+                    ]);
+                } catch (Throwable $logException) {
+                    error_log('Stress exception log yazilamadi: '.$logException->getMessage());
+                }
             }
         });
     })->create();

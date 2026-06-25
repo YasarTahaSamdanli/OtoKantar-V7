@@ -12,7 +12,7 @@ class StressTestRequestLogger
 {
     public function handle(Request $request, Closure $next): Response
     {
-        if (! $this->enabled()) {
+        if (! $this->enabled() || $request->is('up')) {
             return $next($request);
         }
 
@@ -52,24 +52,24 @@ class StressTestRequestLogger
             'has_image' => $request->hasFile('image') || $request->input('image_base64') !== null,
         ];
 
-        Log::channel('stress_laravel')->info('laravel_request', $context);
+        $this->safeLog('stress_laravel', 'info', 'laravel_request', $context);
 
         if ($request->is('api/*') || str_starts_with((string) optional($request->route())->getName(), 'api.')) {
-            Log::channel('stress_api')->info('api_request', $context);
+            $this->safeLog('stress_api', 'info', 'api_request', $context);
         }
 
         if ($request->is('api/live-ingest')) {
-            Log::channel('stress_live_ingest')->info('live_ingest_request', $context);
+            $this->safeLog('stress_live_ingest', 'info', 'live_ingest_request', $context);
         }
 
         if ($response->getStatusCode() >= 400) {
-            Log::channel('stress_exceptions')->warning('http_error_response', $context);
+            $this->safeLog('stress_exceptions', 'warning', 'http_error_response', $context);
         }
     }
 
     private function logException(Request $request, Throwable $e, float $started): void
     {
-        Log::channel('stress_exceptions')->error('request_exception', [
+        $this->safeLog('stress_exceptions', 'error', 'request_exception', [
             'ts' => now()->toIso8601String(),
             'method' => $request->method(),
             'path' => $request->path(),
@@ -82,5 +82,14 @@ class StressTestRequestLogger
             'file' => $e->getFile(),
             'line' => $e->getLine(),
         ]);
+    }
+
+    private function safeLog(string $channel, string $level, string $message, array $context): void
+    {
+        try {
+            Log::channel($channel)->{$level}($message, $context);
+        } catch (Throwable $e) {
+            error_log('Stress test log yazilamadi: '.$e->getMessage());
+        }
     }
 }
