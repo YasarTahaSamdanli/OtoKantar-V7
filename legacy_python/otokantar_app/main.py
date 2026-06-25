@@ -196,6 +196,12 @@ class OtoKantar:
         self._son_stress_fps_log = 0.0
         self._ocr_bekleyen_araclar: set[int] = set()
         self._ocr_bekleyen_lock = threading.Lock()
+        self._ocr_best_crops: dict[int, dict] = {}
+        self._ocr_last_submit_ts: dict[int, float] = {}
+        self._ocr_last_success_ts: dict[int, float] = {}
+        self._ocr_best_crop_ttl = 1.8
+        self._ocr_submit_cooldown = 0.75
+        self._ocr_success_cooldown = 1.6
 
         # ------------------------------------------------------------------
         # FIX #5: Ağır IO (snapshot kaydetme) ana döngüyü bloklamasın.
@@ -378,6 +384,85 @@ class OtoKantar:
     def _ocr_sonuclarini_at(self) -> None:
         for (arac_id, *_rest) in self.ocr_worker.sonuclari_topla():
             self._ocr_bekleyen_sil(arac_id)
+
+    def _ocr_state_sil(self, arac_id: int) -> None:
+        arac_id = int(arac_id)
+        self._ocr_bekleyen_sil(arac_id)
+        self._ocr_best_crops.pop(arac_id, None)
+        self._ocr_last_submit_ts.pop(arac_id, None)
+        self._ocr_last_success_ts.pop(arac_id, None)
+
+    def _ocr_crop_quality(
+        self,
+        roi: np.ndarray,
+        bbox: tuple,
+        yolo_conf: float,
+        kare_w: int,
+        kare_h: int,
+    ) -> float:
+        if roi.size == 0:
+            return 0.0
+        x1, y1, x2, y2 = bbox
+        w = max(1, int(x2) - int(x1))
+        h = max(1, int(y2) - int(y1))
+        aspect = w / float(h)
+        aspect_score = max(0.0, 1.0 - abs(aspect - 3.3) / 3.3)
+        frame_area = max(1, int(kare_w) * int(kare_h))
+        area_score = min(1.0, (w * h) / (frame_area * 0.018))
+        try:
+            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            focus = min(1.0, float(cv2.Laplacian(gray, cv2.CV_64F).var()) / 350.0)
+        except Exception:
+            focus = 0.0
+        yolo_score = min(max(float(yolo_conf or 0.0), 0.0), 1.0)
+        return (
+            0.45 * yolo_score
+            + 0.35 * focus
+            + 0.15 * area_score
+            + 0.05 * aspect_score
+        )
+
+    def _ocr_best_crop_guncelle(
+        self,
+        arac_id: int,
+        roi: np.ndarray,
+        bbox: tuple,
+        yolo_conf: float,
+        kare_w: int,
+        kare_h: int,
+        simdi: float,
+    ) -> None:
+        arac_id = int(arac_id)
+        skor = self._ocr_crop_quality(roi, bbox, yolo_conf, kare_w, kare_h)
+        onceki = self._ocr_best_crops.get(arac_id)
+        if (
+            onceki is None
+            or (simdi - float(onceki.get("ts", 0.0))) > self._ocr_best_crop_ttl
+            or skor > float(onceki.get("score", 0.0))
+        ):
+            self._ocr_best_crops[arac_id] = {
+                "roi": roi.copy(),
+                "bbox": bbox,
+                "yolo_conf": float(yolo_conf),
+                "score": float(skor),
+                "ts": float(simdi),
+            }
+
+    def _ocr_gonderilebilir_mi(self, arac_id: int, simdi: float) -> bool:
+        arac_id = int(arac_id)
+        if self._ocr_bekliyor_mu(arac_id):
+            return False
+        son_gonderim = self._ocr_last_submit_ts.get(arac_id)
+        if son_gonderim is not None and (simdi - son_gonderim) < self._ocr_submit_cooldown:
+            return False
+        son_basarili = self._ocr_last_success_ts.get(arac_id)
+        if son_basarili is not None and (simdi - son_basarili) < self._ocr_success_cooldown:
+            return False
+        aday = self._ocr_best_crops.get(arac_id)
+        return aday is not None and (simdi - float(aday.get("ts", 0.0))) <= self._ocr_best_crop_ttl
+
+    def _ocr_best_crop_al(self, arac_id: int) -> Optional[dict]:
+        return self._ocr_best_crops.pop(int(arac_id), None)
 
     def _canli_durum_payload(self, guncel_kg: float, agirlik_sabit: bool) -> dict:
         with self._durum_lock:
@@ -648,6 +733,9 @@ class OtoKantar:
         self.dogrulama.sifirla()
         self.tracker.sifirla()
         self._ocr_bekleyen_temizle()
+        self._ocr_best_crops.clear()
+        self._ocr_last_submit_ts.clear()
+        self._ocr_last_success_ts.clear()
         log.info("Seans sıfırlandı — guard tamamlandı, tüm hafızalar temizlendi.")
 
     # -----------------------------------------------------------------------
@@ -972,6 +1060,7 @@ class OtoKantar:
                 )
                 continue
             plaka = sonuc.plaka
+            self._ocr_last_success_ts[int(arac_id)] = time.monotonic()
             log.debug(
                 "OCR_KARAR sonuc_alindi arac_id=%s ham=%r plaka=%s ocr_guven=%.3f yolo_conf=%.3f bbox=%s",
                 arac_id, sonuc.ham_metin, plaka, float(sonuc.guven or 0.0), float(yolo_conf), bbox,
@@ -1184,7 +1273,7 @@ class OtoKantar:
         for silinen_id in self.tracker.purge_expired():
             with self._durum_lock:
                 self.plaka_hafizasi.pop(silinen_id, None)
-            self._ocr_bekleyen_sil(silinen_id)
+            self._ocr_state_sil(silinen_id)
             self.dogrulama.sil(silinen_id)
 
         if not plaka_listesi:
@@ -1227,29 +1316,45 @@ class OtoKantar:
                 )
                 continue
 
-            if not ocr_calis:
-                continue
-            if self._ocr_bekliyor_mu(arac_id):
-                continue
-
             w_roi = ix2 - ix1
             pad   = int(w_roi * 0.10)
             roi   = kare[iy1:iy2, max(0, ix1 - pad):min(kare_w, ix2 + pad)]
             if roi.size == 0:
                 continue
+            self._ocr_best_crop_guncelle(
+                arac_id,
+                roi,
+                bbox,
+                float(yolo_conf),
+                kare_w,
+                kare_h,
+                simdi,
+            )
+
+            if not ocr_calis:
+                continue
+            if not self._ocr_gonderilebilir_mi(arac_id, simdi):
+                continue
+
+            aday_crop = self._ocr_best_crop_al(arac_id)
+            if aday_crop is None:
+                continue
 
             self._ocr_bekleyen_ekle(arac_id)
+            self._ocr_last_submit_ts[int(arac_id)] = simdi
             gonderildi = self.ocr_worker.gorevi_gonder_bekle(
                 OcrGorevi(
-                    roi_bgr=roi.copy(),
+                    roi_bgr=aday_crop["roi"],
                     arac_id=arac_id,
-                    yolo_conf=float(yolo_conf),
-                    bbox=bbox,
+                    yolo_conf=float(aday_crop["yolo_conf"]),
+                    bbox=aday_crop["bbox"],
                 ),
                 timeout=self._cfg_ocr_gonder_timeout,
             )
             if not gonderildi:
                 self._ocr_bekleyen_sil(arac_id)
+                self._ocr_last_submit_ts.pop(int(arac_id), None)
+                self._ocr_best_crops[int(arac_id)] = aday_crop
                 log.debug(
                     "OCR kuyruğu dolu — kare %d için araç %d atlandı.",
                     self._kare_sayaci, arac_id,
