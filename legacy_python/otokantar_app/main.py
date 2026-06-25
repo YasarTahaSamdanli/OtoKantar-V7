@@ -84,6 +84,7 @@ class OtoKantar:
         self._cfg_plaka_buffer_ttl    = float(CONFIG["PLAKA_BUFFER_TTL"])
         self._cfg_ocr_kare_atlama     = int(CONFIG["OCR_KARE_ATLAMA"])
         self._cfg_tespit_kare_atlama  = max(1, int(CONFIG.get("TESPIT_KARE_ATLAMA", 2)))
+        self._cfg_tespit_worker_enabled = bool(CONFIG.get("TESPIT_WORKER_ENABLED", True))
         self._cfg_canli_kare_aralik   = max(1, int(CONFIG["CANLI_KARE_ARALIK"]))
         self._cfg_canli_kare_min_interval = max(
             0.1, min(2.0, float(CONFIG.get("CANLI_KARE_MIN_INTERVAL", 0.15)))
@@ -196,6 +197,8 @@ class OtoKantar:
         # FIX #5: Ağır IO (snapshot kaydetme) ana döngüyü bloklamasın.
         # ------------------------------------------------------------------
         self._io_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="SnapshotIO")
+        self._tespit_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="YoloTespit")
+        self._tespit_future = None
         # Veritabanındaki bilinen araçları doğrulamaya besle (Fuzzy Match İçin)
         try:
             self.dogrulama.bilinen_plakalar = self.dogrulama.hazirla_bilinen_plakalar(
@@ -391,6 +394,7 @@ class OtoKantar:
                 "ocr_fallback": getattr(self.cozucu, "fallback_backend_adi", None),
                 "ocr_kare_atlama": self._cfg_ocr_kare_atlama,
                 "tespit_kare_atlama": self._cfg_tespit_kare_atlama,
+                "tespit_worker": self._cfg_tespit_worker_enabled,
                 "canli_kare_aralik": self._cfg_canli_kare_aralik,
                 "canli_kare_min_interval": self._cfg_canli_kare_min_interval,
                 "calisiyor": not self._cikis_istendi.is_set(),
@@ -555,7 +559,8 @@ class OtoKantar:
         self.kantar_okuyucu.durdur()
         self.kantar_okuyucu.join(timeout=3.0)
 
-        # IO thread-pool'u kapat (devam eden snapshotları tamamla)
+        # Arka plan işlerini kapat (devam eden işler tamamlansın).
+        self._tespit_executor.shutdown(wait=True, cancel_futures=False)
         self._io_executor.shutdown(wait=True, cancel_futures=False)
 
         self._canli_durum_yaz(
@@ -833,6 +838,47 @@ class OtoKantar:
                 except Exception:
                     pass
 
+    def _plaka_tespiti_guncelle(self, kare: np.ndarray) -> list:
+        """
+        YOLO tespitini ana kamera döngüsünü bloklamadan çalıştırır.
+
+        Inference devam ederken son başarılı tespit listesi kullanılır. Bu,
+        kilo sabitlenince başlayan ağır taramanın görüntü FPS'ini düşürmesini
+        engeller.
+        """
+        if not self._cfg_tespit_worker_enabled:
+            if self._kare_sayaci % self._cfg_tespit_kare_atlama == 0:
+                plaka_listesi = self.tespitci.plakalari_bul(kare)
+                with self._plaka_listesi_lock:
+                    self._son_plaka_listesi = plaka_listesi
+            else:
+                with self._plaka_listesi_lock:
+                    plaka_listesi = list(self._son_plaka_listesi)
+            return plaka_listesi
+
+        future = self._tespit_future
+        if future is not None and future.done():
+            try:
+                plaka_listesi = future.result()
+                with self._plaka_listesi_lock:
+                    self._son_plaka_listesi = plaka_listesi
+            except Exception as e:
+                log.warning("YOLO tespit worker hatası: %s", e)
+            finally:
+                self._tespit_future = None
+
+        if (
+            self._tespit_future is None
+            and self._kare_sayaci % self._cfg_tespit_kare_atlama == 0
+        ):
+            self._tespit_future = self._tespit_executor.submit(
+                self.tespitci.plakalari_bul,
+                kare.copy(),
+            )
+
+        with self._plaka_listesi_lock:
+            return list(self._son_plaka_listesi)
+
     # -----------------------------------------------------------------------
     # OCR sonuçlarını işle — Durum Lock altında güncelle
     # -----------------------------------------------------------------------
@@ -1063,14 +1109,9 @@ class OtoKantar:
 
         self._ocr_sonuclarini_isle(kare, guncel_kg, agirlik_sabit, kare_w, kare_h)
 
-        # Plaka tespiti belirli aralıklarla yapılır; ara karelerde son liste kullanılır.
-        if self._kare_sayaci % self._cfg_tespit_kare_atlama == 0:
-            plaka_listesi = self.tespitci.plakalari_bul(kare)
-            with self._plaka_listesi_lock:
-                self._son_plaka_listesi = plaka_listesi
-        else:
-            with self._plaka_listesi_lock:
-                plaka_listesi = list(self._son_plaka_listesi)
+        # Plaka tespiti belirli aralıklarla arka planda yapılır; ara karelerde
+        # son liste kullanılır.
+        plaka_listesi = self._plaka_tespiti_guncelle(kare)
 
         for silinen_id in self.tracker.purge_expired():
             with self._durum_lock:
