@@ -39,6 +39,7 @@ class KantarKaydedici:
         self._csv_aktif = True
         self._acik_seanslar: dict[str, dict] = {}
         self.mysql = mysql_db
+        self._acik_seans_max_saat = float(CONFIG.get("ACIK_SEANS_MAX_SAAT", 24.0))
         self._csv_baslik_yaz()
         self._csvden_durum_yukle()
         log.info("KantarKaydedici %s modu aktif.", "MySQL" if self.mysql is not None else "CSV")
@@ -93,10 +94,45 @@ class KantarKaydedici:
         except Exception as e:
             log.warning("Kara liste sorgulanırken hata: %s", e)
             return False
-    def acik_seans_getir(self, plaka: str) -> Optional[dict]:
-        return self._acik_seanslar.get(self._plaka_normalize(plaka))
 
-    def giris_kaydet(self, plaka: str, agirlik: float) -> PlakaKayit:
+    def _acik_seans_zamani(self, acik: dict) -> Optional[datetime]:
+        tarih = str(acik.get("giris_tarih") or "").strip()
+        saat = str(acik.get("giris_saat") or "").strip() or "00:00:00"
+        if not tarih:
+            return None
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+            try:
+                return datetime.strptime(f"{tarih} {saat}", fmt)
+            except ValueError:
+                continue
+        return None
+
+    def _acik_seans_eski_mi(self, acik: dict, simdi: Optional[datetime] = None) -> bool:
+        if self._acik_seans_max_saat <= 0:
+            return False
+        baslangic = self._acik_seans_zamani(acik)
+        if baslangic is None:
+            return False
+        simdi = simdi or datetime.now()
+        yas_saat = (simdi - baslangic).total_seconds() / 3600.0
+        return yas_saat > self._acik_seans_max_saat
+
+    def acik_seans_getir(self, plaka: str) -> Optional[dict]:
+        plaka_norm = self._plaka_normalize(plaka)
+        acik = self._acik_seanslar.get(plaka_norm)
+        if acik is not None and self._acik_seans_eski_mi(acik):
+            self._acik_seanslar.pop(plaka_norm, None)
+            log.warning(
+                "Eski acik seans yok sayildi: %s giris=%s %s max_saat=%.1f",
+                plaka_norm,
+                acik.get("giris_tarih"),
+                acik.get("giris_saat"),
+                self._acik_seans_max_saat,
+            )
+            return None
+        return acik
+
+    def giris_kaydet(self, plaka: str, agirlik: float, guven: float = 0.0) -> PlakaKayit:
         plaka = self._plaka_normalize(plaka)
         simdi = datetime.now()
 
@@ -105,6 +141,7 @@ class KantarKaydedici:
             giris_tarih=simdi.strftime("%Y-%m-%d"),
             giris_saat=simdi.strftime("%H:%M:%S"),
             giris_agirlik=float(agirlik),
+            guven=float(guven or 0.0),
             durum="ICERIDE",
         )
         self.gecis_kaydet(kayit)
@@ -117,7 +154,7 @@ class KantarKaydedici:
         }
         return kayit
 
-    def cikis_kaydet(self, plaka: str, agirlik: float) -> Optional[PlakaKayit]:
+    def cikis_kaydet(self, plaka: str, agirlik: float, guven: Optional[float] = None) -> Optional[PlakaKayit]:
         plaka = self._plaka_normalize(plaka)
         simdi = datetime.now()
         acik = self.acik_seans_getir(plaka)
@@ -131,7 +168,7 @@ class KantarKaydedici:
             giris_tarih=str(acik.get("giris_tarih") or simdi.strftime("%Y-%m-%d")),
             giris_saat=str(acik.get("giris_saat") or simdi.strftime("%H:%M:%S")),
             giris_agirlik=giris_agirlik,
-            guven=float(acik.get("guven") or 0.0),
+            guven=float(guven if guven is not None else (acik.get("guven") or 0.0)),
             cikis_tarih=simdi.strftime("%Y-%m-%d"),
             cikis_saat=simdi.strftime("%H:%M:%S"),
             cikis_agirlik=cikis_agirlik,
@@ -176,6 +213,8 @@ class KantarKaydedici:
 
         acik_seanslar: dict[str, dict] = {}
         son_kayitlar: list[PlakaKayit] = []
+        eski_acik_seanslar: list[str] = []
+        simdi = datetime.now()
         try:
             with open(path, mode="r", newline="", encoding="utf-8-sig") as f:
                 reader = csv.DictReader(f, delimiter=";")
@@ -187,7 +226,7 @@ class KantarKaydedici:
                     son_kayitlar.append(kayit)
                     plaka = self._plaka_normalize(kayit.plaka)
                     if kayit.durum == "ICERIDE":
-                        acik_seanslar[plaka] = {
+                        acik = {
                             "plaka": plaka,
                             "giris_tarih": kayit.giris_tarih,
                             "giris_saat": kayit.giris_saat,
@@ -199,6 +238,11 @@ class KantarKaydedici:
                             "malzeme_cinsi": kayit.malzeme_cinsi,
                             "irsaliye_no": kayit.irsaliye_no,
                         }
+                        if self._acik_seans_eski_mi(acik, simdi):
+                            eski_acik_seanslar.append(plaka)
+                            acik_seanslar.pop(plaka, None)
+                        else:
+                            acik_seanslar[plaka] = acik
                     elif kayit.durum == "TAMAMLANDI":
                         acik_seanslar.pop(plaka, None)
         except Exception as e:
@@ -207,6 +251,12 @@ class KantarKaydedici:
 
         self._acik_seanslar = acik_seanslar
         self.son_kayitlar = son_kayitlar[-50:]
+        if eski_acik_seanslar:
+            log.warning(
+                "Eski acik kantar seanslari restore edilmedi (max_saat=%.1f): %s",
+                self._acik_seans_max_saat,
+                ", ".join(sorted(set(eski_acik_seanslar))),
+            )
         if self._acik_seanslar:
             log.warning(
                 "Acik kantar seansi CSV'den restore edildi: %s",

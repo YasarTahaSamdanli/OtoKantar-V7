@@ -242,14 +242,14 @@ class OtoKantar:
         acik_seans   = self.kaydedici.acik_seans_getir(plaka)
 
         if acik_seans is None:
-            kayit = self.kaydedici.giris_kaydet(plaka, agirlik)
+            kayit = self.kaydedici.giris_kaydet(plaka, agirlik, final_conf)
             log.info(
                 "GİRİŞ TARTIMI  [%s]: %s - %.1f kg  güven=%.2f",
                 kaynak, plaka, agirlik, final_conf,
             )
             self.cizici.giris_yapildi(kare, bbox, plaka)
         else:
-            kayit = self.kaydedici.cikis_kaydet(plaka, agirlik)
+            kayit = self.kaydedici.cikis_kaydet(plaka, agirlik, final_conf)
             if kayit is None:
                 return None
             net_kg = float(kayit.net_agirlik or 0.0)

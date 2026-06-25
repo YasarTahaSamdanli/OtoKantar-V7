@@ -1,7 +1,7 @@
 import re
 import time
 
-from otokantar_app.config import _HARF_DUZELTME, _RAKAM_DUZELTME
+from otokantar_app.config import CONFIG, _HARF_DUZELTME, _RAKAM_DUZELTME
 from otokantar_app.logger import log
 from otokantar_app.models import DogrulamaDurumu
 
@@ -9,6 +9,14 @@ from otokantar_app.models import DogrulamaDurumu
 class DogrulamaMotoru:
     TR_PLAKA_REGEX = re.compile(r"^(0[1-9]|[1-7][0-9]|8[0-1])[A-Z]{1,3}\d{2,4}$")
     _ALNUM_DISI = re.compile(r"[^A-Z0-9]+")
+    _GUVENLI_KARISIMLAR = {
+        frozenset(("0", "O")),
+        frozenset(("0", "D")),
+        frozenset(("1", "I")),
+        frozenset(("2", "Z")),
+        frozenset(("6", "G")),
+        frozenset(("8", "B")),
+    }
     _TR_HARF_MAP = str.maketrans({
         "Ç": "C", "Ğ": "G", "İ": "I", "Ö": "O", "Ş": "S", "Ü": "U",
     })
@@ -31,6 +39,8 @@ class DogrulamaMotoru:
         self.min_duzeltme_guven = 0.55
         self.min_lider_hane = 2
         self.min_lider_guven = 1.0
+        self.bilinen_plaka_otoduzelt = bool(CONFIG.get("BILINEN_PLAKA_OTODUZELT", False))
+        self.bilinen_plaka_kume_bonusu = bool(CONFIG.get("BILINEN_PLAKA_KUME_BONUSU", False))
         self.erken_cikis_guven = 2.5   # toplam güven bu değere ulaşırsa
                                        # esik kare beklenmeden kabul edilir
 
@@ -140,10 +150,10 @@ class DogrulamaMotoru:
             toplam_hane  = sum(hane[p]  for p in kume["uyeler"])
             lider = max(
                 kume["uyeler"],
-                key=lambda p: (p in self.bilinen_plakalar, hane[p], oylar[p]),
+                key=lambda p: (hane[p], oylar[p], p),
             )
             skor = toplam_guven + (toplam_hane * 0.2)
-            if lider in self.bilinen_plakalar:
+            if self.bilinen_plaka_kume_bonusu and lider in self.bilinen_plakalar:
                 skor += 2.0
             if skor > en_skor:
                 en_skor = skor
@@ -155,15 +165,31 @@ class DogrulamaMotoru:
     # Otomatik düzeltme (bilinen plakalara yaklaştırma)
     # ─────────────────────────────────────────────────────────────────────────
 
+    def _bilinen_duzeltme_guvenli_mi(self, plaka: str, kayitli: str) -> bool:
+        if len(plaka) != len(kayitli) or plaka[:2] != kayitli[:2]:
+            return False
+        farklar = [
+            (src, dst)
+            for src, dst in zip(plaka, kayitli)
+            if src != dst
+        ]
+        if len(farklar) != 1:
+            return False
+        return frozenset(farklar[0]) in self._GUVENLI_KARISIMLAR
+
     def _oto_duzelt(self, plaka: str, guven: float) -> str:
-        if not self.bilinen_plakalar or plaka in self.bilinen_plakalar:
+        if (
+            not self.bilinen_plaka_otoduzelt
+            or not self.bilinen_plakalar
+            or plaka in self.bilinen_plakalar
+        ):
             return plaka
         if guven < self.min_duzeltme_guven:
             return plaka
         best_aday = plaka
         best_score = 999
         for kayitli in self.bilinen_plakalar:
-            if len(plaka) != len(kayitli) or plaka[:2] != kayitli[:2]:
+            if not self._bilinen_duzeltme_guvenli_mi(plaka, kayitli):
                 continue
             dist = self._mesafe_hesapla(plaka, kayitli)
             if dist < best_score:
