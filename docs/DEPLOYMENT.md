@@ -13,8 +13,21 @@ Bu proje su an Render uzerinde ucretsiz calisabilir; ayni Dockerfile daha sonra 
 - Canli veri tokeni: `LIVE_INGEST_API_TOKEN`
 - Kalici ana veri kaynagi: uygulama veritabani (`vehicle_passes`)
 - Legacy runtime dosyalari: `LEGACY_RUNTIME_PATH`
+- Queue: production'da `QUEUE_CONNECTION=database` kullaniliyorsa mutlaka ayri bir worker calismali
 
 `/up`, Laravel'in health endpointidir. Render ve DigitalOcean gibi platformlarda health check path olarak bu endpoint kullanilmali.
+
+## Queue worker zorunlulugu
+
+`/api/live-ingest` endpoint'i gecis olayini alir ve `live-ingest` queue'suna is olarak koyar. Siteye plaka, kilo ve snapshot'in dusmesi icin bu queue'nun ayri bir process tarafindan surekli islenmesi gerekir.
+
+Uzun vadeli dogru mimari:
+
+```bash
+php artisan queue:work database --queue=live-ingest,default --tries=3 --timeout=60 --sleep=2
+```
+
+DigitalOcean App Platform'da bu process `workers.queue` component'i olarak `deploy/digitalocean-app.yaml.example` icinde tanimlidir. VPS/Droplet kullanilirsa ayni komut systemd veya Docker Compose worker servisi olarak calistirilmalidir.
 
 ## Render'da bugunku durum
 

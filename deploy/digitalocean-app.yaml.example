@@ -89,6 +89,9 @@ services:
       - key: QUEUE_CONNECTION
         value: database
         scope: RUN_TIME
+      - key: LIVE_INGEST_QUEUE
+        value: live-ingest
+        scope: RUN_TIME
       - key: LEGACY_RUNTIME_PATH
         value: /var/www/html/storage/app/legacy_python
         scope: RUN_TIME
@@ -96,6 +99,67 @@ services:
         value: replace-with-long-random-token
         scope: RUN_TIME
         type: secret
+
+workers:
+  - name: queue
+    dockerfile_path: ./Dockerfile
+    source_dir: /
+    github:
+      repo: your-github-user/your-repo
+      branch: main
+      deploy_on_push: true
+    run_command: php artisan queue:work database --queue=live-ingest,default --tries=3 --timeout=60 --sleep=2
+    instance_count: 1
+    instance_size_slug: basic-xxs
+    envs:
+      - key: APP_ENV
+        value: production
+        scope: RUN_TIME
+      - key: APP_DEBUG
+        value: "false"
+        scope: RUN_TIME
+      - key: APP_TIMEZONE
+        value: Europe/Istanbul
+        scope: RUN_TIME
+      - key: APP_LOCALE
+        value: tr
+        scope: RUN_TIME
+      - key: APP_FALLBACK_LOCALE
+        value: tr
+        scope: RUN_TIME
+      - key: APP_KEY
+        value: base64:replace-with-laravel-app-key
+        scope: RUN_TIME
+        type: secret
+      - key: DB_CONNECTION
+        value: pgsql
+        scope: RUN_TIME
+      - key: DB_URL
+        value: ${otokantar-db.DATABASE_URL}
+        scope: RUN_TIME
+        type: secret
+      - key: DATABASE_URL
+        value: ${otokantar-db.DATABASE_URL}
+        scope: RUN_TIME
+        type: secret
+      - key: DB_SSLMODE
+        value: require
+        scope: RUN_TIME
+      - key: CACHE_STORE
+        value: database
+        scope: RUN_TIME
+      - key: SESSION_DRIVER
+        value: database
+        scope: RUN_TIME
+      - key: QUEUE_CONNECTION
+        value: database
+        scope: RUN_TIME
+      - key: LIVE_INGEST_QUEUE
+        value: live-ingest
+        scope: RUN_TIME
+      - key: LEGACY_RUNTIME_PATH
+        value: /var/www/html/storage/app/legacy_python
+        scope: RUN_TIME
 
 databases:
   - name: otokantar-db

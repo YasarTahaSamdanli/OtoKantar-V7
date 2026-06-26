@@ -4,7 +4,7 @@ import json
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -90,7 +90,48 @@ class RemoteCanliSync:
         self._submit(job)
 
     def kapat(self) -> None:
-        self._executor.shutdown(wait=False, cancel_futures=True)
+        deadline = time.monotonic() + max(2.0, self.timeout + 2.0)
+
+        while time.monotonic() < deadline:
+            if self._pending is not None and (
+                self._inflight is None or self._inflight.done()
+            ):
+                try:
+                    self._flush_pending()
+                except RuntimeError as e:
+                    log.warning("Remote sync bekleyen is gonderilemedi: %s", e)
+                    break
+
+            future = self._inflight
+            if future is None:
+                if self._pending is None:
+                    break
+                continue
+
+            if future.done():
+                try:
+                    future.result()
+                except Exception as e:
+                    log.debug("Remote sync kapanis islemi hata ile bitti: %s", e)
+                if self._pending is None:
+                    break
+                continue
+
+            remaining = max(0.1, deadline - time.monotonic())
+            try:
+                future.result(timeout=min(1.0, remaining))
+            except FuturesTimeoutError:
+                continue
+            except Exception as e:
+                log.debug("Remote sync kapanis islemi hata ile bitti: %s", e)
+
+        if self._pending is not None:
+            payload, image_path, _on_success = self._pending
+            if not self._status_only_job(payload, image_path):
+                self._enqueue(payload, image_path, quiet=True)
+            self._pending = None
+
+        self._executor.shutdown(wait=True, cancel_futures=False)
 
     def _submit(
         self,

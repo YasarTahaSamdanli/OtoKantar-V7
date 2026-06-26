@@ -28,7 +28,7 @@ services:
       - key: SESSION_ENCRYPT
         value: true
       - key: QUEUE_CONNECTION
-        value: database
+        value: sync
       - key: LIVE_INGEST_QUEUE
         value: live-ingest
       - key: DB_CONNECTION
