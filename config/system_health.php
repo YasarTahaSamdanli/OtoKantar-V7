@@ -27,4 +27,19 @@ return [
         'history_hours' => env('SYSTEM_HEALTH_QUEUE_HISTORY_HOURS', 24),
         'failed_job_sample' => env('SYSTEM_HEALTH_FAILED_JOB_SAMPLE', 10),
     ],
+
+    'alerts' => [
+        'enabled' => env('SYSTEM_HEALTH_ALERTS_ENABLED', false),
+        'customer_name' => env('SYSTEM_HEALTH_ALERT_CUSTOMER', env('APP_NAME', 'OtoKantar')),
+        'min_level' => env('SYSTEM_HEALTH_ALERT_MIN_LEVEL', 'warning'),
+        'cooldown_minutes' => env('SYSTEM_HEALTH_ALERT_COOLDOWN_MINUTES', 15),
+        'timeout_seconds' => env('SYSTEM_HEALTH_ALERT_TIMEOUT_SECONDS', 5),
+        'telegram' => [
+            'bot_token' => env('TELEGRAM_BOT_TOKEN'),
+            'chat_id' => env('TELEGRAM_CHAT_ID'),
+        ],
+        'n8n' => [
+            'webhook_url' => env('N8N_HEALTH_WEBHOOK_URL'),
+        ],
+    ],
 ];

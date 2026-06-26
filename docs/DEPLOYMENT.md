@@ -25,6 +25,9 @@ Bu proje su an Render uzerinde ucretsiz calisabilir; ayni Dockerfile daha sonra 
 - `ADMIN_EMAIL`
 - `ADMIN_PASSWORD`
 - `LIVE_INGEST_API_TOKEN`
+- `SYSTEM_HEALTH_ALERT_CUSTOMER`
+- `N8N_HEALTH_WEBHOOK_URL` alarm icin opsiyonel
+- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` alarm icin opsiyonel
 - `DATABASE_URL` / `DB_URL` Render database bind ile gelir
 
 Deploy sonrasi kontrol:
@@ -34,6 +37,14 @@ curl -I https://senin-render-adresin.onrender.com/up
 ```
 
 Beklenen sonuc `200 OK`.
+
+Alarm test komutu:
+
+```bash
+php artisan otokantar:health-alerts --dry-run
+```
+
+Bildirimleri acmak icin `SYSTEM_HEALTH_ALERTS_ENABLED=true` yap. Render free web service kendi basina periyodik komut calistirmadigi icin bu komut bir cron/worker tarafindan duzenli calistirilmalidir. Manuel test icin `--force` eklenebilir.
 
 ## DigitalOcean App Platform'a gecis
 

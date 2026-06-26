@@ -59,6 +59,22 @@ services:
         value: /var/www/html/storage/app/legacy_python
       - key: LIVE_INGEST_API_TOKEN
         sync: false
+      - key: SYSTEM_HEALTH_ALERTS_ENABLED
+        value: false
+      - key: SYSTEM_HEALTH_ALERT_CUSTOMER
+        sync: false
+      - key: SYSTEM_HEALTH_ALERT_MIN_LEVEL
+        value: warning
+      - key: SYSTEM_HEALTH_ALERT_COOLDOWN_MINUTES
+        value: 15
+      - key: SYSTEM_HEALTH_ALERT_TIMEOUT_SECONDS
+        value: 5
+      - key: N8N_HEALTH_WEBHOOK_URL
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
 
 databases:
   - name: otokantar-v7-db

@@ -3,6 +3,7 @@
 use App\Models\User;
 use App\Models\VehiclePass;
 use App\Services\ProjectBackupService;
+use App\Services\HealthAlertService;
 use App\Services\QueueOperationsService;
 use App\Services\SystemHealthService;
 use Illuminate\Foundation\Inspiring;
@@ -366,6 +367,24 @@ Artisan::command('otokantar:health-check {--json : Output raw JSON}', function (
 
     return ($report['status'] ?? 'critical') === 'critical' ? 1 : 0;
 })->purpose('Show product health diagnostics for support and monitoring');
+
+Artisan::command('otokantar:health-alerts {--force : Send even when alerts are disabled or health is OK} {--dry-run : Show alert payload without sending}', function (HealthAlertService $alerts) {
+    $result = $alerts->checkAndNotify(
+        force: (bool) $this->option('force'),
+        dryRun: (bool) $this->option('dry-run'),
+    );
+
+    $this->line(json_encode([
+        'status' => $result['status'] ?? 'unknown',
+        'reason' => $result['reason'] ?? null,
+        'overall_status' => $result['payload']['overall_status'] ?? null,
+        'health_score' => $result['payload']['health_score'] ?? null,
+        'queue' => $result['payload']['queue'] ?? [],
+        'sent' => $result['sent'] ?? [],
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?: '{}');
+
+    return in_array($result['status'] ?? null, ['sent', 'skipped', 'dry-run', 'not_configured'], true) ? 0 : 1;
+})->purpose('Send n8n/Telegram alerts from the current health report');
 
 Artisan::command('otokantar:support-bundle {--path= : Bundle destination root}', function (SystemHealthService $health, QueueOperationsService $queue) {
     $root = $this->option('path') ?: storage_path('app/support-bundles');

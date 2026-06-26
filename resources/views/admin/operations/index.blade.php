@@ -16,6 +16,7 @@
     @php
         $metrics = $queue['metrics'] ?? [];
         $levels = $queue['levels'] ?? [];
+        $alertsEnabled = (bool) config('system_health.alerts.enabled', false);
         $badge = function (string $level): string {
             return match ($level) {
                 'CRITICAL' => 'border-rose-400/30 bg-rose-400/10 text-rose-200',
@@ -58,6 +59,29 @@
                             <div class="mt-4 break-words text-2xl font-semibold text-slate-100" style="font-family: 'JetBrains Mono', monospace;">{{ $value }}</div>
                         </div>
                     @endforeach
+                </div>
+            </section>
+
+            <section class="mb-6 rounded-2xl border border-white/10 bg-[#181f2b]/95 p-6">
+                <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                        <div class="text-sm font-semibold text-slate-100">Alarm sistemi</div>
+                        <div class="mt-1 text-sm text-slate-500">Health score ve queue metrikleri n8n/Telegram bildirimleri icin kullanilir.</div>
+                    </div>
+                    <div class="grid gap-3 sm:grid-cols-3">
+                        <div class="rounded-xl border border-white/10 bg-white/[.03] px-4 py-3">
+                            <div class="text-[10px] font-semibold uppercase tracking-[.14em] text-slate-500">Durum</div>
+                            <div class="mt-1 text-sm font-semibold {{ $alertsEnabled ? 'text-emerald-300' : 'text-slate-400' }}">{{ $alertsEnabled ? 'ACTIVE' : 'DISABLED' }}</div>
+                        </div>
+                        <div class="rounded-xl border border-white/10 bg-white/[.03] px-4 py-3">
+                            <div class="text-[10px] font-semibold uppercase tracking-[.14em] text-slate-500">Esik</div>
+                            <div class="mt-1 text-sm font-semibold text-slate-100">{{ strtoupper((string) config('system_health.alerts.min_level', 'warning')) }}</div>
+                        </div>
+                        <div class="rounded-xl border border-white/10 bg-white/[.03] px-4 py-3">
+                            <div class="text-[10px] font-semibold uppercase tracking-[.14em] text-slate-500">Cooldown</div>
+                            <div class="mt-1 text-sm font-semibold text-slate-100">{{ config('system_health.alerts.cooldown_minutes', 15) }} dk</div>
+                        </div>
+                    </div>
                 </div>
             </section>
 
