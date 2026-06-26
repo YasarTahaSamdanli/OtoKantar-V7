@@ -26,6 +26,9 @@
                         <x-nav-link :href="route('admin.users.index')" :active="request()->routeIs('admin.users.*')">
                             Kullanicilar
                         </x-nav-link>
+                        <x-nav-link :href="route('admin.operations.index')" :active="request()->routeIs('admin.operations.*')">
+                            Operasyon
+                        </x-nav-link>
                     @endif
                 </div>
             </div>
@@ -87,6 +90,9 @@
             @if (Auth::user()->isAdmin())
                 <x-responsive-nav-link :href="route('admin.users.index')" :active="request()->routeIs('admin.users.*')">
                     Kullanicilar
+                </x-responsive-nav-link>
+                <x-responsive-nav-link :href="route('admin.operations.index')" :active="request()->routeIs('admin.operations.*')">
+                    Operasyon
                 </x-responsive-nav-link>
             @endif
         </div>

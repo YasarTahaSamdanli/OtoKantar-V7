@@ -352,11 +352,7 @@ class OtoKantar:
             upload_path.write_bytes(buf.tobytes())
             payload = {
                 "event_type": etiket,
-                "event_id": (
-                    f"{kayit.plaka}-{etiket}-"
-                    f"{kayit.cikis_tarih or kayit.giris_tarih}-"
-                    f"{kayit.cikis_saat or kayit.giris_saat}"
-                ),
+                "event_id": self._event_id_uret(kayit, etiket),
                 "son_kayit": asdict(kayit),
                 "guven": round(float(final_conf), 3),
             }
@@ -379,6 +375,20 @@ class OtoKantar:
                 upload_path.unlink(missing_ok=True)
             except Exception:
                 pass
+
+    def _event_id_uret(self, kayit: PlakaKayit, etiket: str) -> str:
+        direction = "CIKIS" if str(etiket).strip().upper() == "CIKIS" else "GIRIS"
+        date_value = kayit.cikis_tarih if direction == "CIKIS" else kayit.giris_tarih
+        time_value = kayit.cikis_saat if direction == "CIKIS" else kayit.giris_saat
+        event_time = f"{date_value or kayit.giris_tarih} {time_value or kayit.giris_saat}"
+
+        try:
+            parsed = datetime.strptime(event_time.strip(), "%Y-%m-%d %H:%M:%S")
+            stamp = parsed.strftime("%Y%m%d%H%M%S")
+        except Exception:
+            stamp = hashlib.sha1(event_time.encode("utf-8")).hexdigest()[:14]
+
+        return f"otokantar:v1:{kayit.plaka}:{direction}:{stamp}"
 
     def _ocr_bekliyor_mu(self, arac_id: int) -> bool:
         with self._ocr_bekleyen_lock:

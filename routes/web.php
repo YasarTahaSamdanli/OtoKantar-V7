@@ -3,6 +3,8 @@
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\Admin\UserController as AdminUserController;
 use App\Http\Controllers\Admin\AuditLogController as AdminAuditLogController;
+use App\Http\Controllers\Admin\OperationsController as AdminOperationsController;
+use App\Http\Controllers\Admin\SystemHealthController as AdminSystemHealthController;
 use App\Http\Controllers\CanliController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\VehicleProfileController;
@@ -53,7 +55,9 @@ Route::middleware('auth')->group(function () {
 
 Route::middleware(['auth', 'role:admin'])->prefix('admin')->name('admin.')->group(function () {
     Route::resource('users', AdminUserController::class)->only(['index', 'create', 'store']);
+    Route::get('operations', AdminOperationsController::class)->name('operations.index');
     Route::get('audit-logs', [AdminAuditLogController::class, 'index'])->name('audit-logs.index');
+    Route::get('system-health', AdminSystemHealthController::class)->name('system-health');
 });
 
 require __DIR__.'/auth.php';

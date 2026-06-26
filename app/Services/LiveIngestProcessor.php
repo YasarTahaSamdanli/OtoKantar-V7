@@ -1,148 +1,90 @@
 <?php
 
-namespace App\Http\Controllers;
+namespace App\Services;
 
 use App\Models\VehiclePass;
-use App\Jobs\ProcessLiveIngest;
-use App\Services\AuditLogService;
-use App\Services\VehicleProfileService;
-use Illuminate\Http\Request;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use PDO;
-use Symfony\Component\HttpFoundation\Response;
+use RuntimeException;
 use Throwable;
 
-class LiveIngestController extends Controller
+class LiveIngestProcessor
 {
     public function __construct(
-        private readonly AuditLogService $audit,
         private readonly VehicleProfileService $vehicleProfiles,
     ) {}
 
-    public function store(Request $request)
+    public function process(?array $payload, ?string $imageBytes): array
     {
-        $expectedToken = (string) config('services.legacy_runtime.api_token', '');
-        $givenToken = $request->bearerToken() ?: (string) $request->header('X-API-Token', '');
+        $root = $this->runtimeRoot();
+        $wrote = [];
 
-        if ($expectedToken === '' || ! hash_equals($expectedToken, $givenToken)) {
-            Log::channel('stress_live_ingest')->warning('live_ingest_rejected', [
-                'reason' => $expectedToken === '' ? 'token_not_configured' : 'invalid_token',
-                'ip' => $request->ip(),
-                'content_length' => $request->server('CONTENT_LENGTH'),
-            ]);
-            $this->audit->record('live_ingest.rejected', $request, metadata: [
-                'reason' => $expectedToken === '' ? 'token_not_configured' : 'invalid_token',
-                'has_json' => $request->input('json') !== null || $request->input('payload') !== null || $request->json()->all() !== [],
-                'has_image' => $request->hasFile('image') || $request->input('image_base64') !== null,
-            ]);
+        if ($this->isTransitionEvent($payload)) {
+            $payload = $this->enrichTransitionWeights($payload);
+            $identity = $this->eventIdentity($payload);
+            $payload['event_id'] = $identity['event_id'];
 
-            return response()->json(['hata' => 'Yetkisiz istek'], Response::HTTP_UNAUTHORIZED);
+            if ($this->alreadyProcessed($identity['event_id'], $identity['legacy_pass_key'])) {
+                return [
+                    'wrote' => ['duplicate_skipped'],
+                    'runtime_path' => $root,
+                    'event_type' => $payload['event_type'] ?? $payload['olay_tipi'] ?? $payload['_event_type'] ?? null,
+                    'event_id' => $identity['event_id'],
+                    'duplicate' => true,
+                ];
+            }
         }
 
-        if ($this->requestBodyTooLarge($request)) {
-            Log::channel('stress_live_ingest')->warning('live_ingest_rejected', [
-                'reason' => 'request_too_large',
-                'ip' => $request->ip(),
-                'content_length' => $request->server('CONTENT_LENGTH'),
-            ]);
-            $this->audit->record('live_ingest.rejected', $request, metadata: [
-                'reason' => 'request_too_large',
-                'content_length' => $request->server('CONTENT_LENGTH'),
-            ]);
-
-            return response()->json(['hata' => 'Istek boyutu cok buyuk.'], Response::HTTP_REQUEST_ENTITY_TOO_LARGE);
+        if ($payload !== null) {
+            $payload['_remote_ingest_at'] = now()->toIso8601String();
+            $this->atomicWrite($root.DIRECTORY_SEPARATOR.'canli_durum.json', json_encode(
+                $payload,
+                JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT
+            ) ?: '{}');
+            $wrote[] = 'canli_durum.json';
         }
 
-        try {
-            $payload = $this->extractJsonPayload($request);
-            if ($payload === false) {
-                Log::channel('stress_live_ingest')->warning('live_ingest_rejected', [
-                    'reason' => 'invalid_or_too_large_json',
-                    'ip' => $request->ip(),
-                ]);
-                $this->audit->record('live_ingest.rejected', $request, metadata: [
-                    'reason' => 'invalid_or_too_large_json',
-                ]);
+        if ($imageBytes !== null && $this->isTransitionEvent($payload)) {
+            $this->atomicWrite($root.DIRECTORY_SEPARATOR.'canli_kare.jpg', $imageBytes);
+            $wrote[] = 'canli_kare.jpg';
+        }
 
-                return response()->json(['hata' => 'JSON verisi gecersiz veya cok buyuk.'], Response::HTTP_UNPROCESSABLE_ENTITY);
+        if ($this->isTransitionEvent($payload)) {
+            if ($this->storeTransitionHistory($payload, $root)) {
+                $wrote[] = 'gecis_gecmisi.jsonl';
             }
-
-            $imageBytes = $this->extractImageBytes($request);
-            if ($imageBytes === false) {
-                Log::channel('stress_live_ingest')->warning('live_ingest_rejected', [
-                    'reason' => 'invalid_or_too_large_image',
-                    'ip' => $request->ip(),
-                ]);
-                $this->audit->record('live_ingest.rejected', $request, metadata: [
-                    'reason' => 'invalid_or_too_large_image',
-                ]);
-
-                return response()->json(['hata' => 'Gorsel gecersiz, JPG degil veya cok buyuk.'], Response::HTTP_UNPROCESSABLE_ENTITY);
-            }
-
-            if ($imageBytes !== null && $payload === null) {
-                return response()->json([
-                    'hata' => 'JPG yalnizca GIRIS/CIKIS event payload ile kabul edilir.',
-                ], Response::HTTP_UNPROCESSABLE_ENTITY);
-            }
-
-            if ($payload === null && $imageBytes === null) {
-                Log::channel('stress_live_ingest')->warning('live_ingest_rejected', [
-                    'reason' => 'empty_payload',
-                    'ip' => $request->ip(),
-                ]);
-                $this->audit->record('live_ingest.rejected', $request, metadata: [
-                    'reason' => 'empty_payload',
-                ]);
-
-                return response()->json([
-                    'hata' => 'JSON veya JPG verisi bulunamadi.',
-                ], Response::HTTP_UNPROCESSABLE_ENTITY);
-            }
-
-            $imagePath = $this->storePendingImage($imageBytes);
-            $queue = (string) config('services.legacy_runtime.queue', 'live-ingest');
 
             try {
-                ProcessLiveIngest::dispatch($payload, $imagePath)->onQueue($queue);
+                if ($this->storeTransitionEvent($payload)) {
+                    $wrote[] = 'legacy_db';
+                }
             } catch (Throwable $e) {
-                $this->deletePendingImage($imagePath);
-
-                throw $e;
+                Log::warning('Live ingest DB kaydi atlandi', ['exception' => $e]);
             }
 
-            $this->audit->record('live_ingest.accepted', $request, metadata: [
-                'queued' => true,
-                'queue' => $queue,
-                'event_type' => $payload['event_type'] ?? $payload['olay_tipi'] ?? $payload['_event_type'] ?? null,
-            ]);
-            Log::channel('stress_live_ingest')->info('live_ingest_accepted', [
-                'queued' => true,
-                'queue' => $queue,
-                'event_type' => $payload['event_type'] ?? $payload['olay_tipi'] ?? $payload['_event_type'] ?? null,
-                'ip' => $request->ip(),
-            ]);
-
-            return response()->json([
-                'ok' => true,
-                'queued' => true,
-                'queue' => $queue,
-            ]);
-        } catch (Throwable $e) {
-            Log::error('Live ingest kayit hatasi', ['exception' => $e]);
-            Log::channel('stress_exceptions')->error('live_ingest_exception', [
-                'exception' => $e::class,
-                'message' => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
-            ]);
-
-            return response()->json([
-                'hata' => 'Canli veri kaydedilemedi.',
-            ], Response::HTTP_INTERNAL_SERVER_ERROR);
+            try {
+                if ($this->storeVehiclePass($payload, $root, $imageBytes !== null)) {
+                    $wrote[] = 'vehicle_passes';
+                }
+            } catch (Throwable $e) {
+                Log::warning('VehiclePass dual-write atlandi', ['exception' => $e]);
+            }
         }
+
+        if ($wrote === []) {
+            throw new RuntimeException('JSON veya JPG verisi bulunamadi.');
+        }
+
+        return [
+            'wrote' => $wrote,
+            'runtime_path' => $root,
+            'event_type' => $payload['event_type'] ?? $payload['olay_tipi'] ?? $payload['_event_type'] ?? null,
+            'event_id' => $payload['event_id'] ?? null,
+            'duplicate' => false,
+        ];
     }
 
     private function runtimeRoot(): string
@@ -162,121 +104,6 @@ class LiveIngestController extends Controller
     private function isAbsolutePath(string $path): bool
     {
         return $path !== '' && (str_starts_with($path, '/') || preg_match('/^[A-Za-z]:[\/\\\\]/', $path) === 1);
-    }
-
-    private function requestBodyTooLarge(Request $request): bool
-    {
-        $contentLength = (int) $request->server('CONTENT_LENGTH', 0);
-        if ($contentLength <= 0) {
-            return false;
-        }
-
-        $max = $this->maxJsonBytes() + $this->maxImageBytes() + 65536;
-
-        return $contentLength > $max;
-    }
-
-    private function extractJsonPayload(Request $request): array|false|null
-    {
-        $json = $request->input('json');
-
-        if (is_string($json) && trim($json) !== '') {
-            if (strlen($json) > $this->maxJsonBytes()) {
-                return false;
-            }
-
-            $decoded = json_decode($json, true, 64);
-
-            return is_array($decoded) ? $decoded : false;
-        }
-
-        $payload = $request->input('payload');
-        if (is_array($payload)) {
-            if (strlen(json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) ?: '') > $this->maxJsonBytes()) {
-                return false;
-            }
-
-            return $payload;
-        }
-
-        $body = $request->json()->all();
-        if ($body !== [] && strlen((string) $request->getContent()) > $this->maxJsonBytes()) {
-            return false;
-        }
-
-        return $body !== [] ? $body : null;
-    }
-
-    private function extractImageBytes(Request $request): string|false|null
-    {
-        if ($request->hasFile('image')) {
-            $file = $request->file('image');
-
-            if (! $file?->isValid() || $file->getSize() > $this->maxImageBytes()) {
-                return false;
-            }
-
-            $bytes = file_get_contents($file->getRealPath()) ?: null;
-
-            return $this->validJpegBytes($bytes) ? $bytes : false;
-        }
-
-        $imageBase64 = $request->input('image_base64');
-        if (is_string($imageBase64) && trim($imageBase64) !== '') {
-            if (strlen($imageBase64) > (int) ceil($this->maxImageBytes() * 1.4)) {
-                return false;
-            }
-
-            $imageBase64 = preg_replace('/^data:image\/[a-zA-Z0-9.+-]+;base64,/', '', $imageBase64) ?: $imageBase64;
-            $decoded = base64_decode($imageBase64, true);
-
-            return $this->validJpegBytes($decoded) ? $decoded : false;
-        }
-
-        return null;
-    }
-
-    private function storePendingImage(?string $imageBytes): ?string
-    {
-        if ($imageBytes === null) {
-            return null;
-        }
-
-        $directory = storage_path('app/live-ingest-pending');
-        if (! is_dir($directory)) {
-            mkdir($directory, 0775, true);
-        }
-
-        $path = $directory.DIRECTORY_SEPARATOR.Str::uuid().'.jpg';
-        file_put_contents($path, $imageBytes, LOCK_EX);
-
-        return $path;
-    }
-
-    private function deletePendingImage(?string $path): void
-    {
-        if ($path !== null && is_file($path)) {
-            @unlink($path);
-        }
-    }
-
-    private function validJpegBytes(?string $bytes): bool
-    {
-        if ($bytes === null || strlen($bytes) < 4 || strlen($bytes) > $this->maxImageBytes()) {
-            return false;
-        }
-
-        return str_starts_with($bytes, "\xFF\xD8") && str_ends_with($bytes, "\xFF\xD9");
-    }
-
-    private function maxJsonBytes(): int
-    {
-        return max(1024, (int) config('services.legacy_runtime.max_json_bytes', 262144));
-    }
-
-    private function maxImageBytes(): int
-    {
-        return max(1024, (int) config('services.legacy_runtime.max_image_bytes', 2097152));
     }
 
     private function isTransitionEvent(?array $payload): bool
@@ -515,8 +342,9 @@ class LiveIngestController extends Controller
         }
 
         $passedAt = date('Y-m-d H:i:s', $timestamp);
-        $eventId = trim((string) ($payload['event_id'] ?? ''));
-        $legacyPassKey = $this->transitionEventKey($plate, $direction, $timestamp);
+        $identity = $this->eventIdentity($payload, $plate, $direction, $timestamp);
+        $eventId = $identity['event_id'];
+        $legacyPassKey = $identity['legacy_pass_key'];
         $snapshotPath = $snapshotWritten ? $root.DIRECTORY_SEPARATOR.'canli_kare.jpg' : null;
 
         $values = [
@@ -548,13 +376,100 @@ class LiveIngestController extends Controller
             'dispatch_no' => $record['irsaliye_no'] ?? null,
         ];
 
-        $vehiclePass = $eventId !== ''
-            ? VehiclePass::updateOrCreate(['event_id' => $eventId], $values)
-            : VehiclePass::updateOrCreate(['legacy_pass_key' => $legacyPassKey], $values);
+        $vehiclePass = $this->upsertVehiclePass($eventId, $legacyPassKey, $values);
 
         $this->vehicleProfiles->syncForPass($vehiclePass, $vehiclePass->wasRecentlyCreated);
 
         return true;
+    }
+
+    private function upsertVehiclePass(string $eventId, string $legacyPassKey, array $values): VehiclePass
+    {
+        try {
+            return VehiclePass::updateOrCreate(['event_id' => $eventId], $values);
+        } catch (QueryException $e) {
+            if (! $this->isUniqueConstraintViolation($e)) {
+                throw $e;
+            }
+
+            $existing = VehiclePass::query()
+                ->where('event_id', $eventId)
+                ->orWhere('legacy_pass_key', $legacyPassKey)
+                ->first();
+
+            if ($existing !== null) {
+                return $existing;
+            }
+
+            throw $e;
+        }
+    }
+
+    private function alreadyProcessed(string $eventId, string $legacyPassKey): bool
+    {
+        try {
+            return VehiclePass::query()
+                ->where('event_id', $eventId)
+                ->orWhere('legacy_pass_key', $legacyPassKey)
+                ->exists();
+        } catch (QueryException $e) {
+            Log::warning('VehiclePass idempotency kontrolu atlandi', ['exception' => $e]);
+
+            return false;
+        }
+    }
+
+    private function eventIdentity(
+        ?array $payload,
+        ?string $plate = null,
+        ?string $direction = null,
+        ?int $timestamp = null,
+    ): array {
+        $record = is_array($payload['son_kayit'] ?? null) ? $payload['son_kayit'] : ($payload ?? []);
+        $plate = strtoupper(trim((string) ($plate ?? $record['plaka'] ?? $payload['plaka'] ?? '')));
+        $direction = strtoupper(trim((string) (
+            $direction
+            ?? $payload['event_type']
+            ?? $payload['olay_tipi']
+            ?? $payload['_event_type']
+            ?? $record['tip']
+            ?? $record['durum']
+            ?? 'GIRIS'
+        )));
+        $direction = $direction === 'CIKIS' ? 'CIKIS' : 'GIRIS';
+
+        if ($timestamp === null) {
+            $date = (string) ($direction === 'CIKIS'
+                ? ($record['cikis_tarih'] ?? $record['tarih'] ?? $record['giris_tarih'] ?? '')
+                : ($record['giris_tarih'] ?? $record['tarih'] ?? $record['cikis_tarih'] ?? ''));
+            $time = (string) ($direction === 'CIKIS'
+                ? ($record['cikis_saat'] ?? $record['saat'] ?? $record['giris_saat'] ?? '')
+                : ($record['giris_saat'] ?? $record['saat'] ?? $record['cikis_saat'] ?? ''));
+            $parsed = strtotime(trim($date.' '.$time));
+            $timestamp = $parsed === false ? time() : $parsed;
+        }
+
+        $legacyPassKey = $this->transitionEventKey($plate, $direction, $timestamp);
+        $givenEventId = trim((string) ($payload['event_id'] ?? ''));
+
+        return [
+            'event_id' => $givenEventId !== '' ? $givenEventId : $this->canonicalEventId($plate, $direction, $timestamp),
+            'legacy_pass_key' => $legacyPassKey,
+        ];
+    }
+
+    private function canonicalEventId(string $plate, string $direction, int $timestamp): string
+    {
+        return 'otokantar:v1:'.strtoupper(trim($plate)).':'.$direction.':'.date('YmdHis', $timestamp);
+    }
+
+    private function isUniqueConstraintViolation(QueryException $e): bool
+    {
+        $sqlState = (string) ($e->errorInfo[0] ?? '');
+        $driverCode = (string) ($e->errorInfo[1] ?? '');
+
+        return in_array($sqlState, ['23000', '23505'], true)
+            || in_array($driverCode, ['1062', '1555', '2067'], true);
     }
 
     private function recordDateTime(array $record, string $prefix): ?string
@@ -690,7 +605,7 @@ class LiveIngestController extends Controller
 
         if (! @copy($tmp, $path)) {
             @unlink($tmp);
-            throw new \RuntimeException('Dosya atomik olarak yazilamadi: '.$path);
+            throw new RuntimeException('Dosya atomik olarak yazilamadi: '.$path);
         }
 
         @unlink($tmp);

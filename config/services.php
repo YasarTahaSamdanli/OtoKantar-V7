@@ -41,6 +41,7 @@ return [
             base_path('legacy_python')
         ),
         'api_token' => env('LIVE_INGEST_API_TOKEN'),
+        'queue' => env('LIVE_INGEST_QUEUE', 'live-ingest'),
         'max_json_bytes' => env('LIVE_INGEST_MAX_JSON_BYTES', 262144),
         'max_image_bytes' => env('LIVE_INGEST_MAX_IMAGE_BYTES', 2097152),
     ],

@@ -3,6 +3,8 @@
 use App\Models\User;
 use App\Models\VehiclePass;
 use App\Services\ProjectBackupService;
+use App\Services\QueueOperationsService;
+use App\Services\SystemHealthService;
 use Illuminate\Foundation\Inspiring;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -327,6 +329,76 @@ Artisan::command('vehicle-passes:verify {--sample=10 : Number of missing/extra r
 
     return $missing->isEmpty() && $extra->isEmpty() ? 0 : 1;
 })->purpose('Compare VehiclePass records with current dashboard data sources');
+
+Artisan::command('otokantar:health-check {--json : Output raw JSON}', function (SystemHealthService $health) {
+    $report = $health->report();
+    $summary = function (string $name, array $check): string {
+        return match ($name) {
+            'database' => (string) ($check['connection'] ?? '-'),
+            'runtime' => (string) ($check['path'] ?? '-'),
+            'queue' => 'pending='.($check['pending_jobs'] ?? '?').', failed='.($check['failed_jobs'] ?? '?'),
+            'disk' => 'free_mb='.($check['free_mb'] ?? '?'),
+            'backup' => 'latest='.($check['latest_backup'] ?? '-'),
+            'ingest' => 'latest='.($check['latest_vehicle_pass']['plate'] ?? '-'),
+            default => (string) ($check['env'] ?? $check['message'] ?? '-'),
+        };
+    };
+
+    if ((bool) $this->option('json')) {
+        $this->line(json_encode($report, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?: '{}');
+
+        return ($report['status'] ?? 'critical') === 'critical' ? 1 : 0;
+    }
+
+    $this->info('OtoKantar sistem durumu: '.strtoupper((string) ($report['status'] ?? 'unknown')));
+    $this->line('Uretim zamani: '.($report['generated_at'] ?? '-'));
+
+    $rows = [];
+    foreach (($report['checks'] ?? []) as $name => $check) {
+        $rows[] = [
+            $name,
+            strtoupper((string) ($check['status'] ?? 'unknown')),
+            $summary((string) $name, is_array($check) ? $check : []),
+        ];
+    }
+
+    $this->table(['Kontrol', 'Durum', 'Ozet'], $rows);
+
+    return ($report['status'] ?? 'critical') === 'critical' ? 1 : 0;
+})->purpose('Show product health diagnostics for support and monitoring');
+
+Artisan::command('otokantar:support-bundle {--path= : Bundle destination root}', function (SystemHealthService $health, QueueOperationsService $queue) {
+    $root = $this->option('path') ?: storage_path('app/support-bundles');
+    if (! (str_starts_with((string) $root, '/') || preg_match('/^[A-Za-z]:[\/\\\\]/', (string) $root) === 1)) {
+        $root = base_path((string) $root);
+    }
+
+    $bundleDir = rtrim((string) $root, '\\/').DIRECTORY_SEPARATOR.'support_'.now()->format('Ymd_His');
+    \Illuminate\Support\Facades\File::ensureDirectoryExists($bundleDir, 0750);
+
+    $healthReport = $health->report();
+    $queueReport = $queue->supportSummary();
+    $failedJobs = $queueReport['failed_job_sample'] ?? [];
+
+    file_put_contents($bundleDir.DIRECTORY_SEPARATOR.'health.json', json_encode($healthReport, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    file_put_contents($bundleDir.DIRECTORY_SEPARATOR.'queue.json', json_encode($queueReport, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    file_put_contents($bundleDir.DIRECTORY_SEPARATOR.'failed_jobs.json', json_encode($failedJobs, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    file_put_contents($bundleDir.DIRECTORY_SEPARATOR.'summary.txt', implode(PHP_EOL, [
+        'OtoKantar Support Bundle',
+        'Generated at: '.($healthReport['generated_at'] ?? now()->toIso8601String()),
+        'Overall status: '.($healthReport['overall_status'] ?? 'Unknown'),
+        'Health score: '.($healthReport['health_score'] ?? 'n/a'),
+        'Queue status: '.($queueReport['status'] ?? 'Unknown'),
+        'Pending jobs: '.($queueReport['metrics']['pending_jobs'] ?? 'n/a'),
+        'Failed jobs: '.($queueReport['metrics']['failed_jobs'] ?? 'n/a'),
+        'Pending temp images: '.($queueReport['metrics']['pending_temp_images'] ?? 'n/a'),
+        '',
+    ]));
+
+    $this->info('Support bundle hazir: '.$bundleDir);
+
+    return 0;
+})->purpose('Create a support bundle with health, queue and failed job summaries');
 
 Artisan::command('backup:run {--connection= : Database connection to dump} {--path= : Backup destination directory} {--keep= : Number of backup folders to keep} {--without-legacy-runtime : Skip legacy runtime file archive} {--sync-remote : Copy this backup to configured remote storage after creation}', function () {
     $manifest = app(ProjectBackupService::class)->run(

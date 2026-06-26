@@ -2,8 +2,10 @@
 
 namespace Tests\Feature;
 
+use App\Jobs\ProcessLiveIngest;
 use App\Services\CanliDataService;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
 class LiveIngestTest extends TestCase
@@ -59,6 +61,34 @@ class LiveIngestTest extends TestCase
         $this->assertFileExists($runtimePath.DIRECTORY_SEPARATOR.'gecis_gecmisi.jsonl');
         $this->assertStringContainsString('1234.5', File::get($runtimePath.DIRECTORY_SEPARATOR.'canli_durum.json'));
         $this->assertStringContainsString('"plaka"', File::get($runtimePath.DIRECTORY_SEPARATOR.'gecis_gecmisi.jsonl'));
+    }
+
+    public function test_live_ingest_dispatches_processing_job_to_queue(): void
+    {
+        Queue::fake();
+
+        config([
+            'services.legacy_runtime.api_token' => 'secret-token',
+            'services.legacy_runtime.queue' => 'live-ingest',
+        ]);
+
+        $this->withHeader('Authorization', 'Bearer secret-token')
+            ->post('/api/live-ingest', [
+                'json' => json_encode([
+                    'event_type' => 'GIRIS',
+                    'son_kayit' => [
+                        'plaka' => '06QUE123',
+                        'durum' => 'GIRIS',
+                        'giris_tarih' => '2026-06-08',
+                        'giris_saat' => '12:00:00',
+                    ],
+                ]),
+            ])
+            ->assertOk()
+            ->assertJsonPath('queued', true)
+            ->assertJsonPath('queue', 'live-ingest');
+
+        Queue::assertPushedOn('live-ingest', ProcessLiveIngest::class);
     }
 
     public function test_json_panel_fallback_reads_full_history_not_only_last_10(): void

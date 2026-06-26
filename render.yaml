@@ -25,10 +25,16 @@ services:
         value: database
       - key: SESSION_DRIVER
         value: database
+      - key: SESSION_ENCRYPT
+        value: true
       - key: QUEUE_CONNECTION
         value: database
+      - key: LIVE_INGEST_QUEUE
+        value: live-ingest
       - key: DB_CONNECTION
         value: pgsql
+      - key: DB_SSLMODE
+        value: require
       - key: APP_KEY
         sync: false
       - key: APP_KEY_BASE64

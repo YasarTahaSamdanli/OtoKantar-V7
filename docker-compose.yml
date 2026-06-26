@@ -25,6 +25,7 @@ services:
       QUEUE_CONNECTION: database
       LEGACY_RUNTIME_PATH: storage/app/legacy_python
       LIVE_INGEST_API_TOKEN: local-dev-token
+      LIVE_INGEST_QUEUE: live-ingest
     volumes:
       - .:/var/www/html
       - storage:/var/www/html/storage
@@ -50,7 +51,7 @@ services:
     build:
       context: .
       dockerfile: docker/php-dev.Dockerfile
-    command: php artisan queue:listen --tries=1 --timeout=0
+    command: php artisan queue:listen --queue=live-ingest,default --tries=3 --timeout=60
     environment:
       APP_ENV: local
       APP_DEBUG: "true"
@@ -65,6 +66,7 @@ services:
       QUEUE_CONNECTION: database
       LEGACY_RUNTIME_PATH: storage/app/legacy_python
       LIVE_INGEST_API_TOKEN: local-dev-token
+      LIVE_INGEST_QUEUE: live-ingest
     volumes:
       - .:/var/www/html
       - storage:/var/www/html/storage
