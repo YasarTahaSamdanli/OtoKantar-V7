@@ -97,8 +97,9 @@ class HealthAlertService
             $response = Http::timeout($this->timeoutSeconds())
                 ->asForm()
                 ->post('https://api.telegram.org/bot'.$token.'/sendMessage', [
-                    'chat_id' => $chatId,
-                    'text' => $this->telegramText($payload),
+                    'chat_id'                  => $chatId,
+                    'text'                     => $this->telegramText($payload),
+                    'parse_mode'               => 'Markdown',
                     'disable_web_page_preview' => true,
                 ]);
 
@@ -163,20 +164,66 @@ class HealthAlertService
 
     private function telegramText(array $payload): string
     {
-        $queue = $payload['queue'] ?? [];
+        $queue  = $payload['queue'] ?? [];
+        $status = strtoupper((string) ($payload['overall_status'] ?? 'Unknown'));
+        $score  = $payload['health_score'] ?? '-';
+        $level  = strtoupper((string) ($queue['level'] ?? 'UNKNOWN'));
+        $worker = strtoupper((string) ($queue['worker_status'] ?? 'UNKNOWN'));
 
-        return implode(PHP_EOL, [
-            'OtoKantar alarm: '.($payload['overall_status'] ?? 'Unknown'),
-            'Musteri: '.($payload['customer'] ?? '-'),
-            'Health score: '.($payload['health_score'] ?? '-'),
-            'Queue: '.($queue['name'] ?? '-').' / '.($queue['level'] ?? '-'),
-            'Pending: '.($queue['pending_jobs'] ?? 0).' | Failed: '.($queue['failed_jobs'] ?? 0).' | Temp: '.($queue['pending_temp_images'] ?? 0),
-            'Worker: '.($queue['worker_status'] ?? '-').' - '.($queue['worker_message'] ?? '-'),
-            'Son basarili ingest: '.($queue['last_successful_ingest_at'] ?? '-'),
-            'Son hatali ingest: '.($queue['last_failed_ingest_at'] ?? '-'),
-            'Zaman: '.($payload['generated_at'] ?? '-'),
-            'URL: '.($payload['app_url'] ?? '-'),
-        ]);
+        $statusIcon = match (true) {
+            $status === 'CRITICAL' => '🔴',
+            $status === 'WARNING'  => '🟡',
+            default                => '🟢',
+        };
+
+        $workerIcon = $worker === 'UP' ? '✅' : '❌';
+
+        $lines = [];
+
+        // ── Başlık ──────────────────────────────────────────────
+        $lines[] = $statusIcon.' *OTOKANTAR SİSTEM ALARMI*';
+        $lines[] = '';
+
+        // ── Genel durum kartı ───────────────────────────────────
+        $lines[] = '📊 *Genel Durum*';
+        $lines[] = '┌─────────────────────────┐';
+        $lines[] = sprintf('│ Durum        %-11s│', $status);
+        $lines[] = sprintf('│ Health Score %-11s│', $score.'/100');
+        $lines[] = sprintf('│ Müşteri      %-11s│', mb_strimwidth((string) ($payload['customer'] ?? '-'), 0, 11, '…'));
+        $lines[] = '└─────────────────────────┘';
+        $lines[] = '';
+
+        // ── Queue kartı ─────────────────────────────────────────
+        $lines[] = '📦 *Queue Durumu*';
+        $lines[] = '┌─────────────────────────┐';
+        $lines[] = sprintf('│ Kuyruk       %-11s│', mb_strimwidth((string) ($queue['name'] ?? '-'), 0, 11, '…'));
+        $lines[] = sprintf('│ Seviye       %-11s│', $level);
+        $lines[] = sprintf('│ Worker       %-11s│', $workerIcon.' '.$worker);
+        $lines[] = sprintf('│ Ort. Süre    %-11s│', ($queue['avg_job_duration_ms_24h'] ?? '-').' ms');
+        $lines[] = '├─────────────────────────┤';
+        $lines[] = sprintf('│ ⏳ Bekleyen   %-11s│', $queue['pending_jobs'] ?? 0);
+        $lines[] = sprintf('│ ❌ Failed     %-11s│', $queue['failed_jobs'] ?? 0);
+        $lines[] = sprintf('│ 🖼 Temp Image %-11s│', $queue['pending_temp_images'] ?? 0);
+        $lines[] = '└─────────────────────────┘';
+        $lines[] = '';
+
+        // ── Son akış ────────────────────────────────────────────
+        $lines[] = '⏱ *Son Akış*';
+        $lines[] = '✅ '.($queue['last_successful_ingest_at'] ?? '-');
+        $lines[] = '❌ '.($queue['last_failed_ingest_at'] ?? '-');
+        $lines[] = '';
+
+        // ── Açıklama ────────────────────────────────────────────
+        $msg = (string) ($queue['worker_message'] ?? 'Queue durumu okunamadı.');
+        $lines[] = '💬 '.$msg;
+        $lines[] = '';
+
+        // ── Footer ──────────────────────────────────────────────
+        $lines[] = '─────────────────────────────';
+        $lines[] = '🕐 '.($payload['generated_at'] ?? '-');
+        $lines[] = '🔗 '.($payload['app_url'] ?? '-');
+
+        return implode("\n", $lines);
     }
 
     private function signature(array $report): string
