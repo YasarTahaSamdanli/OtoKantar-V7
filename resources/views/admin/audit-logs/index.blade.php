@@ -80,7 +80,7 @@
                                         <div class="font-semibold text-slate-100">{{ $log->user->name }}</div>
                                         <div class="mt-1 text-xs text-slate-500">{{ $log->user->email }}</div>
                                     @else
-                                        <span class="text-slate-600">Sistem / anonim</span>
+                                        <span class="text-slate-600">Sistem / API</span>
                                     @endif
                                 </td>
                                 <td class="px-6 py-4 text-slate-500" style="font-family: 'JetBrains Mono', monospace;">

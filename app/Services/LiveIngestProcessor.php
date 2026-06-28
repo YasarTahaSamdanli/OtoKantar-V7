@@ -284,7 +284,7 @@ class LiveIngestProcessor
             }
 
             if ($entryWeight !== null && $exitWeight !== null) {
-                $netWeight = abs($exitWeight - $entryWeight);
+                $netWeight = $exitWeight - $entryWeight;
                 $record['net_agirlik'] = $netWeight;
                 $record['malzeme_agirlik'] = $netWeight;
                 $record['arac_agirlik'] = min($entryWeight, $exitWeight);

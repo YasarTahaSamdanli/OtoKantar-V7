@@ -201,8 +201,8 @@ class LiveIngestTest extends TestCase
 
         $this->assertSame(12000, $durum['son_kayit']['cikis_agirlik']);
         $this->assertSame(12000, $durum['son_kayit']['arac_agirlik']);
-        $this->assertSame(30000, $durum['son_kayit']['malzeme_agirlik']);
-        $this->assertSame(30000, $durum['son_kayit']['net_agirlik']);
+        $this->assertSame(-30000, $durum['son_kayit']['malzeme_agirlik']);
+        $this->assertSame(-30000, $durum['son_kayit']['net_agirlik']);
     }
 
     public function test_json_panel_fallback_reads_csv_history_when_jsonl_is_missing(): void

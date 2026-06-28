@@ -113,11 +113,6 @@ class LiveIngestController extends Controller
                 throw $e;
             }
 
-            $this->audit->record('live_ingest.accepted', $request, metadata: [
-                'queued' => true,
-                'queue' => $queue,
-                'event_type' => $payload['event_type'] ?? $payload['olay_tipi'] ?? $payload['_event_type'] ?? null,
-            ]);
             Log::channel('stress_live_ingest')->info('live_ingest_accepted', [
                 'queued' => true,
                 'queue' => $queue,
@@ -457,7 +452,7 @@ class LiveIngestController extends Controller
             }
 
             if ($entryWeight !== null && $exitWeight !== null) {
-                $netWeight = abs($exitWeight - $entryWeight);
+                $netWeight = $exitWeight - $entryWeight;
                 $record['net_agirlik'] = $netWeight;
                 $record['malzeme_agirlik'] = $netWeight;
                 $record['arac_agirlik'] = min($entryWeight, $exitWeight);

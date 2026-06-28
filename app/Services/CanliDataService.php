@@ -645,9 +645,9 @@ class CanliDataService
             $exitWeight = null;
         }
 
-        $materialWeight = $netWeight !== null && $netWeight > 0 ? $netWeight : null;
+        $materialWeight = $netWeight;
         if ($materialWeight === null && $entryWeight !== null && $exitWeight !== null) {
-            $materialWeight = abs($exitWeight - $entryWeight);
+            $materialWeight = $exitWeight - $entryWeight;
         }
 
         return [

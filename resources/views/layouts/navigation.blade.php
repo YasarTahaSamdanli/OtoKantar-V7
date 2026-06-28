@@ -29,6 +29,9 @@
                         <x-nav-link :href="route('admin.operations.index')" :active="request()->routeIs('admin.operations.*')">
                             Operasyon
                         </x-nav-link>
+                        <x-nav-link :href="route('admin.audit-logs.index')" :active="request()->routeIs('admin.audit-logs.*')">
+                            Audit Log
+                        </x-nav-link>
                     @endif
                 </div>
             </div>
@@ -93,6 +96,9 @@
                 </x-responsive-nav-link>
                 <x-responsive-nav-link :href="route('admin.operations.index')" :active="request()->routeIs('admin.operations.*')">
                     Operasyon
+                </x-responsive-nav-link>
+                <x-responsive-nav-link :href="route('admin.audit-logs.index')" :active="request()->routeIs('admin.audit-logs.*')">
+                    Audit Log
                 </x-responsive-nav-link>
             @endif
         </div>

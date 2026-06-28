@@ -145,6 +145,7 @@ class HealthAlertService
             'status' => $report['status'] ?? 'unknown',
             'overall_status' => $report['overall_status'] ?? 'Unknown',
             'health_score' => $report['health_score'] ?? null,
+            'problems' => $this->problemChecks($report),
             'queue' => [
                 'name' => $queue['queue'] ?? config('services.legacy_runtime.queue', 'live-ingest'),
                 'level' => $queue['level'] ?? 'UNKNOWN',
@@ -218,12 +219,82 @@ class HealthAlertService
         $lines[] = '💬 '.$msg;
         $lines[] = '';
 
+        $problems = array_values(array_filter(
+            (array) ($payload['problems'] ?? []),
+            fn ($problem): bool => is_array($problem)
+        ));
+        if ($problems !== []) {
+            $lines[] = '⚠️ *Sorunlar*';
+            foreach (array_slice($problems, 0, 6) as $problem) {
+                $levelText = strtoupper((string) ($problem['status'] ?? '-'));
+                $nameText = (string) ($problem['name'] ?? '-');
+                $messageText = (string) ($problem['message'] ?? '-');
+                $lines[] = sprintf('• %s / %s: %s', $levelText, $nameText, $messageText);
+            }
+            $lines[] = '';
+        }
+
         // ── Footer ──────────────────────────────────────────────
         $lines[] = '─────────────────────────────';
         $lines[] = '🕐 '.($payload['generated_at'] ?? '-');
         $lines[] = '🔗 '.($payload['app_url'] ?? '-');
 
         return implode("\n", $lines);
+    }
+
+    private function problemChecks(array $report): array
+    {
+        $problems = [];
+
+        foreach (($report['checks'] ?? []) as $name => $check) {
+            if (! is_array($check)) {
+                continue;
+            }
+
+            $status = strtolower((string) ($check['status'] ?? 'ok'));
+            if (! in_array($status, ['warning', 'critical'], true)) {
+                continue;
+            }
+
+            $problems[] = [
+                'name' => (string) $name,
+                'status' => $status,
+                'message' => $this->problemMessage((string) $name, $check),
+            ];
+        }
+
+        return $problems;
+    }
+
+    private function problemMessage(string $name, array $check): string
+    {
+        return match ($name) {
+            'runtime' => $this->runtimeProblemMessage($check),
+            'queue' => (string) ($check['worker']['message'] ?? $check['error'] ?? 'Queue sagligi alarm seviyesinde.'),
+            'backup' => (string) ($check['message'] ?? 'Backup kontrolu warning seviyesinde.'),
+            'ingest' => $check['latest_vehicle_pass'] ?? null
+                ? 'Son ingest bulundu ama durum warning.'
+                : 'Henuz VehiclePass kaydi yok veya son ingest okunamadi.',
+            'database' => (string) ($check['error'] ?? 'Veritabani baglantisi kritik.'),
+            'disk' => 'Disk bos alani dusuk: '.($check['free_mb'] ?? '-').' MB',
+            default => (string) ($check['message'] ?? $check['error'] ?? 'Kontrol alarm seviyesinde.'),
+        };
+    }
+
+    private function runtimeProblemMessage(array $check): string
+    {
+        $files = $check['files'] ?? [];
+        $live = is_array($files) ? ($files['canli_durum.json'] ?? null) : null;
+
+        if (is_array($live) && ($live['exists'] ?? false) && isset($live['age_seconds'])) {
+            return 'canli_durum.json bayat: '.$live['age_seconds'].' sn once guncellendi.';
+        }
+
+        if (is_array($live) && ! ($live['exists'] ?? false)) {
+            return 'canli_durum.json bulunamadi.';
+        }
+
+        return 'Runtime dosyalari warning seviyesinde.';
     }
 
     private function signature(array $report): string

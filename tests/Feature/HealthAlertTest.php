@@ -53,6 +53,7 @@ class HealthAlertTest extends TestCase
 
             return $request->url() === 'https://n8n.example.test/webhook/health'
                 && $payload['customer'] === 'Test Kantar'
+                && collect($payload['problems'])->contains(fn (array $problem): bool => $problem['name'] === 'queue')
                 && $payload['queue']['level'] === 'CRITICAL'
                 && $payload['queue']['pending_jobs'] === 2
                 && $payload['queue']['worker_status'] === 'CRITICAL';

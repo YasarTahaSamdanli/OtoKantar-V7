@@ -380,6 +380,7 @@ Artisan::command('otokantar:health-alerts {--force : Send even when alerts are d
         'overall_status' => $result['payload']['overall_status'] ?? null,
         'health_score' => $result['payload']['health_score'] ?? null,
         'queue' => $result['payload']['queue'] ?? [],
+        'problems' => $result['payload']['problems'] ?? [],
         'sent' => $result['sent'] ?? [],
     ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) ?: '{}');
 

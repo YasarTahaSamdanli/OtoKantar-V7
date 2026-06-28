@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\AuditLog;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Queue;
 use Tests\TestCase;
 
 class AuditLogTest extends TestCase
@@ -84,5 +85,23 @@ class AuditLogTest extends TestCase
             ->assertOk()
             ->assertSee('Audit Log')
             ->assertSee('auth.login');
+    }
+
+    public function test_successful_live_ingest_is_not_written_to_audit_log(): void
+    {
+        Queue::fake();
+        config(['services.legacy_runtime.api_token' => 'test-token']);
+
+        $this->withHeader('Authorization', 'Bearer test-token')
+            ->postJson('/api/live-ingest', [
+                'son_guncelleme' => now()->toIso8601String(),
+                'kantar_kg' => 12000,
+                'kantar_sabit' => true,
+            ])
+            ->assertOk();
+
+        $this->assertDatabaseMissing('audit_logs', [
+            'action' => 'live_ingest.accepted',
+        ]);
     }
 }

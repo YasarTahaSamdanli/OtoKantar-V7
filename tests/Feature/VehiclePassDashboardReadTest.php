@@ -86,8 +86,8 @@ class VehiclePassDashboardReadTest extends TestCase
             ->getJson('/canli/archive?period=day&date=2026-06-23&plate=34NET')
             ->assertOk()
             ->assertJsonPath('kayitlar.0.arac_agirlik', 12000)
-            ->assertJsonPath('kayitlar.0.malzeme_agirlik', 30000)
-            ->assertJsonPath('kayitlar.0.net_agirlik', 30000);
+            ->assertJsonPath('kayitlar.0.malzeme_agirlik', -30000)
+            ->assertJsonPath('kayitlar.0.net_agirlik', -30000);
     }
 
     public function test_admin_csv_export_prefers_vehicle_passes_when_records_exist(): void
