@@ -104,4 +104,39 @@ class AuditLogTest extends TestCase
             'action' => 'live_ingest.accepted',
         ]);
     }
+
+    public function test_admin_can_delete_live_ingest_accepted_noise_only(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        AuditLog::create(['action' => 'live_ingest.accepted', 'created_at' => now()]);
+        AuditLog::create(['action' => 'live_ingest.accepted', 'created_at' => now()]);
+        AuditLog::create(['action' => 'auth.login', 'user_id' => $admin->id, 'created_at' => now()]);
+        AuditLog::create(['action' => 'live_ingest.rejected', 'created_at' => now()]);
+
+        $this->actingAs($admin)
+            ->delete(route('admin.audit-logs.destroy-live-ingest-accepted'))
+            ->assertRedirect(route('admin.audit-logs.index', absolute: false));
+
+        $this->assertDatabaseMissing('audit_logs', ['action' => 'live_ingest.accepted']);
+        $this->assertDatabaseHas('audit_logs', ['action' => 'auth.login']);
+        $this->assertDatabaseHas('audit_logs', ['action' => 'live_ingest.rejected']);
+        $this->assertDatabaseHas('audit_logs', [
+            'user_id' => $admin->id,
+            'action' => 'admin.audit_logs.cleaned',
+        ]);
+    }
+
+    public function test_employee_cannot_delete_audit_log_noise(): void
+    {
+        $employee = User::factory()->create(['role' => 'employee']);
+
+        AuditLog::create(['action' => 'live_ingest.accepted', 'created_at' => now()]);
+
+        $this->actingAs($employee)
+            ->delete(route('admin.audit-logs.destroy-live-ingest-accepted'))
+            ->assertForbidden();
+
+        $this->assertDatabaseHas('audit_logs', ['action' => 'live_ingest.accepted']);
+    }
 }

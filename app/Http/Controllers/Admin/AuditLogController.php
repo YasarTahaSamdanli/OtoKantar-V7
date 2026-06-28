@@ -4,10 +4,15 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\AuditLog;
+use App\Services\AuditLogService;
 use Illuminate\Http\Request;
 
 class AuditLogController extends Controller
 {
+    public function __construct(
+        private readonly AuditLogService $audit,
+    ) {}
+
     public function index(Request $request)
     {
         $action = trim((string) $request->query('action', ''));
@@ -35,5 +40,21 @@ class AuditLogController extends Controller
                 'user' => $user,
             ],
         ]);
+    }
+
+    public function destroyAcceptedLiveIngest(Request $request)
+    {
+        $deleted = AuditLog::query()
+            ->where('action', 'live_ingest.accepted')
+            ->delete();
+
+        $this->audit->record('admin.audit_logs.cleaned', $request, metadata: [
+            'action' => 'live_ingest.accepted',
+            'deleted' => $deleted,
+        ]);
+
+        return redirect()
+            ->route('admin.audit-logs.index')
+            ->with('status', "{$deleted} live_ingest.accepted kaydi silindi.");
     }
 }
