@@ -57,8 +57,6 @@ Route::middleware(['auth', 'role:admin'])->prefix('admin')->name('admin.')->grou
     Route::resource('users', AdminUserController::class)->only(['index', 'create', 'store']);
     Route::get('operations', AdminOperationsController::class)->name('operations.index');
     Route::get('audit-logs', [AdminAuditLogController::class, 'index'])->name('audit-logs.index');
-    Route::delete('audit-logs/live-ingest-accepted', [AdminAuditLogController::class, 'destroyAcceptedLiveIngest'])
-        ->name('audit-logs.destroy-live-ingest-accepted');
     Route::get('system-health', AdminSystemHealthController::class)->name('system-health');
 });
 

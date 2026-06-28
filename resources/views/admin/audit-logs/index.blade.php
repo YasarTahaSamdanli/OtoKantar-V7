@@ -16,12 +16,6 @@
 
     <div class="min-h-[calc(100vh-8rem)] py-8">
         <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
-            @if (session('status'))
-                <div class="mb-4 rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-3 text-sm font-semibold text-emerald-200">
-                    {{ session('status') }}
-                </div>
-            @endif
-
             <section class="mb-4 rounded-2xl border border-white/10 bg-[#181f2b]/95 p-4 shadow-[0_20px_48px_rgba(0,0,0,.24)]">
                 <form method="GET" action="{{ route('admin.audit-logs.index') }}" class="grid gap-3 md:grid-cols-[1fr_1fr_auto] md:items-end">
                     <label class="block">
@@ -43,21 +37,6 @@
                     <button type="submit"
                             class="rounded-xl border border-emerald-400/30 bg-emerald-400/15 px-4 py-2.5 text-xs font-semibold uppercase tracking-[.14em] text-emerald-200 hover:bg-emerald-400/20">
                         Uygula
-                    </button>
-                </form>
-                <form method="POST"
-                      action="{{ route('admin.audit-logs.destroy-live-ingest-accepted') }}"
-                      class="mt-4 flex flex-col gap-2 rounded-xl border border-amber-400/20 bg-amber-400/10 p-4 sm:flex-row sm:items-center sm:justify-between"
-                      onsubmit="return confirm('Sadece live_ingest.accepted audit kayitlari silinecek. Devam edilsin mi?')">
-                    @csrf
-                    @method('DELETE')
-                    <div>
-                        <div class="text-sm font-semibold text-amber-100">Audit temizligi</div>
-                        <div class="mt-1 text-sm text-amber-100/70">Basarili live ingest kayitlarini temizler; login, logout, kullanici ve rejected kayitlar kalir.</div>
-                    </div>
-                    <button type="submit"
-                            class="shrink-0 rounded-xl border border-amber-300/30 bg-amber-300/15 px-4 py-2.5 text-xs font-semibold uppercase tracking-[.14em] text-amber-100 hover:bg-amber-300/20">
-                        live_ingest.accepted temizle
                     </button>
                 </form>
             </section>
