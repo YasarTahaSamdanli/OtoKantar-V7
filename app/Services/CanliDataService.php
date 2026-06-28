@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use App\Models\VehiclePass;
+use App\Services\Canli\CanliFilterService;
+use App\Services\Canli\CanliRuntimePathResolver;
 use PDO;
 use Throwable;
 
@@ -10,16 +12,13 @@ class CanliDataService
 {
     public function __construct(
         private readonly CanliAgirlikService $agirlikService,
+        private readonly CanliRuntimePathResolver $pathResolver,
+        private readonly CanliFilterService $filters,
     ) {}
 
     public function legacyPath(string $name): string
     {
-        $root = rtrim((string) config('services.legacy_runtime.path', base_path('legacy')), '\\/');
-        if (!$this->isAbsolutePath($root)) {
-            $root = base_path($root);
-        }
-
-        return $root.DIRECTORY_SEPARATOR.$name;
+        return $this->pathResolver->path($name);
     }
 
     public function durumOkuVeyaFallback(?PDO $pdo = null): array
@@ -657,11 +656,6 @@ class CanliDataService
         ];
     }
 
-    private function isAbsolutePath(string $path): bool
-    {
-        return $path !== '' && (str_starts_with($path, '/') || preg_match('/^[A-Za-z]:[\/\\\\]/', $path) === 1);
-    }
-
     private function vehiclePassQuery(array $filters = [])
     {
         $filters = $this->normalizeFilters($filters);
@@ -898,24 +892,7 @@ class CanliDataService
 
     private function normalizeFilters(array $filters): array
     {
-        $period = strtolower((string) ($filters['period'] ?? 'all'));
-        if (!in_array($period, ['all', 'day', 'month', 'year'], true)) {
-            $period = 'all';
-        }
-
-        return [
-            'period' => $period,
-            'date' => preg_match('/^\d{4}-\d{2}-\d{2}$/', (string) ($filters['date'] ?? '')) === 1
-                ? (string) $filters['date']
-                : date('Y-m-d'),
-            'month' => preg_match('/^\d{4}-\d{2}$/', (string) ($filters['month'] ?? '')) === 1
-                ? (string) $filters['month']
-                : date('Y-m'),
-            'year' => preg_match('/^\d{4}$/', (string) ($filters['year'] ?? '')) === 1
-                ? (string) $filters['year']
-                : date('Y'),
-            'plate' => strtoupper(trim((string) ($filters['plate'] ?? $filters['plaka'] ?? ''))),
-        ];
+        return $this->filters->normalize($filters);
     }
 
     private function dateWhereSql(array $filters, string $alias): array
@@ -954,104 +931,32 @@ class CanliDataService
 
     private function filterSlug(array $filters): string
     {
-        $filters = $this->normalizeFilters($filters);
-
-        return match ($filters['period']) {
-            'day' => 'gunluk_'.$filters['date'],
-            'month' => 'aylik_'.$filters['month'],
-            'year' => 'yillik_'.$filters['year'],
-            default => 'tum_kayitlar',
-        };
+        return $this->filters->slug($filters);
     }
 
     private function csvSatiriFiltreyeUyar(array $row, array $filters): bool
     {
-        $filters = $this->normalizeFilters($filters);
-        if ($filters['plate'] !== '' && !str_contains(strtoupper((string) ($row['Plaka'] ?? $row['plaka'] ?? '')), $filters['plate'])) {
-            return false;
-        }
-        if ($filters['period'] === 'all') {
-            return true;
-        }
-
-        $date = $this->csvSatirTarihi($row);
-        if ($date === null) {
-            return false;
-        }
-
-        return match ($filters['period']) {
-            'day' => $date === $filters['date'],
-            'month' => str_starts_with($date, $filters['month'].'-'),
-            'year' => str_starts_with($date, $filters['year'].'-'),
-            default => true,
-        };
+        return $this->filters->matchesCsvRow($row, $filters);
     }
 
     private function kayitFiltreyeUyar(array $row, array $filters): bool
     {
-        $filters = $this->normalizeFilters($filters);
-        if ($filters['plate'] !== '' && !str_contains(strtoupper((string) ($row['plaka'] ?? '')), $filters['plate'])) {
-            return false;
-        }
-        if ($filters['period'] === 'all') {
-            return true;
-        }
-
-        $date = $this->kayitTarihi($row);
-        if ($date === null) {
-            return false;
-        }
-
-        return match ($filters['period']) {
-            'day' => $date === $filters['date'],
-            'month' => str_starts_with($date, $filters['month'].'-'),
-            'year' => str_starts_with($date, $filters['year'].'-'),
-            default => true,
-        };
+        return $this->filters->matchesRecord($row, $filters);
     }
 
     private function kayitTarihi(array $row): ?string
     {
-        $tip = $this->kayitTipi($row);
-        $value = $tip === 'CIKIS'
-            ? ($row['cikis_tarih'] ?? $row['tarih'] ?? $row['giris_tarih'] ?? null)
-            : ($row['giris_tarih'] ?? $row['tarih'] ?? $row['cikis_tarih'] ?? null);
-
-        if ($value === null || trim((string) $value) === '') {
-            $value = $row['gecis_zamani'] ?? $row['GecisZamani'] ?? null;
-        }
-
-        if ($value === null || trim((string) $value) === '') {
-            return null;
-        }
-
-        $timestamp = strtotime((string) $value);
-        return $timestamp === false ? null : date('Y-m-d', $timestamp);
+        return $this->filters->recordDate($row);
     }
 
     private function kayitTipi(array $row): string
     {
-        $raw = strtoupper(trim((string) ($row['tip'] ?? $row['durum'] ?? $row['yon'] ?? 'GIRIS')));
-
-        return str_contains($raw, 'CIKIS') || str_contains($raw, 'TAMAMLANDI') ? 'CIKIS' : 'GIRIS';
+        return $this->filters->recordType($row);
     }
 
     private function csvSatirTarihi(array $row): ?string
     {
-        $tip = $this->kayitTipi([
-            'tip' => $row['Tip'] ?? null,
-            'durum' => $row['Durum'] ?? $row['Yon'] ?? null,
-        ]);
-        $value = $tip === 'CIKIS'
-            ? ($row['CikisTarih'] ?? $row['Tarih'] ?? $row['GecisZamani'] ?? $row['GirisTarih'] ?? null)
-            : ($row['GirisTarih'] ?? $row['Tarih'] ?? $row['GecisZamani'] ?? $row['CikisTarih'] ?? null);
-
-        if ($value === null || trim((string) $value) === '') {
-            return null;
-        }
-
-        $timestamp = strtotime((string) $value);
-        return $timestamp === false ? null : date('Y-m-d', $timestamp);
+        return $this->filters->csvRowDate($row);
     }
 
     private function dbOzetGetir(PDO $pdo): array
