@@ -170,10 +170,7 @@
 <script>
 const Config = {
   plates: ['06ABC123', '34TR574', '35ZK882', '16BRS61', '41KLM99', '27FRT20', '06ANK80', '34ED5728', '24TR123', '79SAA001'],
-  activePollMs: 5000,
-  idlePollMs: 30000,
-  hiddenPollMs: 60000,
-  activeRecordWindowMs: 120000,
+  eventCheckMs: 5000,
   verifyThreshold: 4,
   maxLog: 80,
   tableLimit: 200,
@@ -192,7 +189,6 @@ const State = {
   hasReceivedPanel: false,
   status: 'offline',
   lastUpdateMs: null,
-  livePollToken: 0,
   demoOn: false,
   demoPlate: null,
   demoStep: 0,
@@ -753,7 +749,7 @@ const Demo = {
   start() {
     if (State.demoOn) return;
     State.demoOn = true;
-    App.stopLivePolling();
+    clearInterval(State.intervals.event);
     clearInterval(State.intervals.demo);
     UI.setStatus('demo');
     Utils.el('demo').textContent = 'Canli moda don';
@@ -777,27 +773,12 @@ const Demo = {
 const App = {
   startLivePolling() {
     if (State.demoOn || State.activeTab === 'kayitlar') return;
-    this.stopLivePolling();
-    const token = ++State.livePollToken;
-    this.runLivePoll(token);
-  },
-  runLivePoll(token) {
-    if (token !== State.livePollToken || State.demoOn || State.activeTab === 'kayitlar') return;
-    Api.poll().finally(() => {
-      if (token !== State.livePollToken || State.demoOn || State.activeTab === 'kayitlar') return;
-      State.intervals.event = setTimeout(() => this.runLivePoll(token), this.nextLivePollMs());
-    });
-  },
-  nextLivePollMs() {
-    if (document.hidden) return Config.hiddenPollMs;
-    if (State.lastUpdateMs !== null && Date.now() - State.lastUpdateMs <= Config.activeRecordWindowMs) {
-      return Config.activePollMs;
-    }
-    return Config.idlePollMs;
+    clearInterval(State.intervals.event);
+    Api.poll();
+    State.intervals.event = setInterval(() => Api.poll(), Config.eventCheckMs);
   },
   stopLivePolling() {
-    State.livePollToken += 1;
-    clearTimeout(State.intervals.event);
+    clearInterval(State.intervals.event);
     State.intervals.event = null;
   },
   bindTabs() {
