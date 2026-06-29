@@ -107,9 +107,41 @@ class CompanyProfileTest extends TestCase
         $response->assertOk();
         $content = $response->streamedContent();
 
+        $this->assertStringStartsWith("\xEF\xBB\xBFsep=;", $content);
+        $this->assertStringContainsString('Firma Hareket Dökümü', $content);
+        $this->assertStringContainsString('Sıra;Tarih;Saat;Plaka;İşlem;Malzeme;"Giriş Kg";"Çıkış Kg";"Net Kg";"İrsaliye No";Şoför', $content);
         $this->assertStringContainsString('35GAM001', $content);
         $this->assertStringContainsString('Demir', $content);
         $this->assertStringNotContainsString('35GAM002', $content);
+    }
+
+    public function test_company_csv_formats_turkish_labels_and_weights_for_excel(): void
+    {
+        $user = User::factory()->create(['role' => 'employee']);
+        $company = Company::query()->create(['name' => 'Bibioğulları', 'type' => 'supplier']);
+
+        $this->createPass([
+            'event_id' => 'pretty-csv-row',
+            'company_id' => $company->id,
+            'company_name' => 'Bibioğulları',
+            'plate' => '66LN430',
+            'direction' => 'CIKIS',
+            'passed_at' => '2026-06-24 16:08:27',
+            'entry_weight_kg' => 12000,
+            'exit_weight_kg' => 42000,
+            'net_weight_kg' => 30000,
+        ]);
+
+        $content = $this->actingAs($user)
+            ->get(route('companies.csv', $company))
+            ->assertOk()
+            ->streamedContent();
+
+        $this->assertStringContainsString('Bibioğulları', $content);
+        $this->assertStringContainsString('Çıkış', $content);
+        $this->assertStringContainsString('24.06.2026;16:08:27;66LN430', $content);
+        $this->assertStringContainsString('12.000;42.000;30.000', $content);
+        $this->assertStringNotContainsString('12000.000', $content);
     }
 
     private function createPass(array $overrides = []): VehiclePass

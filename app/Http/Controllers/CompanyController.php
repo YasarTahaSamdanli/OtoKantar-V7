@@ -103,37 +103,51 @@ class CompanyController extends Controller
 
         return response()->streamDownload(function () use ($company, $filters): void {
             $out = fopen('php://output', 'w');
-            fputcsv($out, ['Firma', $company->name]);
-            fputcsv($out, ['Olusturma', now()->format('Y-m-d H:i:s')]);
-            fputcsv($out, []);
-            fputcsv($out, [
+
+            fwrite($out, "\xEF\xBB\xBF");
+            fwrite($out, "sep=;\r\n");
+
+            $summaryQuery = $this->passesQuery($company, $filters);
+
+            $this->putCsvRow($out, ['Firma Hareket Dökümü']);
+            $this->putCsvRow($out, ['Firma', $company->name]);
+            $this->putCsvRow($out, ['Oluşturma Tarihi', now()->format('d.m.Y H:i')]);
+            $this->putCsvRow($out, ['Filtre', $this->csvFilterSummary($filters)]);
+            $this->putCsvRow($out, ['Toplam Geçiş', (clone $summaryQuery)->count()]);
+            $this->putCsvRow($out, ['Tekil Plaka', (clone $summaryQuery)->distinct('plate')->count('plate')]);
+            $this->putCsvRow($out, ['Toplam Net Kg', $this->formatCsvNumber((clone $summaryQuery)->sum('net_weight_kg'))]);
+            $this->putCsvRow($out, []);
+            $this->putCsvRow($out, [
+                'Sıra',
                 'Tarih',
                 'Saat',
                 'Plaka',
-                'Durum',
+                'İşlem',
                 'Malzeme',
-                'GirisKg',
-                'CikisKg',
-                'NetKg',
-                'IrsaliyeNo',
-                'Sofor',
+                'Giriş Kg',
+                'Çıkış Kg',
+                'Net Kg',
+                'İrsaliye No',
+                'Şoför',
             ]);
 
+            $row = 1;
             $this->passesQuery($company, $filters)
                 ->orderBy('passed_at')
-                ->chunk(200, function ($passes) use ($out): void {
+                ->chunk(200, function ($passes) use ($out, &$row): void {
                     foreach ($passes as $pass) {
-                        fputcsv($out, [
-                            optional($pass->passed_at)->format('Y-m-d'),
+                        $this->putCsvRow($out, [
+                            $row++,
+                            optional($pass->passed_at)->format('d.m.Y'),
                             optional($pass->passed_at)->format('H:i:s'),
                             $pass->plate,
-                            $pass->direction,
-                            $pass->material_type,
-                            $pass->entry_weight_kg,
-                            $pass->exit_weight_kg,
-                            $pass->net_weight_kg,
-                            $pass->dispatch_no,
-                            $pass->driver_name,
+                            $this->directionLabel($pass->direction),
+                            $pass->material_type ?: '-',
+                            $this->formatCsvNumber($pass->entry_weight_kg),
+                            $this->formatCsvNumber($pass->exit_weight_kg),
+                            $this->formatCsvNumber($pass->net_weight_kg),
+                            $pass->dispatch_no ?: '-',
+                            $pass->driver_name ?: '-',
                         ]);
                     }
                 });
@@ -179,5 +193,50 @@ class CompanyController extends Controller
             ->when($filters['date_to'] !== '', fn (Builder $query) => $query->whereDate('passed_at', '<=', $filters['date_to']))
             ->when($filters['plate'] !== '', fn (Builder $query) => $query->where('plate', 'like', '%'.$filters['plate'].'%'))
             ->when($filters['material'] !== '', fn (Builder $query) => $query->where('material_type', 'like', '%'.$filters['material'].'%'));
+    }
+
+    /**
+     * @param  resource  $out
+     */
+    private function putCsvRow($out, array $row): void
+    {
+        fputcsv($out, $row, ';');
+    }
+
+    private function csvFilterSummary(array $filters): string
+    {
+        $parts = [];
+
+        if ($filters['date_from'] !== '' || $filters['date_to'] !== '') {
+            $parts[] = 'Tarih: '.($filters['date_from'] ?: 'başlangıç yok').' - '.($filters['date_to'] ?: 'bitiş yok');
+        }
+
+        if ($filters['plate'] !== '') {
+            $parts[] = 'Plaka: '.$filters['plate'];
+        }
+
+        if ($filters['material'] !== '') {
+            $parts[] = 'Malzeme: '.$filters['material'];
+        }
+
+        return $parts === [] ? 'Tüm kayıtlar' : implode(' | ', $parts);
+    }
+
+    private function directionLabel(?string $direction): string
+    {
+        return match (strtoupper((string) $direction)) {
+            'GIRIS' => 'Giriş',
+            'CIKIS' => 'Çıkış',
+            default => $direction ?: '-',
+        };
+    }
+
+    private function formatCsvNumber(mixed $value): string
+    {
+        if ($value === null || $value === '') {
+            return '-';
+        }
+
+        return number_format((float) $value, 0, ',', '.');
     }
 }
