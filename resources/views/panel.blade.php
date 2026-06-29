@@ -171,6 +171,7 @@
 const Config = {
   plates: ['06ABC123', '34TR574', '35ZK882', '16BRS61', '41KLM99', '27FRT20', '06ANK80', '34ED5728', '24TR123', '79SAA001'],
   eventCheckMs: 5000,
+  scaleFreshMaxSeconds: 15,
   verifyThreshold: 4,
   maxLog: 80,
   tableLimit: 200,
@@ -456,11 +457,15 @@ const UI = {
   },
   setScale(durum) {
     const k = Utils.toNum(durum?.kantar_kg);
+    const age = Utils.toNum(durum?._durum_yasi_saniye);
+    const isFresh = age !== null && age <= Config.scaleFreshMaxSeconds;
     const buffer = durum?.plaka_buffer_detay?.plaka || durum?.plaka_buffer || '';
-    Utils.el('buffer').textContent = buffer || '--';
-    if (k === null) {
+    Utils.el('buffer').textContent = isFresh && buffer ? buffer : '--';
+    if (k === null || !isFresh) {
       Utils.el('kg').textContent = '--';
-      Utils.el('kg-status').textContent = 'Kantar verisi bekleniyor.';
+      Utils.el('kg-status').textContent = age === null
+        ? 'Kantar verisi bekleniyor.'
+        : 'Kantar sinyali bekleniyor. Son deger gosterilmiyor.';
       return;
     }
     Utils.el('kg').textContent = `${Utils.kg(k)} kg`;
