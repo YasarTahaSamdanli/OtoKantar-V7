@@ -34,10 +34,11 @@ class CanliDataService
                     $json['_sunucu_zaman'] = date('Y-m-d\TH:i:s');
                     $json['_dosya_mtime'] = date('Y-m-d\TH:i:s', (int) filemtime($jsonDurumDosya));
                     $json['_durum_yasi_saniye'] = $sonGuncelleme ? max(0, time() - $sonGuncelleme) : null;
-                    if (!isset($json['sistem']) || !is_array($json['sistem'])) {
+                    if (! isset($json['sistem']) || ! is_array($json['sistem'])) {
                         $json['sistem'] = [];
                     }
                     $json['sistem']['mimari'] = 'MySQL + JSON durum';
+
                     return $json;
                 }
             }
@@ -178,26 +179,26 @@ class CanliDataService
             ->limit(5000)
             ->get();
 
-        $filename = 'kantar_raporu_vehicle_passes_' . $this->filterSlug($filters) . '_' . date('Ymd_His') . '.csv';
-        $header = ['Plaka', 'Yon', 'GecisZamani', 'GirisKg', 'CikisKg', 'AracKg', 'MalzemeKg', 'NetKg', 'Guven', 'Snapshot'];
+        $filename = 'kantar_raporu_vehicle_passes_'.$this->filterSlug($filters).'_'.date('Ymd_His').'.csv';
+        $header = ['Plaka', 'İşlem', 'Geçiş Zamanı', 'Giriş Kg', 'Çıkış Kg', 'Araç Kg', 'Malzeme Kg', 'Net Kg', 'Güven', 'Görüntü'];
 
         $out = fopen('php://temp', 'w+');
-        fwrite($out, "\xEF\xBB\xBF");
-        fputcsv($out, $header, ';');
+        $this->csvPreambleYaz($out);
+        $this->csvSatiriYaz($out, $header);
         foreach ($passes as $pass) {
             $record = $this->vehiclePassKaydiniNormalizeEt($pass);
-            fputcsv($out, [
+            $this->csvSatiriYaz($out, [
                 $record['plaka'] ?? '',
-                $record['tip'] ?? '',
+                $this->csvIslemEtiketi($record['tip'] ?? ''),
                 $record['gecis_zamani'] ?? '',
-                $record['giris_agirlik'] ?? '',
-                $record['cikis_agirlik'] ?? '',
-                $record['arac_agirlik'] ?? '',
-                $record['malzeme_agirlik'] ?? '',
-                $record['net_agirlik'] ?? '',
+                $this->csvKg($record['giris_agirlik'] ?? null),
+                $this->csvKg($record['cikis_agirlik'] ?? null),
+                $this->csvKg($record['arac_agirlik'] ?? null),
+                $this->csvKg($record['malzeme_agirlik'] ?? null),
+                $this->csvKg($record['net_agirlik'] ?? null),
                 $record['guven'] ?? '',
                 $pass->snapshot_url ?: $pass->snapshot_path,
-            ], ';');
+            ]);
         }
         rewind($out);
         $csv = stream_get_contents($out) ?: '';
@@ -308,19 +309,19 @@ class CanliDataService
         $stmt->execute();
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
-        $filename = 'kantar_raporu_mysql_' . $this->filterSlug($filters) . '_' . date('Ymd_His') . '.csv';
-        $header = ['Plaka', 'Yon', 'GecisZamani', 'Guven'];
+        $filename = 'kantar_raporu_mysql_'.$this->filterSlug($filters).'_'.date('Ymd_His').'.csv';
+        $header = ['Plaka', 'İşlem', 'Geçiş Zamanı', 'Güven'];
 
         $out = fopen('php://temp', 'w+');
-        fwrite($out, "\xEF\xBB\xBF");
-        fputcsv($out, $header, ';');
+        $this->csvPreambleYaz($out);
+        $this->csvSatiriYaz($out, $header);
         foreach ($rows as $r) {
-            fputcsv($out, [
+            $this->csvSatiriYaz($out, [
                 $r['plaka'] ?? '',
-                $r['yon'] ?? '',
+                $this->csvIslemEtiketi($r['yon'] ?? ''),
                 $r['gecis_zamani'] ?? '',
                 $r['guven'] ?? '',
-            ], ';');
+            ]);
         }
         rewind($out);
         $csv = stream_get_contents($out) ?: '';
@@ -331,7 +332,7 @@ class CanliDataService
 
     public function csvDosyaIcerikOlustur(string $csvDosya, array $filters = []): array
     {
-        $filename = 'kantar_raporu_dosya_' . $this->filterSlug($filters) . '_' . date('Ymd_His') . '.csv';
+        $filename = 'kantar_raporu_dosya_'.$this->filterSlug($filters).'_'.date('Ymd_His').'.csv';
         $header = ['Tarih', 'Saat', 'Plaka', 'Tip', 'Guven', 'Operator'];
         $rows = [];
 
@@ -359,10 +360,10 @@ class CanliDataService
         }
 
         $out = fopen('php://temp', 'w+');
-        fwrite($out, "\xEF\xBB\xBF");
-        fputcsv($out, $header, ';');
+        $this->csvPreambleYaz($out);
+        $this->csvSatiriYaz($out, $this->csvBasliklariTemizle($header));
         foreach ($rows as $row) {
-            fputcsv($out, $row, ';');
+            $this->csvSatiriYaz($out, $row);
         }
         rewind($out);
         $csv = stream_get_contents($out) ?: '';
@@ -378,7 +379,7 @@ class CanliDataService
 
         $rows = [];
         foreach ($records as $record) {
-            if (!is_array($record) || !$this->kayitFiltreyeUyar($record, $filters)) {
+            if (! is_array($record) || ! $this->kayitFiltreyeUyar($record, $filters)) {
                 continue;
             }
 
@@ -399,12 +400,13 @@ class CanliDataService
             ];
         }
 
-        $filename = 'kantar_raporu_json_' . $this->filterSlug($filters) . '_' . date('Ymd_His') . '.csv';
+        $filename = 'kantar_raporu_json_'.$this->filterSlug($filters).'_'.date('Ymd_His').'.csv';
         $out = fopen('php://temp', 'w+');
-        fwrite($out, "\xEF\xBB\xBF");
-        fputcsv($out, ['Plaka', 'Yon', 'GecisZamani', 'Guven'], ';');
+        $this->csvPreambleYaz($out);
+        $this->csvSatiriYaz($out, ['Plaka', 'İşlem', 'Geçiş Zamanı', 'Güven']);
         foreach ($rows as $row) {
-            fputcsv($out, $row, ';');
+            $row[1] = $this->csvIslemEtiketi($row[1] ?? '');
+            $this->csvSatiriYaz($out, $row);
         }
         rewind($out);
         $csv = stream_get_contents($out) ?: '';
@@ -423,12 +425,12 @@ class CanliDataService
             if (is_array($lines)) {
                 foreach ($lines as $line) {
                     $row = json_decode((string) $line, true);
-                    if (!is_array($row)) {
+                    if (! is_array($row)) {
                         continue;
                     }
 
                     $record = $this->historyKaydiniNormalizeEt($row);
-                    if (!$this->kayitFiltreyeUyar($record, $filters)) {
+                    if (! $this->kayitFiltreyeUyar($record, $filters)) {
                         continue;
                     }
 
@@ -452,7 +454,7 @@ class CanliDataService
     private function csvGecmisKayitlari(array $filters = []): array
     {
         $path = $this->legacyPath('kantar_raporu.csv');
-        if (!is_file($path)) {
+        if (! is_file($path)) {
             return [];
         }
 
@@ -476,7 +478,7 @@ class CanliDataService
                 }
 
                 $record = $this->csvKaydiniNormalizeEt($assoc);
-                if (!$this->kayitFiltreyeUyar($record, $filters)) {
+                if (! $this->kayitFiltreyeUyar($record, $filters)) {
                     continue;
                 }
 
@@ -529,7 +531,7 @@ class CanliDataService
         $seen = [];
 
         foreach (array_merge($primary, $secondary) as $record) {
-            if (!is_array($record)) {
+            if (! is_array($record)) {
                 continue;
             }
 
@@ -578,7 +580,7 @@ class CanliDataService
             ? (string) ($record['cikis_saat'] ?? $record['saat'] ?? $record['giris_saat'] ?? '')
             : (string) ($record['giris_saat'] ?? $record['saat'] ?? $record['cikis_saat'] ?? '');
 
-        if (($date === '' || $time === '') && !empty($record['gecis_zamani'])) {
+        if (($date === '' || $time === '') && ! empty($record['gecis_zamani'])) {
             $timestamp = strtotime((string) $record['gecis_zamani']);
             if ($timestamp !== false) {
                 $date = date('Y-m-d', $timestamp);
@@ -718,7 +720,7 @@ class CanliDataService
     private function vehiclePassDurumPayload(?array $sonKayit): array
     {
         $durum = $this->durumOkuVeyaFallback();
-        if (!isset($durum['sistem']) || !is_array($durum['sistem'])) {
+        if (! isset($durum['sistem']) || ! is_array($durum['sistem'])) {
             $durum['sistem'] = [];
         }
 
@@ -768,7 +770,7 @@ class CanliDataService
         $guven = [];
 
         foreach ($kayitlar as $row) {
-            if (!is_array($row)) {
+            if (! is_array($row)) {
                 continue;
             }
 
@@ -787,7 +789,7 @@ class CanliDataService
             }
 
             $plate = strtoupper(trim((string) ($row['plaka'] ?? '')));
-            if ($plate !== '' && $ts !== false && (!isset($latestByPlate[$plate]) || $ts > $latestByPlate[$plate]['ts'])) {
+            if ($plate !== '' && $ts !== false && (! isset($latestByPlate[$plate]) || $ts > $latestByPlate[$plate]['ts'])) {
                 $latestByPlate[$plate] = ['ts' => $ts, 'tip' => $tip];
             }
 
@@ -819,6 +821,7 @@ class CanliDataService
         if ($num > 1.0) {
             $num = $num / 100.0;
         }
+
         return max(0.0, min(1.0, $num));
     }
 
@@ -1002,11 +1005,11 @@ class CanliDataService
     private function dbDurumFallback(PDO $pdo): array
     {
         $stmt = $pdo->query(
-            "SELECT a.plaka, g.yon, g.gecis_zamani, g.guven
+            'SELECT a.plaka, g.yon, g.gecis_zamani, g.guven
              FROM gecisler g
              INNER JOIN araclar a ON a.id = g.id
              ORDER BY g.gecis_zamani DESC
-             LIMIT 1"
+             LIMIT 1'
         );
         $son = $stmt->fetch(PDO::FETCH_ASSOC);
 
@@ -1065,9 +1068,71 @@ class CanliDataService
         return $durum;
     }
 
+    /**
+     * @param  resource  $out
+     */
+    private function csvPreambleYaz($out): void
+    {
+        fwrite($out, "\xEF\xBB\xBF");
+        fwrite($out, "sep=;\r\n");
+    }
+
+    /**
+     * @param  resource  $out
+     */
+    private function csvSatiriYaz($out, array $row): void
+    {
+        fputcsv($out, array_map(fn ($value) => $this->csvHucre($value), $row), ';');
+    }
+
+    private function csvHucre(mixed $value): string
+    {
+        if ($value === null || $value === '') {
+            return '-';
+        }
+
+        return (string) $value;
+    }
+
+    private function csvKg(mixed $value): string
+    {
+        if ($value === null || $value === '') {
+            return '-';
+        }
+
+        return number_format((float) $value, 0, ',', '.');
+    }
+
+    private function csvIslemEtiketi(mixed $value): string
+    {
+        return match (strtoupper(trim((string) $value))) {
+            'GIRIS' => 'Giriş',
+            'CIKIS' => 'Çıkış',
+            default => $this->csvHucre($value),
+        };
+    }
+
+    private function csvBasliklariTemizle(array $header): array
+    {
+        $map = [
+            'Yon' => 'İşlem',
+            'Tip' => 'İşlem',
+            'GecisZamani' => 'Geçiş Zamanı',
+            'GirisKg' => 'Giriş Kg',
+            'CikisKg' => 'Çıkış Kg',
+            'AracKg' => 'Araç Kg',
+            'MalzemeKg' => 'Malzeme Kg',
+            'NetKg' => 'Net Kg',
+            'Guven' => 'Güven',
+            'Operator' => 'Operatör',
+        ];
+
+        return array_map(fn ($value): string => $map[(string) $value] ?? (string) $value, $header);
+    }
+
     private function kayitTimestamp(array $row): int|false
     {
-        if (!empty($row['gecis_zamani'])) {
+        if (! empty($row['gecis_zamani'])) {
             $timestamp = strtotime((string) $row['gecis_zamani']);
             if ($timestamp !== false) {
                 return $timestamp;

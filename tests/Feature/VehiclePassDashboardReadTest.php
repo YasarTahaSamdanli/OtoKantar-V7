@@ -106,8 +106,14 @@ class VehiclePassDashboardReadTest extends TestCase
 
         $response->assertOk();
         $content = $response->getContent();
+
+        $this->assertStringStartsWith("\xEF\xBB\xBFsep=;", $content);
+        $this->assertStringContainsString('"Geçiş Zamanı";"Giriş Kg";"Çıkış Kg";"Araç Kg";"Malzeme Kg";"Net Kg";Güven;Görüntü', $content);
         $this->assertStringContainsString('34CSV001', $content);
-        $this->assertStringContainsString('GirisKg', $content);
+        $this->assertStringContainsString('Giriş', $content);
+        $this->assertStringContainsString('10.100', $content);
+        $this->assertStringNotContainsString('GirisKg', $content);
+        $this->assertStringNotContainsString('GIRIS', $content);
     }
 
     private function createVehiclePass(array $attributes): VehiclePass
