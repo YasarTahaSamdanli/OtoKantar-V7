@@ -46,7 +46,7 @@
         </div>
         <div class="hero-grid">
             <x-panel.hero-stat title="Plaka tampon" value-id="buffer" />
-            <x-panel.hero-stat title="Son sinyal" value-id="fresh" subtitle="guncelleme bekleniyor" subtitle-id="fresh-sub" />
+            <x-panel.hero-stat title="Son kayit" value-id="fresh" subtitle="gecis bekleniyor" subtitle-id="fresh-sub" />
         </div>
     </section>
 
@@ -170,7 +170,10 @@
 <script>
 const Config = {
   plates: ['06ABC123', '34TR574', '35ZK882', '16BRS61', '41KLM99', '27FRT20', '06ANK80', '34ED5728', '24TR123', '79SAA001'],
-  eventCheckMs: 5000,
+  activePollMs: 5000,
+  idlePollMs: 30000,
+  hiddenPollMs: 60000,
+  activeRecordWindowMs: 120000,
   verifyThreshold: 4,
   maxLog: 80,
   tableLimit: 200,
@@ -189,6 +192,7 @@ const State = {
   hasReceivedPanel: false,
   status: 'offline',
   lastUpdateMs: null,
+  livePollToken: 0,
   demoOn: false,
   demoPlate: null,
   demoStep: 0,
@@ -207,6 +211,13 @@ const Utils = {
   now() { return new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); },
   toNum(value) { return Number.isFinite(Number(value)) ? Number(value) : null; },
   kg(value) { const n = this.toNum(value); return n === null ? '--' : n.toLocaleString('tr-TR', { maximumFractionDigits: 1 }); },
+  formatAge(seconds) {
+    const n = Math.max(0, Math.floor(Number(seconds) || 0));
+    if (n < 60) return `${n} sn`;
+    if (n < 3600) return `${Math.floor(n / 60)} dk`;
+    if (n < 86400) return `${Math.floor(n / 3600)} sa`;
+    return `${Math.floor(n / 86400)} gun`;
+  },
   escapeHtml(value) {
     return String(value ?? '')
       .replaceAll('&', '&amp;')
@@ -224,6 +235,15 @@ const Utils = {
     const time = record.tip === 'CIKIS' && record.cikis_saat ? record.cikis_saat : record.giris_saat;
     const v = Date.parse(`${date || ''}T${time || ''}`);
     return Number.isFinite(v) ? v : null;
+  },
+  recordAgeSeconds(record) {
+    const ts = this.recordTs(this.normalizeRecord(record || {}));
+    if (ts === null) return null;
+    return Math.max(0, (Date.now() - ts) / 1000);
+  },
+  latestRecordAgeSeconds(durum) {
+    if (!durum?.son_kayit?.plaka) return null;
+    return this.recordAgeSeconds(durum.son_kayit);
   },
   splitDateTime(value) {
     const parsed = Date.parse(String(value || '').replace(' ', 'T'));
@@ -309,14 +329,14 @@ const UI = {
     const n = Utils.toNum(seconds);
     if (n === null) {
       Utils.el('fresh').textContent = '--';
-      Utils.el('fresh-sub').textContent = 'guncelleme bekleniyor';
+      Utils.el('fresh-sub').textContent = 'gecis bekleniyor';
       Utils.el('stale-bar').style.width = '0%';
       State.lastUpdateMs = null;
       return;
     }
     State.lastUpdateMs = Date.now() - n * 1000;
-    Utils.el('fresh').textContent = `${Math.floor(n)} sn`;
-    Utils.el('fresh-sub').textContent = n <= 2 ? 'az once guncellendi' : 'son sinyal zamani';
+    Utils.el('fresh').textContent = Utils.formatAge(n);
+    Utils.el('fresh-sub').textContent = n <= 2 ? 'az once kaydedildi' : 'son gecis zamani';
     Utils.el('stale-bar').style.width = `${Math.min(100, (n / 15) * 100)}%`;
   },
   resetPlate() {
@@ -437,7 +457,6 @@ const UI = {
     Utils.el('m2s').textContent = 'cikisi bekleyen arac';
     Utils.el('m3').textContent = String(Number(summary?.tamamlanan ?? 0));
     Utils.el('m4').textContent = String(Number(summary?.son_saat_kayit ?? 0));
-    this.updateFresh(durum?._durum_yasi_saniye ?? null);
   },
   setScale(durum) {
     const k = Utils.toNum(durum?.kantar_kg);
@@ -555,6 +574,7 @@ const Panel = {
     this.setDetection(durum, isNewRecord);
     if (isNewRecord) UI.refreshCam();
     UI.setMetrics(data?.ozet || {}, durum);
+    UI.updateFresh(Utils.latestRecordAgeSeconds(durum));
     UI.setInfo(durum);
     UI.drawTable();
     UI.drawChart();
@@ -649,7 +669,7 @@ const Api = {
       const isNewRecord = Panel.latestEvent(durum, State.hasReceivedPanel);
       Panel.updateState(durum);
       UI.setScale(durum);
-      UI.updateFresh(durum?._durum_yasi_saniye ?? null);
+      UI.updateFresh(Utils.latestRecordAgeSeconds(durum));
       UI.setInfo(durum);
       if (isNewRecord) {
         UI.refreshCam();
@@ -699,7 +719,8 @@ const Demo = {
     Store.calcBars();
     UI.drawTable();
     UI.drawChart();
-    UI.setMetrics(this.summary(), { _durum_yasi_saniye: 0 });
+    UI.setMetrics(this.summary(), {});
+    UI.updateFresh(0);
     UI.log('info', `Demo kaydi: ${plaka} / ${tip} / %${Math.round(guven * 100)}`);
   },
   tick() {
@@ -732,7 +753,7 @@ const Demo = {
   start() {
     if (State.demoOn) return;
     State.demoOn = true;
-    clearInterval(State.intervals.event);
+    App.stopLivePolling();
     clearInterval(State.intervals.demo);
     UI.setStatus('demo');
     Utils.el('demo').textContent = 'Canli moda don';
@@ -756,12 +777,27 @@ const Demo = {
 const App = {
   startLivePolling() {
     if (State.demoOn || State.activeTab === 'kayitlar') return;
-    clearInterval(State.intervals.event);
-    Api.poll();
-    State.intervals.event = setInterval(() => Api.poll(), Config.eventCheckMs);
+    this.stopLivePolling();
+    const token = ++State.livePollToken;
+    this.runLivePoll(token);
+  },
+  runLivePoll(token) {
+    if (token !== State.livePollToken || State.demoOn || State.activeTab === 'kayitlar') return;
+    Api.poll().finally(() => {
+      if (token !== State.livePollToken || State.demoOn || State.activeTab === 'kayitlar') return;
+      State.intervals.event = setTimeout(() => this.runLivePoll(token), this.nextLivePollMs());
+    });
+  },
+  nextLivePollMs() {
+    if (document.hidden) return Config.hiddenPollMs;
+    if (State.lastUpdateMs !== null && Date.now() - State.lastUpdateMs <= Config.activeRecordWindowMs) {
+      return Config.activePollMs;
+    }
+    return Config.idlePollMs;
   },
   stopLivePolling() {
-    clearInterval(State.intervals.event);
+    State.livePollToken += 1;
+    clearTimeout(State.intervals.event);
     State.intervals.event = null;
   },
   bindTabs() {
