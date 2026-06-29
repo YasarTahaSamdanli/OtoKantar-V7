@@ -108,11 +108,12 @@ class CompanyProfileTest extends TestCase
         $content = $response->streamedContent();
 
         $this->assertStringStartsWith("\xEF\xBB\xBFsep=;", $content);
+        $this->assertStringContainsString('Rapor;Firma;"Oluşturma Tarihi";Filtre;Sıra;Tarih;Saat;Plaka;İşlem;Malzeme;"Giriş Kg";"Çıkış Kg";"Net Kg";"İrsaliye No";Şoför', $content);
         $this->assertStringContainsString('Firma Hareket Dökümü', $content);
-        $this->assertStringContainsString('Sıra;Tarih;Saat;Plaka;İşlem;Malzeme;"Giriş Kg";"Çıkış Kg";"Net Kg";"İrsaliye No";Şoför', $content);
         $this->assertStringContainsString('35GAM001', $content);
         $this->assertStringContainsString('Demir', $content);
         $this->assertStringNotContainsString('35GAM002', $content);
+        $this->assertStringNotContainsString('Toplam Geçiş', $content);
     }
 
     public function test_company_csv_formats_turkish_labels_and_weights_for_excel(): void

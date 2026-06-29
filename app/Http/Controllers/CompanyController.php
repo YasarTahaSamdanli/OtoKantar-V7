@@ -107,17 +107,11 @@ class CompanyController extends Controller
             fwrite($out, "\xEF\xBB\xBF");
             fwrite($out, "sep=;\r\n");
 
-            $summaryQuery = $this->passesQuery($company, $filters);
-
-            $this->putCsvRow($out, ['Firma Hareket Dökümü']);
-            $this->putCsvRow($out, ['Firma', $company->name]);
-            $this->putCsvRow($out, ['Oluşturma Tarihi', now()->format('d.m.Y H:i')]);
-            $this->putCsvRow($out, ['Filtre', $this->csvFilterSummary($filters)]);
-            $this->putCsvRow($out, ['Toplam Geçiş', (clone $summaryQuery)->count()]);
-            $this->putCsvRow($out, ['Tekil Plaka', (clone $summaryQuery)->distinct('plate')->count('plate')]);
-            $this->putCsvRow($out, ['Toplam Net Kg', $this->formatCsvNumber((clone $summaryQuery)->sum('net_weight_kg'))]);
-            $this->putCsvRow($out, []);
             $this->putCsvRow($out, [
+                'Rapor',
+                'Firma',
+                'Oluşturma Tarihi',
+                'Filtre',
                 'Sıra',
                 'Tarih',
                 'Saat',
@@ -132,11 +126,19 @@ class CompanyController extends Controller
             ]);
 
             $row = 1;
+            $reportName = 'Firma Hareket Dökümü';
+            $createdAt = now()->format('d.m.Y H:i');
+            $filterSummary = $this->csvFilterSummary($filters);
+
             $this->passesQuery($company, $filters)
                 ->orderBy('passed_at')
-                ->chunk(200, function ($passes) use ($out, &$row): void {
+                ->chunk(200, function ($passes) use ($company, $createdAt, $filterSummary, $out, $reportName, &$row): void {
                     foreach ($passes as $pass) {
                         $this->putCsvRow($out, [
+                            $reportName,
+                            $company->name,
+                            $createdAt,
+                            $filterSummary,
                             $row++,
                             optional($pass->passed_at)->format('d.m.Y'),
                             optional($pass->passed_at)->format('H:i:s'),
@@ -151,6 +153,26 @@ class CompanyController extends Controller
                         ]);
                     }
                 });
+
+            if ($row === 1) {
+                $this->putCsvRow($out, [
+                    $reportName,
+                    $company->name,
+                    $createdAt,
+                    $filterSummary,
+                    '-',
+                    '-',
+                    '-',
+                    '-',
+                    'Kayıt yok',
+                    '-',
+                    '-',
+                    '-',
+                    '-',
+                    '-',
+                    '-',
+                ]);
+            }
 
             fclose($out);
         }, $filename, [
