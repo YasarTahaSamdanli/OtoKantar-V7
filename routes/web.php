@@ -47,6 +47,7 @@ Route::middleware(['auth', 'role:admin,employee'])->group(function () {
     Route::get('/araclar', [VehicleProfileController::class, 'index'])->name('vehicle-profiles.index');
     Route::get('/araclar/{vehicleProfile}', [VehicleProfileController::class, 'show'])->name('vehicle-profiles.show');
     Route::patch('/araclar/{vehicleProfile}', [VehicleProfileController::class, 'update'])->name('vehicle-profiles.update');
+    Route::get('/firmalar/{company}/rapor', [CompanyController::class, 'report'])->name('companies.report');
     Route::get('/firmalar/{company}/csv', [CompanyController::class, 'csv'])->name('companies.csv');
     Route::resource('firmalar', CompanyController::class)
         ->parameters(['firmalar' => 'company'])

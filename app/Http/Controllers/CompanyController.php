@@ -180,6 +180,29 @@ class CompanyController extends Controller
         ]);
     }
 
+    public function report(Request $request, Company $company): View
+    {
+        $filters = $this->filters($request);
+        $passesQuery = $this->passesQuery($company, $filters);
+        $summaryQuery = clone $passesQuery;
+
+        return view('companies.report', [
+            'company' => $company,
+            'filters' => $filters,
+            'filterSummary' => $this->csvFilterSummary($filters),
+            'generatedAt' => now(),
+            'passes' => $passesQuery
+                ->orderBy('passed_at')
+                ->limit(500)
+                ->get(),
+            'summary' => [
+                'pass_count' => (clone $summaryQuery)->count(),
+                'net_weight_kg' => (float) ((clone $summaryQuery)->sum('net_weight_kg') ?? 0),
+                'vehicle_count' => (clone $summaryQuery)->distinct('plate')->count('plate'),
+            ],
+        ]);
+    }
+
     private function validatedCompany(Request $request, ?Company $company = null): array
     {
         return $request->validate([

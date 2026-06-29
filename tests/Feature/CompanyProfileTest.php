@@ -145,6 +145,55 @@ class CompanyProfileTest extends TestCase
         $this->assertStringNotContainsString('12000.000', $content);
     }
 
+    public function test_company_report_is_printable_and_respects_filters(): void
+    {
+        $user = User::factory()->create(['role' => 'employee']);
+        $company = Company::query()->create([
+            'name' => 'Delta Beton',
+            'type' => 'supplier',
+            'contact_name' => 'Ayse Operator',
+            'phone' => '05551234567',
+        ]);
+
+        $this->createPass([
+            'event_id' => 'delta-visible',
+            'company_id' => $company->id,
+            'company_name' => 'Delta Beton',
+            'plate' => '34DLT001',
+            'direction' => 'CIKIS',
+            'passed_at' => '2026-06-20 11:30:00',
+            'material_type' => 'Beton',
+            'entry_weight_kg' => 42000,
+            'exit_weight_kg' => 12000,
+            'net_weight_kg' => 30000,
+        ]);
+        $this->createPass([
+            'event_id' => 'delta-filtered',
+            'company_id' => $company->id,
+            'company_name' => 'Delta Beton',
+            'plate' => '34DLT002',
+            'direction' => 'GIRIS',
+            'passed_at' => '2026-06-21 11:30:00',
+            'material_type' => 'Kum',
+        ]);
+
+        $this->actingAs($user)
+            ->get(route('companies.report', [
+                'company' => $company,
+                'date_from' => '2026-06-20',
+                'date_to' => '2026-06-20',
+                'material' => 'Beton',
+            ]))
+            ->assertOk()
+            ->assertSee('Firma Hareket Dökümü')
+            ->assertSee('Delta Beton')
+            ->assertSee('Ayse Operator')
+            ->assertSee('34DLT001')
+            ->assertSee('Çıkış')
+            ->assertSee('30.000')
+            ->assertDontSee('34DLT002');
+    }
+
     private function createPass(array $overrides = []): VehiclePass
     {
         return VehiclePass::query()->create(array_merge([
