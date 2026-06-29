@@ -90,7 +90,21 @@
                     @method('PATCH')
 
                     <div>
-                        <label class="mb-2 block text-sm text-slate-400" for="company_name">Firma Adi</label>
+                        <label class="mb-2 block text-sm text-slate-400" for="company_id">Firma Karti</label>
+                        <select id="company_id" name="company_id"
+                                class="w-full rounded-xl border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-100 focus:border-emerald-400 focus:ring-emerald-400">
+                            <option value="">Firma karti secme</option>
+                            @foreach ($companies as $company)
+                                <option value="{{ $company->id }}" @selected((string) old('company_id', $profile->company_id) === (string) $company->id)>
+                                    {{ $company->name }}
+                                </option>
+                            @endforeach
+                        </select>
+                        @error('company_id') <div class="mt-2 text-sm text-red-300">{{ $message }}</div> @enderror
+                    </div>
+
+                    <div>
+                        <label class="mb-2 block text-sm text-slate-400" for="company_name">Firma Adi / Serbest Metin</label>
                         <input id="company_name" name="company_name" value="{{ old('company_name', $profile->company_name) }}"
                                class="w-full rounded-xl border-white/10 bg-white/5 px-4 py-2 text-sm text-slate-100 focus:border-emerald-400 focus:ring-emerald-400">
                         @error('company_name') <div class="mt-2 text-sm text-red-300">{{ $message }}</div> @enderror

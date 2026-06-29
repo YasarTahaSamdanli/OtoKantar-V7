@@ -25,6 +25,7 @@
             <a class="toplink" href="{{ route('admin.users.index') }}">Kullanicilar</a>
         @endif
         <a class="toplink" href="{{ route('vehicle-profiles.index') }}">Arac Kartlari</a>
+        <a class="toplink" href="{{ route('companies.index') }}">Firma Kartlari</a>
         <div class="pill" id="pill"><span class="dot"></span><span id="pill-text">BEKLENIYOR</span></div>
         <div class="clock" id="clock">--:--:--</div>
     </div>

@@ -3,12 +3,14 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class VehicleProfile extends Model
 {
     protected $fillable = [
         'plate',
+        'company_id',
         'company_name',
         'driver_name',
         'first_seen_at',
@@ -31,5 +33,10 @@ class VehicleProfile extends Model
     public function passes(): HasMany
     {
         return $this->hasMany(VehiclePass::class);
+    }
+
+    public function company(): BelongsTo
+    {
+        return $this->belongsTo(Company::class);
     }
 }

@@ -1,12 +1,13 @@
 <?php
 
-use App\Http\Controllers\ProfileController;
-use App\Http\Controllers\Admin\UserController as AdminUserController;
 use App\Http\Controllers\Admin\AuditLogController as AdminAuditLogController;
 use App\Http\Controllers\Admin\OperationsController as AdminOperationsController;
 use App\Http\Controllers\Admin\SystemHealthController as AdminSystemHealthController;
+use App\Http\Controllers\Admin\UserController as AdminUserController;
 use App\Http\Controllers\CanliController;
+use App\Http\Controllers\CompanyController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\VehicleProfileController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -26,12 +27,14 @@ Route::middleware(['auth', 'role:admin,employee'])->group(function () {
         }
 
         $qs = $request->getQueryString();
-        $url = route('canli.api') . ($qs ? ('?'.$qs) : '');
+        $url = route('canli.api').($qs ? ('?'.$qs) : '');
+
         return redirect()->to($url);
     });
     Route::get('/canli_kare.jpg', function (Request $request) {
         $qs = $request->getQueryString();
-        $url = route('canli.kare') . ($qs ? ('?'.$qs) : '');
+        $url = route('canli.kare').($qs ? ('?'.$qs) : '');
+
         return redirect()->to($url);
     });
 
@@ -44,6 +47,10 @@ Route::middleware(['auth', 'role:admin,employee'])->group(function () {
     Route::get('/araclar', [VehicleProfileController::class, 'index'])->name('vehicle-profiles.index');
     Route::get('/araclar/{vehicleProfile}', [VehicleProfileController::class, 'show'])->name('vehicle-profiles.show');
     Route::patch('/araclar/{vehicleProfile}', [VehicleProfileController::class, 'update'])->name('vehicle-profiles.update');
+    Route::get('/firmalar/{company}/csv', [CompanyController::class, 'csv'])->name('companies.csv');
+    Route::resource('firmalar', CompanyController::class)
+        ->parameters(['firmalar' => 'company'])
+        ->names('companies');
     Route::get('/dashboard', DashboardController::class)->middleware('verified')->name('dashboard');
 });
 

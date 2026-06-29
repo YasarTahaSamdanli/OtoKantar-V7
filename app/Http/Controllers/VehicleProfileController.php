@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Company;
 use App\Models\VehicleProfile;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -41,6 +42,7 @@ class VehicleProfileController extends Controller
     {
         return view('vehicle-profiles.show', [
             'profile' => $vehicleProfile,
+            'companies' => Company::query()->where('is_active', true)->orderBy('name')->get(),
             'passes' => $vehicleProfile->passes()
                 ->latest('passed_at')
                 ->paginate(20),
@@ -50,12 +52,24 @@ class VehicleProfileController extends Controller
     public function update(Request $request, VehicleProfile $vehicleProfile): RedirectResponse
     {
         $validated = $request->validate([
+            'company_id' => ['nullable', 'exists:companies,id'],
             'company_name' => ['nullable', 'string', 'max:255'],
             'driver_name' => ['nullable', 'string', 'max:255'],
             'notes' => ['nullable', 'string', 'max:5000'],
         ]);
 
+        if (! empty($validated['company_id'])) {
+            $validated['company_name'] = Company::query()->findOrFail($validated['company_id'])->name;
+        }
+
         $vehicleProfile->update($validated);
+
+        if ($vehicleProfile->company_id) {
+            $vehicleProfile->passes()->update([
+                'company_id' => $vehicleProfile->company_id,
+                'company_name' => $vehicleProfile->company_name,
+            ]);
+        }
 
         return redirect()
             ->route('vehicle-profiles.show', $vehicleProfile)

@@ -10,6 +10,7 @@ class VehiclePass extends Model
     protected $fillable = [
         'event_id',
         'vehicle_profile_id',
+        'company_id',
         'vehicle_recognition_status',
         'plate',
         'direction',
@@ -58,5 +59,10 @@ class VehiclePass extends Model
     public function vehicleProfile(): BelongsTo
     {
         return $this->belongsTo(VehicleProfile::class);
+    }
+
+    public function company(): BelongsTo
+    {
+        return $this->belongsTo(Company::class);
     }
 }

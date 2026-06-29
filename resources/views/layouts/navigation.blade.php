@@ -22,6 +22,9 @@
                     <x-nav-link :href="route('vehicle-profiles.index')" :active="request()->routeIs('vehicle-profiles.*')">
                         Arac Kartlari
                     </x-nav-link>
+                    <x-nav-link :href="route('companies.index')" :active="request()->routeIs('companies.*')">
+                        Firma Kartlari
+                    </x-nav-link>
                     @if (Auth::user()->isAdmin())
                         <x-nav-link :href="route('admin.users.index')" :active="request()->routeIs('admin.users.*')">
                             Kullanicilar
@@ -89,6 +92,9 @@
             </x-responsive-nav-link>
             <x-responsive-nav-link :href="route('vehicle-profiles.index')" :active="request()->routeIs('vehicle-profiles.*')">
                 Arac Kartlari
+            </x-responsive-nav-link>
+            <x-responsive-nav-link :href="route('companies.index')" :active="request()->routeIs('companies.*')">
+                Firma Kartlari
             </x-responsive-nav-link>
             @if (Auth::user()->isAdmin())
                 <x-responsive-nav-link :href="route('admin.users.index')" :active="request()->routeIs('admin.users.*')">
