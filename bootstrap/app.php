@@ -25,7 +25,7 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->report(function (Throwable $e): void {
-            if (filter_var(env('STRESS_TEST_LOGGING', true), FILTER_VALIDATE_BOOL)) {
+            if (filter_var(env('STRESS_TEST_LOGGING', false), FILTER_VALIDATE_BOOL)) {
                 try {
                     Log::channel('stress_exceptions')->error('laravel_exception', [
                         'ts' => now()->toIso8601String(),

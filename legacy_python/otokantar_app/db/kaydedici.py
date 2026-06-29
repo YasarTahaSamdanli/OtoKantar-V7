@@ -39,7 +39,7 @@ class KantarKaydedici:
         self._csv_aktif = True
         self._acik_seanslar: dict[str, dict] = {}
         self.mysql = mysql_db
-        self._acik_seans_max_saat = float(CONFIG.get("ACIK_SEANS_MAX_SAAT", 2.0))
+        self._acik_seans_max_saat = float(CONFIG.get("ACIK_SEANS_MAX_SAAT", 24.0))
         self._csv_baslik_yaz()
         self._csvden_durum_yukle()
         log.info("KantarKaydedici %s modu aktif.", "MySQL" if self.mysql is not None else "CSV")

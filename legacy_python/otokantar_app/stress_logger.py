@@ -24,7 +24,7 @@ STRESS_LOG_DIR = Path(__file__).resolve().parents[2] / "stress_test_logs"
 
 
 def stress_logging_enabled() -> bool:
-    raw = os.getenv("STRESS_TEST_LOGGING", str(CONFIG.get("STRESS_TEST_LOGGING", True)))
+    raw = os.getenv("STRESS_TEST_LOGGING", str(CONFIG.get("STRESS_TEST_LOGGING", False)))
     return str(raw).strip().lower() in {"1", "true", "yes", "on", "debug"}
 
 

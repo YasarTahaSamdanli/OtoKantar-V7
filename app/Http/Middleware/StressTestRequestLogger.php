@@ -32,7 +32,7 @@ class StressTestRequestLogger
 
     private function enabled(): bool
     {
-        return filter_var(env('STRESS_TEST_LOGGING', true), FILTER_VALIDATE_BOOL);
+        return filter_var(env('STRESS_TEST_LOGGING', false), FILTER_VALIDATE_BOOL);
     }
 
     private function logRequest(Request $request, Response $response, float $started): void
