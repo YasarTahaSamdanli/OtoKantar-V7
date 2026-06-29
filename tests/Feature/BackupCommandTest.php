@@ -3,7 +3,9 @@
 namespace Tests\Feature;
 
 use Illuminate\Support\Facades\File;
+use RuntimeException;
 use Tests\TestCase;
+use ZipArchive;
 
 class BackupCommandTest extends TestCase
 {
@@ -90,5 +92,117 @@ class BackupCommandTest extends TestCase
         $this->artisan('backup:restore', [
             '--backup' => 'latest',
         ])->assertFailed();
+    }
+
+    public function test_backup_restore_extracts_safe_runtime_zip(): void
+    {
+        if (! class_exists(ZipArchive::class)) {
+            $this->markTestSkipped('ZipArchive extension is not available.');
+        }
+
+        $backupDir = storage_path('framework/testing/backups/safe-runtime');
+        $databasePath = storage_path('framework/testing/backups/safe-restore.sqlite');
+        $runtimePath = storage_path('framework/testing/backups/safe-runtime-target');
+        $zipPath = $backupDir.DIRECTORY_SEPARATOR.'legacy_runtime.zip';
+
+        File::ensureDirectoryExists($backupDir);
+        File::put($backupDir.DIRECTORY_SEPARATOR.'database.sqlite', 'before-restore');
+        File::put($databasePath, 'after-restore');
+
+        $zip = new ZipArchive;
+        $this->assertTrue($zip->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE));
+        $zip->addFromString('nested/safe.txt', 'safe runtime file');
+        $zip->close();
+
+        File::put($backupDir.DIRECTORY_SEPARATOR.'manifest.json', json_encode([
+            'database' => [
+                'connection' => 'safe_restore_test',
+                'driver' => 'sqlite',
+                'file' => $backupDir.DIRECTORY_SEPARATOR.'database.sqlite',
+                'status' => 'ok',
+            ],
+            'legacy_runtime' => [
+                'file' => $zipPath,
+                'status' => 'ok',
+            ],
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) ?: '{}');
+
+        config([
+            'database.connections.safe_restore_test' => [
+                'driver' => 'sqlite',
+                'database' => $databasePath,
+                'prefix' => '',
+            ],
+            'services.legacy_runtime.path' => $runtimePath,
+        ]);
+
+        $this->artisan('backup:restore', [
+            '--backup' => $backupDir,
+            '--connection' => 'safe_restore_test',
+            '--force' => true,
+        ])->assertSuccessful();
+
+        $this->assertSame('before-restore', File::get($databasePath));
+        $this->assertSame('safe runtime file', File::get($runtimePath.DIRECTORY_SEPARATOR.'nested'.DIRECTORY_SEPARATOR.'safe.txt'));
+    }
+
+    public function test_backup_restore_rejects_runtime_zip_path_traversal(): void
+    {
+        if (! class_exists(ZipArchive::class)) {
+            $this->markTestSkipped('ZipArchive extension is not available.');
+        }
+
+        $backupDir = storage_path('framework/testing/backups/malicious-runtime');
+        $databasePath = storage_path('framework/testing/backups/restore.sqlite');
+        $runtimePath = storage_path('framework/testing/backups/runtime-target');
+        $escapePath = storage_path('framework/testing/backups/escape.txt');
+        $zipPath = $backupDir.DIRECTORY_SEPARATOR.'legacy_runtime.zip';
+
+        File::ensureDirectoryExists($backupDir);
+        File::put($backupDir.DIRECTORY_SEPARATOR.'database.sqlite', 'before-restore');
+        File::put($databasePath, 'after-restore');
+
+        $zip = new ZipArchive;
+        $this->assertTrue($zip->open($zipPath, ZipArchive::CREATE | ZipArchive::OVERWRITE));
+        $zip->addFromString('../escape.txt', 'escaped');
+        $zip->addFromString('safe.txt', 'safe');
+        $zip->close();
+
+        File::put($backupDir.DIRECTORY_SEPARATOR.'manifest.json', json_encode([
+            'database' => [
+                'connection' => 'restore_test',
+                'driver' => 'sqlite',
+                'file' => $backupDir.DIRECTORY_SEPARATOR.'database.sqlite',
+                'status' => 'ok',
+            ],
+            'legacy_runtime' => [
+                'file' => $zipPath,
+                'status' => 'ok',
+            ],
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) ?: '{}');
+
+        config([
+            'database.connections.restore_test' => [
+                'driver' => 'sqlite',
+                'database' => $databasePath,
+                'prefix' => '',
+            ],
+            'services.legacy_runtime.path' => $runtimePath,
+        ]);
+
+        try {
+            $this->artisan('backup:restore', [
+                '--backup' => $backupDir,
+                '--connection' => 'restore_test',
+                '--force' => true,
+            ]);
+
+            $this->fail('Unsafe runtime zip entry should fail restore.');
+        } catch (RuntimeException $exception) {
+            $this->assertStringContainsString('Unsafe runtime zip entry path', $exception->getMessage());
+        }
+
+        $this->assertFileDoesNotExist($escapePath);
+        $this->assertFileDoesNotExist($runtimePath.DIRECTORY_SEPARATOR.'safe.txt');
     }
 }

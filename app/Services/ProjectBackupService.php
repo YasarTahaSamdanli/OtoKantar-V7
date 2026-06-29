@@ -426,8 +426,11 @@ class ProjectBackupService
             throw new RuntimeException('Runtime zip backup could not be opened.');
         }
 
-        $zip->extractTo($target);
-        $zip->close();
+        try {
+            $this->extractRuntimeZipSafely($zip, $target);
+        } finally {
+            $zip->close();
+        }
 
         return [
             'status' => 'ok',
@@ -491,6 +494,71 @@ class ProjectBackupService
         return str_contains($normalized, '/__pycache__/')
             || str_ends_with($normalized, '.pyc')
             || str_ends_with($normalized, '.log');
+    }
+
+    private function extractRuntimeZipSafely(ZipArchive $zip, string $target): void
+    {
+        $entries = [];
+        for ($i = 0; $i < $zip->numFiles; $i++) {
+            $name = $zip->getNameIndex($i);
+            if (! is_string($name)) {
+                throw new RuntimeException('Runtime zip contains an unreadable entry name.');
+            }
+
+            $entries[] = $this->safeRuntimeZipEntry($name);
+        }
+
+        foreach ($entries as $entry) {
+            $destination = $target.DIRECTORY_SEPARATOR.str_replace('/', DIRECTORY_SEPARATOR, $entry);
+            if (str_ends_with($entry, '/')) {
+                File::ensureDirectoryExists(rtrim($destination, DIRECTORY_SEPARATOR), 0750);
+
+                continue;
+            }
+
+            File::ensureDirectoryExists(dirname($destination), 0750);
+            $stream = $zip->getStream($entry);
+            if ($stream === false) {
+                throw new RuntimeException("Runtime zip entry could not be read: {$entry}");
+            }
+
+            $targetHandle = fopen($destination, 'wb');
+            if ($targetHandle === false) {
+                fclose($stream);
+                throw new RuntimeException("Runtime restore target could not be opened: {$entry}");
+            }
+
+            try {
+                stream_copy_to_stream($stream, $targetHandle);
+            } finally {
+                fclose($stream);
+                fclose($targetHandle);
+            }
+        }
+    }
+
+    private function safeRuntimeZipEntry(string $entry): string
+    {
+        $normalized = str_replace('\\', '/', trim($entry));
+        if ($normalized === '') {
+            throw new RuntimeException('Runtime zip contains an empty entry name.');
+        }
+
+        if (
+            str_starts_with($normalized, '/')
+            || str_starts_with($normalized, '//')
+            || preg_match('/^[A-Za-z]:\//', $normalized) === 1
+        ) {
+            throw new RuntimeException("Unsafe runtime zip entry path: {$entry}");
+        }
+
+        foreach (explode('/', rtrim($normalized, '/')) as $segment) {
+            if ($segment === '' || $segment === '..') {
+                throw new RuntimeException("Unsafe runtime zip entry path: {$entry}");
+            }
+        }
+
+        return $normalized;
     }
 
     private function prune(string $backupRoot, int $keep, string $currentBackupDir): void
