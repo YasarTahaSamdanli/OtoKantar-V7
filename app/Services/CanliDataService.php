@@ -180,7 +180,7 @@ class CanliDataService
             ->get();
 
         $filename = 'kantar_raporu_vehicle_passes_'.$this->filterSlug($filters).'_'.date('Ymd_His').'.csv';
-        $header = ['Plaka', 'İşlem', 'Geçiş Zamanı', 'Giriş Kg', 'Çıkış Kg', 'Araç Kg', 'Malzeme Kg', 'Net Kg', 'Güven', 'Görüntü'];
+        $header = ['Plaka', 'Firma', 'Şoför', 'İşlem', 'Geçiş Zamanı', 'Giriş Kg', 'Çıkış Kg', 'Araç Kg', 'Malzeme Kg', 'Net Kg', 'Güven', 'Görüntü'];
 
         $out = fopen('php://temp', 'w+');
         $this->csvPreambleYaz($out);
@@ -189,6 +189,8 @@ class CanliDataService
             $record = $this->vehiclePassKaydiniNormalizeEt($pass);
             $this->csvSatiriYaz($out, [
                 $record['plaka'] ?? '',
+                $record['firma_adi'] ?? '',
+                $record['sofor_adi'] ?? '',
                 $this->csvIslemEtiketi($record['tip'] ?? ''),
                 $record['gecis_zamani'] ?? '',
                 $this->csvKg($record['giris_agirlik'] ?? null),
@@ -661,7 +663,7 @@ class CanliDataService
     private function vehiclePassQuery(array $filters = [])
     {
         $filters = $this->normalizeFilters($filters);
-        $query = VehiclePass::query();
+        $query = VehiclePass::query()->with('vehicleProfile');
 
         match ($filters['period']) {
             'day' => $query
@@ -697,10 +699,13 @@ class CanliDataService
         $entryWeight = $pass->entry_weight_kg !== null ? (float) $pass->entry_weight_kg : null;
         $exitWeight = $pass->exit_weight_kg !== null ? (float) $pass->exit_weight_kg : null;
         $netWeight = $pass->net_weight_kg !== null ? (float) $pass->net_weight_kg : null;
+        $profile = $pass->vehicleProfile;
 
         return array_merge([
             'arac_id' => $pass->legacy_vehicle_id ?: $pass->id,
             'plaka' => (string) $pass->plate,
+            'firma_adi' => $pass->company_name ?: ($profile?->company_name ?: ''),
+            'sofor_adi' => $pass->driver_name ?: ($profile?->driver_name ?: ''),
             'durum' => $direction,
             'tip' => $direction,
             'giris_tarih' => $entryAt ? $entryAt->format('Y-m-d') : '',

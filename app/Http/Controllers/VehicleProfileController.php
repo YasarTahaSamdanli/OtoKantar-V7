@@ -68,12 +68,11 @@ class VehicleProfileController extends Controller
 
         $vehicleProfile->update($validated);
 
-        if ($vehicleProfile->company_id) {
-            $vehicleProfile->passes()->update([
-                'company_id' => $vehicleProfile->company_id,
-                'company_name' => $vehicleProfile->company_name,
-            ]);
-        }
+        $vehicleProfile->passes()->update([
+            'company_id' => $vehicleProfile->company_id,
+            'company_name' => $vehicleProfile->company_name,
+            'driver_name' => $vehicleProfile->driver_name,
+        ]);
 
         return redirect()
             ->route('vehicle-profiles.show', $vehicleProfile)
