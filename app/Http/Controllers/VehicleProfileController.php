@@ -14,6 +14,8 @@ class VehicleProfileController extends Controller
     {
         $tab = (string) $request->query('tab', 'recent');
         $search = trim((string) $request->query('q', ''));
+        $today = now()->startOfDay();
+        $tomorrow = $today->copy()->addDay();
 
         $query = VehicleProfile::query();
 
@@ -26,7 +28,9 @@ class VehicleProfileController extends Controller
         }
 
         match ($tab) {
-            'new' => $query->latest('first_seen_at'),
+            'new' => $query->where('first_seen_at', '>=', $today)
+                ->where('first_seen_at', '<', $tomorrow)
+                ->latest('first_seen_at'),
             'frequent' => $query->orderByDesc('total_entry_count')->orderByDesc('last_seen_at'),
             default => $query->latest('last_seen_at'),
         };
