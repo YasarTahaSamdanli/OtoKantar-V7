@@ -373,6 +373,15 @@ main{
   font:12px var(--mono);
   outline:none;
 }
+.field select option,
+.field select optgroup{
+  background:#111827;
+  color:#e5e7eb;
+}
+.field select option:checked{
+  background:#2563eb;
+  color:#fff;
+}
 .field select:focus,.field input:focus{border-color:rgba(122,167,255,.55)}
 .hidden{display:none!important}
 

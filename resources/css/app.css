@@ -98,6 +98,17 @@
         box-shadow: 0 0 0 4px rgba(52, 211, 153, .12);
     }
 
+    select option,
+    select optgroup {
+        background-color: #111827;
+        color: #e5e7eb;
+    }
+
+    select option:checked {
+        background-color: #2563eb;
+        color: #ffffff;
+    }
+
     tbody tr {
         transition: background-color .18s ease, transform .18s ease;
     }
