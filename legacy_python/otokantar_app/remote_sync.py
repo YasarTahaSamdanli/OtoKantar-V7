@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from pathlib import Path
 from typing import Callable, Optional
@@ -21,6 +23,7 @@ _RETRY_DELAYS = (2.0, 4.0, 8.0)
 _CIRCUIT_FAILURE_THRESHOLD = 3
 _CIRCUIT_COOLDOWN_SEC = 15.0
 _QUEUE_PATH = Path(__file__).resolve().parent.parent / "sync_queue.jsonl"
+_OUTBOX_PATH = Path(__file__).resolve().parent.parent / "offline_outbox.sqlite"
 
 
 class RemoteCanliSync:
@@ -44,12 +47,14 @@ class RemoteCanliSync:
         self._circuit_lock = threading.Lock()
         self._circuit_failure_streak = 0
         self._circuit_open_until = 0.0
-        self._queue_lock = threading.Lock()
+        self._queue_lock = threading.RLock()
+        self._outbox_ready = False
 
         if enabled and requests is None:
             self.enabled = False
             log.warning("Remote sync devre disi: requests kurulu degil (%s)", requests_import_error)
         elif self.enabled:
+            self._ensure_outbox()
             log.info("Remote sync aktif: %s", self.url)
         else:
             log.info("Remote sync kapali.")
@@ -256,6 +261,8 @@ class RemoteCanliSync:
 
             last_status = status_code
             last_error = error
+            if queue_id is not None:
+                self._record_queue_failure(queue_id, status_code, error)
             stress_metrics.record_api_error(
                 url=self.url,
                 status_code=status_code,
@@ -297,6 +304,102 @@ class RemoteCanliSync:
             log.debug("Remote sync kuyrukta bekliyor: %s", queue_id)
 
         return False
+
+    def _connect_outbox(self) -> sqlite3.Connection:
+        _OUTBOX_PATH.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(_OUTBOX_PATH, timeout=10.0)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        return conn
+
+    @contextmanager
+    def _outbox_connection(self):
+        conn = self._connect_outbox()
+        try:
+            yield conn
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _ensure_outbox(self) -> None:
+        if self._outbox_ready:
+            return
+
+        with self._queue_lock:
+            if self._outbox_ready:
+                return
+            with self._outbox_connection() as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS outbox_events (
+                        id TEXT PRIMARY KEY,
+                        dedup_key TEXT NOT NULL UNIQUE,
+                        event_type TEXT NOT NULL DEFAULT 'remote_sync',
+                        payload_json TEXT NOT NULL,
+                        image_path TEXT,
+                        status TEXT NOT NULL DEFAULT 'pending',
+                        attempts INTEGER NOT NULL DEFAULT 0,
+                        last_error TEXT,
+                        created_at REAL NOT NULL,
+                        updated_at REAL NOT NULL,
+                        sent_at REAL
+                    )
+                    """
+                )
+                conn.execute(
+                    """
+                    CREATE INDEX IF NOT EXISTS idx_outbox_status_created
+                    ON outbox_events (status, created_at)
+                    """
+                )
+                self._migrate_jsonl_queue_unlocked(conn)
+            self._outbox_ready = True
+
+    def _migrate_jsonl_queue_unlocked(self, conn: sqlite3.Connection) -> None:
+        if not _QUEUE_PATH.is_file():
+            return
+
+        migrated = 0
+        try:
+            with open(_QUEUE_PATH, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        log.warning("Remote sync kuyruk satiri okunamadi, atlandi.")
+                        continue
+
+                    payload = dict(entry.get("payload") or {})
+                    image_raw = entry.get("image_path")
+                    image = Path(image_raw) if image_raw else None
+                    dedup_key = str(entry.get("dedup_key") or self._entry_key(payload, image))
+                    queued_at = float(entry.get("queued_at") or time.time())
+                    cursor = conn.execute(
+                        """
+                        INSERT OR IGNORE INTO outbox_events (
+                            id, dedup_key, event_type, payload_json, image_path,
+                            status, attempts, last_error, created_at, updated_at, sent_at
+                        ) VALUES (?, ?, ?, ?, ?, 'pending', 0, NULL, ?, ?, NULL)
+                        """,
+                        (
+                            str(entry.get("id") or uuid.uuid4()),
+                            dedup_key,
+                            "remote_sync",
+                            json.dumps(payload, ensure_ascii=False),
+                            str(image) if image is not None else None,
+                            queued_at,
+                            queued_at,
+                        ),
+                    )
+                    migrated += int(cursor.rowcount > 0)
+            if migrated:
+                log.info("Remote sync JSONL kuyrugu SQLite outbox'a tasindi: %s kayit", migrated)
+        except Exception as e:
+            log.warning("Remote sync JSONL kuyruk migrasyonu atlandi: %s", e)
 
     def _sorted_queue_entries(self) -> list[dict]:
         entries = self._read_queue()
@@ -386,35 +489,68 @@ class RemoteCanliSync:
             raise son_hata
 
     def _read_queue_unlocked(self) -> list[dict]:
-        if not _QUEUE_PATH.is_file():
-            return []
-
-        entries: list[dict] = []
         try:
-            with open(_QUEUE_PATH, "r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        entries.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        log.warning("Remote sync kuyruk satiri okunamadi, atlandi.")
+            self._ensure_outbox()
+            with self._outbox_connection() as conn:
+                rows = conn.execute(
+                    """
+                    SELECT id, dedup_key, payload_json, image_path, created_at
+                    FROM outbox_events
+                    WHERE status = 'pending'
+                    ORDER BY created_at ASC
+                    """
+                ).fetchall()
+            entries = []
+            for row in rows:
+                try:
+                    payload = json.loads(row["payload_json"] or "{}")
+                except json.JSONDecodeError:
+                    payload = {}
+                entries.append(
+                    {
+                        "id": row["id"],
+                        "dedup_key": row["dedup_key"],
+                        "payload": payload,
+                        "image_path": row["image_path"],
+                        "queued_at": float(row["created_at"] or 0),
+                    }
+                )
+            return entries
         except Exception as e:
             log.warning("Remote sync kuyruk okunamadi: %s", e)
-        return entries
+            return []
 
     def _read_queue(self) -> list[dict]:
         with self._queue_lock:
             return self._read_queue_unlocked()
 
     def _write_queue_unlocked(self, entries: list[dict]) -> None:
-        _QUEUE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        tmp = _QUEUE_PATH.with_suffix(".jsonl.tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
+        self._ensure_outbox()
+        now = time.time()
+        with self._outbox_connection() as conn:
+            conn.execute("DELETE FROM outbox_events WHERE status = 'pending'")
             for entry in entries:
-                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-        self._atomik_replace(tmp, _QUEUE_PATH)
+                payload = dict(entry.get("payload") or {})
+                image_raw = entry.get("image_path")
+                image = Path(image_raw) if image_raw else None
+                queued_at = float(entry.get("queued_at") or now)
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO outbox_events (
+                        id, dedup_key, event_type, payload_json, image_path,
+                        status, attempts, last_error, created_at, updated_at, sent_at
+                    ) VALUES (?, ?, ?, ?, ?, 'pending', 0, NULL, ?, ?, NULL)
+                    """,
+                    (
+                        str(entry.get("id") or uuid.uuid4()),
+                        str(entry.get("dedup_key") or self._entry_key(payload, image)),
+                        "remote_sync",
+                        json.dumps(payload, ensure_ascii=False),
+                        str(image) if image is not None else None,
+                        queued_at,
+                        now,
+                    ),
+                )
 
     def _write_queue(self, entries: list[dict]) -> None:
         try:
@@ -439,17 +575,40 @@ class RemoteCanliSync:
         }
         try:
             with self._queue_lock:
-                entries = self._read_queue_unlocked()
-                for existing in entries:
-                    if self._entry_key_for_entry(existing) == entry_key:
-                        existing_id = existing.get("id")
+                self._ensure_outbox()
+                with self._outbox_connection() as conn:
+                    existing = conn.execute(
+                        """
+                        SELECT id FROM outbox_events
+                        WHERE dedup_key = ?
+                        LIMIT 1
+                        """,
+                        (entry_key,),
+                    ).fetchone()
+                    if existing is not None:
+                        existing_id = existing["id"]
                         log.debug(
                             "Remote sync kuyruk duplicate atlandi: %s",
                             existing_id,
                         )
                         return existing_id
-                entries.append(entry)
-                self._write_queue_unlocked(entries)
+                    conn.execute(
+                        """
+                        INSERT INTO outbox_events (
+                            id, dedup_key, event_type, payload_json, image_path,
+                            status, attempts, last_error, created_at, updated_at, sent_at
+                        ) VALUES (?, ?, ?, ?, ?, 'pending', 0, NULL, ?, ?, NULL)
+                        """,
+                        (
+                            entry["id"],
+                            entry["dedup_key"],
+                            "remote_sync",
+                            json.dumps(payload, ensure_ascii=False),
+                            entry["image_path"],
+                            entry["queued_at"],
+                            entry["queued_at"],
+                        ),
+                    )
             if quiet:
                 log.debug("Remote sync cooldown, kuyruga eklendi: %s", entry["id"])
             else:
@@ -462,9 +621,21 @@ class RemoteCanliSync:
     def _find_queue_id(self, payload: dict, image_path: Optional[Path]) -> Optional[str]:
         entry_key = self._entry_key(payload, image_path)
         with self._queue_lock:
-            for existing in self._read_queue_unlocked():
-                if self._entry_key_for_entry(existing) == entry_key:
-                    return existing.get("id")
+            self._ensure_outbox()
+            try:
+                with self._outbox_connection() as conn:
+                    row = conn.execute(
+                        """
+                        SELECT id FROM outbox_events
+                        WHERE dedup_key = ? AND status = 'pending'
+                        LIMIT 1
+                        """,
+                        (entry_key,),
+                    ).fetchone()
+                    if row is not None:
+                        return row["id"]
+            except Exception as e:
+                log.warning("Remote sync kuyruk id okunamadi: %s", e)
         return None
 
     def _entry_key_for_entry(self, entry: dict) -> str:
@@ -492,22 +663,49 @@ class RemoteCanliSync:
         image_path: Optional[Path],
     ) -> None:
         with self._queue_lock:
-            entries = self._read_queue_unlocked()
-            if not entries:
-                return
-
-            if queue_id is not None:
-                remaining = [e for e in entries if e.get("id") != queue_id]
-            else:
-                target_key = self._entry_key(payload, image_path)
-                remaining = [
-                    e for e in entries if self._entry_key_for_entry(e) != target_key
-                ]
-
-            if len(remaining) == len(entries):
-                return
-
             try:
-                self._write_queue_unlocked(remaining)
+                self._ensure_outbox()
+                with self._outbox_connection() as conn:
+                    now = time.time()
+                    if queue_id is not None:
+                        conn.execute(
+                            """
+                            UPDATE outbox_events
+                            SET status = 'sent', sent_at = ?, updated_at = ?
+                            WHERE id = ? AND status = 'pending'
+                            """,
+                            (now, now, queue_id),
+                        )
+                    else:
+                        conn.execute(
+                            """
+                            UPDATE outbox_events
+                            SET status = 'sent', sent_at = ?, updated_at = ?
+                            WHERE dedup_key = ? AND status = 'pending'
+                            """,
+                            (now, now, self._entry_key(payload, image_path)),
+                        )
             except Exception as e:
                 log.warning("Remote sync kuyruk guncellenemedi: %s", e)
+
+    def _record_queue_failure(
+        self,
+        queue_id: str,
+        status_code: Optional[int],
+        error: Optional[str],
+    ) -> None:
+        try:
+            with self._queue_lock:
+                self._ensure_outbox()
+                message = f"HTTP {status_code}" if status_code is not None else (error or "ag hatasi")
+                with self._outbox_connection() as conn:
+                    conn.execute(
+                        """
+                        UPDATE outbox_events
+                        SET attempts = attempts + 1, last_error = ?, updated_at = ?
+                        WHERE id = ? AND status = 'pending'
+                        """,
+                        (message[:500], time.time(), queue_id),
+                    )
+        except Exception as e:
+            log.debug("Remote sync kuyruk hata bilgisi yazilamadi: %s", e)
