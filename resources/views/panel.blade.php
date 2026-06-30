@@ -189,6 +189,7 @@ const State = {
   lastSignature: '',
   hasReceivedPanel: false,
   status: 'offline',
+  lastPrinterSignature: '',
   lastUpdateMs: null,
   demoOn: false,
   demoPlate: null,
@@ -525,6 +526,36 @@ const Panel = {
     else if (next === 'offline' && !State.demoOn) UI.log('warn', 'Canli veri bekleniyor');
     else if (next === 'demo') UI.log('info', 'Demo modu aktif');
   },
+  updatePrinterStatus(durum) {
+    const yazici = durum?.yazici || null;
+    if (!yazici || !yazici.status || yazici.status === 'UNKNOWN') return;
+    const signature = [
+      yazici.receipt_id || '',
+      yazici.status || '',
+      yazici.printer || '',
+      yazici.reason || '',
+      yazici.updated_at || '',
+    ].join('|');
+    if (!signature || signature === State.lastPrinterSignature) return;
+    State.lastPrinterSignature = signature;
+    const printer = yazici.printer || 'yazici';
+    const plate = yazici.plate ? ` / ${yazici.plate}` : '';
+    if (yazici.status === 'FAILED') {
+      UI.log('warn', `Yazici hatasi: ${printer}${plate} / ${yazici.reason || yazici.message || 'kontrol gerekli'}`);
+      return;
+    }
+    if (yazici.status === 'SUCCESS') {
+      UI.log('info', `Fis yazdirildi: ${printer}${plate}`);
+      return;
+    }
+    if (yazici.status === 'SAVED') {
+      UI.log('info', `Fis dosyaya kaydedildi${plate}`);
+      return;
+    }
+    if (yazici.status === 'SKIPPED_DUPLICATE') {
+      UI.log('warn', `Fis tekrar basilmedi: ${printer}${plate} / daha once yazdirilmis`);
+    }
+  },
   latestEvent(durum, canTreatAsNew) {
     if (!durum?.son_kayit?.plaka) return false;
     const record = Utils.normalizeRecord(durum.son_kayit);
@@ -571,6 +602,7 @@ const Panel = {
     const isNewRecord = this.latestEvent(durum, hadPanelData);
     State.hasReceivedPanel = true;
     this.updateState(durum);
+    this.updatePrinterStatus(durum);
     UI.setScale(durum);
     this.setDetection(durum, isNewRecord);
     if (isNewRecord) UI.refreshCam();

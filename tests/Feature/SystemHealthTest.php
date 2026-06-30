@@ -49,9 +49,58 @@ class SystemHealthTest extends TestCase
                     'disk',
                     'backup',
                     'ingest',
+                    'devices',
                 ],
             ])
             ->assertJsonPath('checks.runtime.exists', true);
+    }
+
+    public function test_device_status_sqlite_is_reported_by_system_health(): void
+    {
+        $runtimePath = storage_path('framework/testing/system-health/runtime');
+        File::ensureDirectoryExists($runtimePath);
+
+        $pdo = new \PDO('sqlite:'.$runtimePath.DIRECTORY_SEPARATOR.'device_status.sqlite');
+        $pdo->exec(
+            "CREATE TABLE device_status (
+                device_key TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                level TEXT NOT NULL,
+                message TEXT NOT NULL,
+                last_error TEXT,
+                last_seen TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                payload_json TEXT NOT NULL
+            )"
+        );
+        $now = now()->toIso8601String();
+        $stmt = $pdo->prepare(
+            'INSERT INTO device_status (
+                device_key, status, level, message, last_error, last_seen, updated_at, payload_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        );
+        $stmt->execute([
+            'printer',
+            'FAILED',
+            'error',
+            'Yazıcı çevrimdışı veya hata verdi.',
+            'Printer Offline',
+            $now,
+            $now,
+            json_encode(['plate' => '34ABC123', 'status' => 'FAILED'], JSON_UNESCAPED_UNICODE),
+        ]);
+
+        config(['services.legacy_runtime.path' => $runtimePath]);
+
+        $admin = User::factory()->create(['role' => 'admin']);
+
+        $this->actingAs($admin)
+            ->getJson('/admin/system-health')
+            ->assertOk()
+            ->assertJsonPath('checks.devices.status', 'warning')
+            ->assertJsonPath('checks.devices.devices.printer.status', 'FAILED')
+            ->assertJsonPath('checks.devices.devices.printer.last_error', 'Printer Offline')
+            ->assertJsonPath('checks.devices.devices.printer.payload.plate', '34ABC123');
     }
 
     public function test_queue_backlog_changes_health_status_and_score(): void

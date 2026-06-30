@@ -23,6 +23,7 @@ class SystemHealthService
             'disk' => $this->diskCheck(),
             'backup' => $this->backupCheck(),
             'ingest' => $this->ingestCheck(),
+            'devices' => $this->devicesCheck(),
         ];
         $score = $this->healthScore($checks);
         $overallStatus = $this->overallStatusLabel($checks, $score);
@@ -178,6 +179,71 @@ class SystemHealthService
         } catch (Throwable $e) {
             return [
                 'status' => 'warning',
+                'error' => $e->getMessage(),
+            ];
+        }
+    }
+
+    private function devicesCheck(): array
+    {
+        $path = $this->runtimeRoot().DIRECTORY_SEPARATOR.'device_status.sqlite';
+        if (! is_file($path)) {
+            return [
+                'status' => 'ok',
+                'path' => $path,
+                'exists' => false,
+                'devices' => [],
+                'message' => 'Cihaz durum veritabani henuz olusmadi.',
+            ];
+        }
+
+        try {
+            $pdo = new \PDO('sqlite:'.$path);
+            $rows = $pdo->query(
+                'SELECT device_key, status, level, message, last_error, last_seen, updated_at, payload_json
+                 FROM device_status
+                 ORDER BY device_key'
+            )->fetchAll(\PDO::FETCH_ASSOC) ?: [];
+
+            $devices = [];
+            $health = 'ok';
+            foreach ($rows as $row) {
+                $payload = json_decode((string) ($row['payload_json'] ?? '{}'), true);
+                if (! is_array($payload)) {
+                    $payload = [];
+                }
+
+                $level = strtolower((string) ($row['level'] ?? 'warning'));
+                $status = strtoupper((string) ($row['status'] ?? 'UNKNOWN'));
+                if ($level === 'critical') {
+                    $health = 'critical';
+                } elseif ($health !== 'critical' && ($level === 'error' || in_array($status, ['FAILED', 'OFFLINE'], true))) {
+                    $health = 'warning';
+                }
+
+                $devices[(string) $row['device_key']] = [
+                    'status' => $status,
+                    'level' => $level,
+                    'message' => $row['message'] ?? null,
+                    'last_error' => $row['last_error'] ?? null,
+                    'last_seen' => $row['last_seen'] ?? null,
+                    'updated_at' => $row['updated_at'] ?? null,
+                    'payload' => $payload,
+                ];
+            }
+
+            return [
+                'status' => $health,
+                'path' => $path,
+                'exists' => true,
+                'devices' => $devices,
+            ];
+        } catch (Throwable $e) {
+            return [
+                'status' => 'warning',
+                'path' => $path,
+                'exists' => true,
+                'devices' => [],
                 'error' => $e->getMessage(),
             ];
         }

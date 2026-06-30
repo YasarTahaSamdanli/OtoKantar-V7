@@ -9,3 +9,5 @@ pyserial>=3.5
 mysql-connector-python>=8.0.0
 requests>=2.31.0
 psutil>=5.9.0
+pywin32>=306; platform_system=="Windows"
+python-escpos>=3.1

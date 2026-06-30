@@ -504,6 +504,7 @@ class OtoKantar:
             "yakalama_fps": round(float(self._yakalama_fps), 1),
             "son_kayit": asdict(son_kayitlar[-1]) if son_kayitlar else None,
             "son_10": [asdict(k) for k in son_kayitlar],
+            "yazici": FisYazdirici.yazici_durum_oku(),
             "sistem": {
                 "surum": "V12-LC",
                 "mimari": "Loose Coupling",
