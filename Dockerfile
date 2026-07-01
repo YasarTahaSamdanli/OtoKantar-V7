@@ -24,7 +24,8 @@ RUN apt-get update \
     && a2enmod rewrite \
     && rm -rf /var/lib/apt/lists/*
 
-ENV APACHE_DOCUMENT_ROOT=/var/www/html/public
+ENV APACHE_DOCUMENT_ROOT=/var/www/html/public \
+    PORT=10000
 
 RUN sed -ri "s!/var/www/html!${APACHE_DOCUMENT_ROOT}!g" /etc/apache2/sites-available/*.conf \
     && sed -ri "s!/var/www/!${APACHE_DOCUMENT_ROOT}!g" /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf
@@ -40,10 +41,10 @@ RUN chmod +x /entrypoint.sh \
     && mkdir -p storage/framework/cache storage/framework/sessions storage/framework/views storage/logs storage/logs/stress_test bootstrap/cache \
     && chown -R www-data:www-data storage bootstrap/cache
 
-EXPOSE 80
+EXPOSE 10000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD php -r "exit(@file_get_contents('http://127.0.0.1/up') === false ? 1 : 0);"
+    CMD php -r '$port=getenv("PORT")?:"10000"; exit(@file_get_contents("http://127.0.0.1:".$port."/up") === false ? 1 : 0);'
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["apache2-foreground"]
