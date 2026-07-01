@@ -274,6 +274,8 @@ const Utils = {
       plaka: String(record.plaka || '').trim(),
       tip,
       durum: raw,
+      islem_durumu: String(record.islem_durumu || '').trim(),
+      islem_etiketi: String(record.islem_etiketi || '').trim(),
       giris_tarih: girisTarih,
       giris_saat: girisSaat,
       giris_agirlik: this.toNum(record.giris_agirlik),
@@ -286,6 +288,69 @@ const Utils = {
       guven: this.toNum(record.guven) || 0,
       gecis_zamani: String(record.gecis_zamani || '').trim(),
     };
+  },
+  recordDateTimeValue(date, time) {
+    const v = Date.parse(`${date || ''}T${time || ''}`);
+    return Number.isFinite(v) ? v : null;
+  },
+  cloneRecord(record) {
+    return { ...record };
+  },
+  mergeEntryIntoExit(exitRecord, entryRecord) {
+    const merged = this.cloneRecord(exitRecord);
+    if (!merged.giris_tarih) merged.giris_tarih = entryRecord.giris_tarih;
+    if (!merged.giris_saat) merged.giris_saat = entryRecord.giris_saat;
+    if (merged.giris_agirlik === null) merged.giris_agirlik = entryRecord.giris_agirlik;
+    if (merged.arac_agirlik === null && entryRecord.arac_agirlik !== null) merged.arac_agirlik = entryRecord.arac_agirlik;
+    if (merged.guven <= 0 && entryRecord.guven > 0) merged.guven = entryRecord.guven;
+    return this.withOperationStatus(merged);
+  },
+  withOperationStatus(record) {
+    const completed = record.tip === 'CIKIS' || Boolean(record.cikis_tarih || record.cikis_saat);
+    return {
+      ...record,
+      tip: completed ? 'CIKIS' : 'GIRIS',
+      islem_durumu: completed ? 'TAMAMLANDI' : 'BEKLIYOR',
+      islem_etiketi: completed ? 'Islem tamamlandi' : 'Cikis bekleniyor',
+    };
+  },
+  combineVehicleRecords(records) {
+    const normalized = records.map((record) => this.normalizeRecord(record));
+    const combined = [];
+    const openExits = new Map();
+
+    normalized.forEach((record) => {
+      const plate = record.plaka.toUpperCase();
+      if (!plate) {
+        combined.push(this.withOperationStatus(record));
+        return;
+      }
+
+      if (record.tip === 'CIKIS') {
+        const exitRecord = this.withOperationStatus(record);
+        combined.push(exitRecord);
+        if (!openExits.has(plate)) openExits.set(plate, []);
+        openExits.get(plate).push({ record: exitRecord, index: combined.length - 1 });
+        return;
+      }
+
+      const exitQueue = openExits.get(plate) || [];
+      const entryTs = this.recordDateTimeValue(record.giris_tarih, record.giris_saat);
+      const matchIndex = exitQueue.findIndex((candidate) => {
+        const exitTs = this.recordDateTimeValue(candidate.record.cikis_tarih, candidate.record.cikis_saat);
+        return exitTs === null || entryTs === null || entryTs <= exitTs;
+      });
+
+      if (matchIndex >= 0) {
+        const [match] = exitQueue.splice(matchIndex, 1);
+        combined[match.index] = this.mergeEntryIntoExit(match.record, record);
+        return;
+      }
+
+      combined.push(this.withOperationStatus(record));
+    });
+
+    return combined;
   },
   recordStamp(record) {
     if (!record || !record.plaka) return '';
@@ -359,8 +424,11 @@ const UI = {
     return percent >= 60 ? ' mid' : ' low';
   },
   recordTag(tip) {
-    if (tip === 'CIKIS') return 'cikis';
+    if (tip === 'CIKIS') return 'tamamlandi';
     return tip === 'ALARM' ? 'alarm' : 'giris';
+  },
+  recordStatusLabel(record) {
+    return record.islem_etiketi || (record.tip === 'CIKIS' ? 'Islem tamamlandi' : 'Cikis bekleniyor');
   },
   recordWeight(record) {
     return record.tip === 'CIKIS'
@@ -368,7 +436,7 @@ const UI = {
       : record.giris_agirlik;
   },
   recordWeightLabel(record) {
-    return record.tip === 'CIKIS' ? 'Malzeme' : 'Tartim';
+    return record.tip === 'CIKIS' ? 'Net' : 'Giris';
   },
   recordDateTime(record) {
     return {
@@ -385,7 +453,8 @@ const UI = {
     const weight = this.recordWeight(record);
     const weightLabel = this.recordWeightLabel(record);
     const materialWeight = record.malzeme_agirlik ?? record.net_agirlik;
-    return `<details class="record-item"><summary class="record-summary"><span class="plate-td">${Utils.escapeHtml(record.plaka || '--')}</span><span>${Utils.escapeHtml(date || '--')}</span><span><small>${Utils.escapeHtml(weightLabel)}</small>${Utils.escapeHtml(Utils.kg(weight))} kg</span><span><span class="tag ${this.recordTag(record.tip)}">${Utils.escapeHtml(record.tip)}</span></span></summary><div class="record-detail"><div><span>Giris</span><b>${Utils.escapeHtml(record.giris_tarih || '--')} ${Utils.escapeHtml(record.giris_saat || '--')}</b></div><div><span>Giris kg</span><b>${Utils.escapeHtml(Utils.kg(record.giris_agirlik))}</b></div><div><span>Cikis</span><b>${Utils.escapeHtml(record.cikis_tarih || '--')} ${Utils.escapeHtml(record.cikis_saat || '--')}</b></div><div><span>Cikis kg</span><b>${Utils.escapeHtml(Utils.kg(record.cikis_agirlik))}</b></div><div><span>Arac / Dara kg</span><b>${Utils.escapeHtml(Utils.kg(record.arac_agirlik))}</b></div><div><span>Malzeme / Net kg</span><b>${Utils.escapeHtml(Utils.kg(materialWeight))}</b></div><div><span>Guven</span><b class="conf"><span class="conf-track"><span class="conf-fill${this.confidenceClass(percent)}" style="width:${percent}%"></span></span><span>%${percent}</span></b></div></div></details>`;
+    const statusLabel = this.recordStatusLabel(record);
+    return `<details class="record-item ${record.tip === 'CIKIS' ? 'is-complete' : 'is-open'}"><summary class="record-summary"><span class="plate-td">${Utils.escapeHtml(record.plaka || '--')}</span><span><small>Son hareket</small>${Utils.escapeHtml(date || '--')} ${Utils.escapeHtml(time || '')}</span><span><small>${Utils.escapeHtml(weightLabel)}</small>${Utils.escapeHtml(Utils.kg(weight))} kg</span><span><span class="tag ${this.recordTag(record.tip)}">${Utils.escapeHtml(statusLabel)}</span></span></summary><div class="record-detail"><div><span>Durum</span><b>${Utils.escapeHtml(statusLabel)}</b></div><div><span>Giris</span><b>${Utils.escapeHtml(record.giris_tarih || '--')} ${Utils.escapeHtml(record.giris_saat || '--')}</b></div><div><span>Giris kg</span><b>${Utils.escapeHtml(Utils.kg(record.giris_agirlik))}</b></div><div><span>Cikis</span><b>${Utils.escapeHtml(record.cikis_tarih || '--')} ${Utils.escapeHtml(record.cikis_saat || '--')}</b></div><div><span>Cikis kg</span><b>${Utils.escapeHtml(Utils.kg(record.cikis_agirlik))}</b></div><div><span>Arac / Dara kg</span><b>${Utils.escapeHtml(Utils.kg(record.arac_agirlik))}</b></div><div><span>Malzeme / Net kg</span><b>${Utils.escapeHtml(Utils.kg(materialWeight))}</b></div><div><span>Guven</span><b class="conf"><span class="conf-track"><span class="conf-fill${this.confidenceClass(percent)}" style="width:${percent}%"></span></span><span>%${percent}</span></b></div></div></details>`;
   },
   renderChartColumn(value, index, max, hour) {
     const height = Math.max(4, Math.round((value / max) * 92));
@@ -393,7 +462,7 @@ const UI = {
     return `<div class="col"><span class="count">${value || ''}</span><div class="stick ${index === 11 ? 'now' : ''}" style="height:${height}px"></div><span class="label">${label}</span></div>`;
   },
   drawTable() {
-    Utils.el('table-count').textContent = `${State.total} kayit`;
+    Utils.el('table-count').textContent = `${State.records.length} arac islemi`;
     if (!State.records.length) {
       Utils.el('records-list').innerHTML = this.emptyTableRow();
       this.drawPagination();
@@ -606,7 +675,7 @@ const Panel = {
   apply(data) {
     const durum = data?.durum || {};
     const hadPanelData = State.hasReceivedPanel;
-    State.records = Array.isArray(data?.kayitlar) ? data.kayitlar.map((r) => Utils.normalizeRecord(r)) : [];
+    State.records = Array.isArray(data?.kayitlar) ? Utils.combineVehicleRecords(data.kayitlar) : [];
     State.total = Number(data?.toplam ?? State.records.length);
     Store.calcBars();
     const isNewRecord = this.latestEvent(durum, hadPanelData);
@@ -683,7 +752,7 @@ const Api = {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const payload = await r.json();
       if (payload?.hata) throw new Error(payload.hata);
-      State.records = Array.isArray(payload?.kayitlar) ? payload.kayitlar.map((record) => Utils.normalizeRecord(record)) : [];
+      State.records = Array.isArray(payload?.kayitlar) ? Utils.combineVehicleRecords(payload.kayitlar) : [];
       State.total = Number(payload?.toplam ?? State.records.length);
       State.pagination = payload?.pagination || {
         current_page: State.archivePage,
@@ -692,7 +761,7 @@ const Api = {
         last_page: 1,
       };
       const recordsSummary = Utils.el('records-summary');
-      if (recordsSummary) recordsSummary.textContent = `${State.total} kayit listeleniyor`;
+      if (recordsSummary) recordsSummary.textContent = `${State.records.length} arac islemi / ${State.total} hareket`;
       Store.calcBars();
       UI.drawTable();
       UI.drawChart();
@@ -747,7 +816,7 @@ const Demo = {
     const d = new Date();
     const tarih = d.toISOString().slice(0, 10);
     const saat = d.toTimeString().slice(0, 8);
-    State.records.unshift({
+    State.records = Utils.combineVehicleRecords([{
       plaka, tip, durum: tip, giris_tarih: tarih, giris_saat: saat,
       giris_agirlik: tip === 'CIKIS' ? 12000 : 42000,
       cikis_tarih: tip === 'CIKIS' ? tarih : '',
@@ -757,7 +826,7 @@ const Demo = {
       arac_agirlik: tip === 'CIKIS' ? 12000 : null,
       malzeme_agirlik: tip === 'CIKIS' ? 30000 : null,
       guven,
-    });
+    }, ...State.records]);
     State.total += 1;
     Store.calcBars();
     UI.drawTable();
