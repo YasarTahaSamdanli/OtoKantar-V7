@@ -311,7 +311,7 @@ const Utils = {
       ...record,
       tip: completed ? 'CIKIS' : 'GIRIS',
       islem_durumu: completed ? 'TAMAMLANDI' : 'BEKLIYOR',
-      islem_etiketi: completed ? 'Islem tamamlandi' : 'Cikis bekleniyor',
+      islem_etiketi: completed ? 'İşlem Tamamlandı' : 'Çıkış Bekleniyor',
     };
   },
   combineVehicleRecords(records) {
@@ -428,7 +428,7 @@ const UI = {
     return tip === 'ALARM' ? 'alarm' : 'giris';
   },
   recordStatusLabel(record) {
-    return record.islem_etiketi || (record.tip === 'CIKIS' ? 'Islem tamamlandi' : 'Cikis bekleniyor');
+    return record.islem_etiketi || (record.tip === 'CIKIS' ? 'İşlem Tamamlandı' : 'Çıkış Bekleniyor');
   },
   recordWeight(record) {
     return record.tip === 'CIKIS'

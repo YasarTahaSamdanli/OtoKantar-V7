@@ -392,8 +392,8 @@ main{
   background:#0d131a;
   overflow:hidden;
 }
-.record-item.is-open{border-color:rgba(24,195,143,.26)}
-.record-item.is-complete{border-color:rgba(122,167,255,.2)}
+.record-item.is-open{border-color:rgba(242,184,75,.5);background:rgba(242,184,75,.045)}
+.record-item.is-complete{border-color:rgba(122,167,255,.24)}
 .record-item[open]{border-color:rgba(24,195,143,.32);background:#101a20}
 .record-summary{
   list-style:none;
@@ -428,10 +428,10 @@ main{
 .record-detail div{min-width:0}
 .record-detail span{display:block;font:10px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--dim);margin-bottom:5px}
 .record-detail b{display:flex;align-items:center;gap:7px;min-height:20px;font:600 12px var(--mono);color:var(--muted);overflow-wrap:anywhere}
-.tag{justify-content:center;min-width:56px;min-height:24px;padding:0 8px;border-radius:7px;font:700 10px var(--mono);letter-spacing:.07em;text-align:center}
-.giris{background:var(--acc-soft);color:var(--acc);border:1px solid rgba(24,195,143,.28)}
+.tag{justify-content:center;width:136px;min-height:28px;padding:0 10px;border-radius:7px;font:700 10px var(--mono);letter-spacing:.07em;text-align:center}
+.giris{background:var(--warn-soft);color:var(--warn);border:1px solid rgba(242,184,75,.42);box-shadow:0 0 0 1px rgba(242,184,75,.08) inset}
 .cikis{background:var(--warn-soft);color:var(--warn);border:1px solid rgba(242,184,75,.28)}
-.tamamlandi{background:var(--blue-soft);color:var(--blue);border:1px solid rgba(122,167,255,.28)}
+.tamamlandi{background:var(--blue-soft);color:var(--blue);border:1px solid rgba(122,167,255,.34)}
 .alarm{background:var(--danger-soft);color:var(--danger);border:1px solid rgba(243,107,127,.28)}
 .conf{display:flex;align-items:center;gap:7px}
 .conf-track{display:block;width:72px;height:5px;border-radius:99px;background:#253240;overflow:hidden}
