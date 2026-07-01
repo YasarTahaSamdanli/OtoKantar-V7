@@ -751,17 +751,37 @@ class CanliDataService
         $bugun = (clone $todayQuery)->count();
         $sonSaat = (clone $filteredQuery)->where('passed_at', '>=', date('Y-m-d H:i:s', time() - 3600))->count();
         $tamamlanan = (clone $todayQuery)->where('direction', 'CIKIS')->count();
-        $girisBugun = (clone $todayQuery)->where('direction', 'GIRIS')->count();
         $avg = $this->parseGuven((clone $filteredQuery)->avg('confidence'));
 
         return [
             'bugun_kayit' => $bugun,
             'son_saat_kayit' => $sonSaat,
-            'aktif_seans' => max(0, $girisBugun - $tamamlanan),
+            'aktif_seans' => $this->activeVehiclePassSessionCount(),
             'tamamlanan' => $tamamlanan,
             'ortalama_guven' => $avg !== null ? round($avg, 3) : null,
             'ortalama_guven_yuzde' => $avg !== null ? (int) round($avg * 100) : null,
         ];
+    }
+
+    private function activeVehiclePassSessionCount(): int
+    {
+        $latestByPlate = [];
+        $passes = VehiclePass::query()
+            ->select(['plate', 'direction', 'passed_at', 'id'])
+            ->orderByDesc('passed_at')
+            ->orderByDesc('id')
+            ->get();
+
+        foreach ($passes as $pass) {
+            $plate = strtoupper(trim((string) $pass->plate));
+            if ($plate === '' || isset($latestByPlate[$plate])) {
+                continue;
+            }
+
+            $latestByPlate[$plate] = strtoupper(trim((string) $pass->direction)) === 'GIRIS';
+        }
+
+        return count(array_filter($latestByPlate));
     }
 
     private function jsonOzetGetir(array $kayitlar): array

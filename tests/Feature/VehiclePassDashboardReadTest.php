@@ -90,6 +90,34 @@ class VehiclePassDashboardReadTest extends TestCase
             ->assertJsonPath('kayitlar.0.net_agirlik', -30000);
     }
 
+    public function test_active_session_count_uses_latest_vehicle_movement_across_days(): void
+    {
+        $user = User::factory()->create(['role' => 'employee']);
+        $this->createVehiclePass([
+            'event_id' => '34INSIDE-GIRIS-2026-06-29-09-00-00',
+            'plate' => '34INSIDE',
+            'direction' => 'GIRIS',
+            'passed_at' => '2026-06-29 09:00:00',
+        ]);
+        $this->createVehiclePass([
+            'event_id' => '34DONE-GIRIS-2026-06-28-09-00-00',
+            'plate' => '34DONE',
+            'direction' => 'GIRIS',
+            'passed_at' => '2026-06-28 09:00:00',
+        ]);
+        $this->createVehiclePass([
+            'event_id' => '34DONE-CIKIS-2026-06-28-10-00-00',
+            'plate' => '34DONE',
+            'direction' => 'CIKIS',
+            'passed_at' => '2026-06-28 10:00:00',
+        ]);
+
+        $this->actingAs($user)
+            ->getJson('/canli/api?action=panel&limit=10')
+            ->assertOk()
+            ->assertJsonPath('ozet.aktif_seans', 1);
+    }
+
     public function test_admin_csv_export_prefers_vehicle_passes_when_records_exist(): void
     {
         $admin = User::factory()->create(['role' => 'admin']);
