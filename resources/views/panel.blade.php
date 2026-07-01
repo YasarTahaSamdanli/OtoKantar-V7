@@ -534,22 +534,32 @@ const Panel = {
       yazici.status || '',
       yazici.printer || '',
       yazici.reason || '',
+      yazici.copy_count || '',
       yazici.updated_at || '',
     ].join('|');
     if (!signature || signature === State.lastPrinterSignature) return;
     State.lastPrinterSignature = signature;
     const printer = yazici.printer || 'yazici';
     const plate = yazici.plate ? ` / ${yazici.plate}` : '';
-    if (yazici.status === 'FAILED') {
+    const copy = yazici.copy_count ? ` / ${yazici.copy_count} kopya` : '';
+    if (yazici.status === 'FAILED' || yazici.status === 'MANUAL_REPRINT_FAILED') {
       UI.log('warn', `Yazici hatasi: ${printer}${plate} / ${yazici.reason || yazici.message || 'kontrol gerekli'}`);
       return;
     }
     if (yazici.status === 'SUCCESS') {
-      UI.log('info', `Fis yazdirildi: ${printer}${plate}`);
+      UI.log('info', `Fis yazdirildi: ${printer}${plate}${copy}`);
+      return;
+    }
+    if (yazici.status === 'MANUAL_REPRINT_SUCCESS') {
+      UI.log('info', `Fis tekrar yazdirildi: ${printer}${plate}${copy}`);
       return;
     }
     if (yazici.status === 'SAVED') {
       UI.log('info', `Fis dosyaya kaydedildi${plate}`);
+      return;
+    }
+    if (yazici.status === 'MANUAL_REPRINT_SAVED') {
+      UI.log('info', `Tekrar yazdirma dosya modunda kaldi${plate}`);
       return;
     }
     if (yazici.status === 'SKIPPED_DUPLICATE') {

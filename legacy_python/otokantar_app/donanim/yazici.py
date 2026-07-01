@@ -47,6 +47,13 @@ class FisYazdirici:
     _ESC_FEED = b"\x1b\x64\x04"
     _ESC_CUT = b"\x1d\x56\x41\x00"
 
+    def _kopya_sayisi(self) -> int:
+        try:
+            adet = int(CONFIG.get("FIS_KOPYA_SAYISI", 2))
+        except (TypeError, ValueError):
+            adet = 2
+        return min(max(adet, 1), 3)
+
     def yazdir(self, kayit: PlakaKayit) -> None:
         backend = str(CONFIG.get("YAZICI_BACKEND", "file")).lower()
         if backend == "win32" and not _WIN32PRINT_OK:
@@ -130,7 +137,7 @@ class FisYazdirici:
                 backend,
                 printer,
                 "MANUAL_REPRINT_SUCCESS",
-                f"Arşivden tekrar yazdırıldı: {kaynak}",
+                f"Arşivden tekrar yazdırıldı: {kaynak}; kopya={self._kopya_sayisi()}",
             )
             log.info("Fiş manuel tekrar yazdırıldı: %s", receipt_id)
             return True
@@ -387,6 +394,7 @@ class FisYazdirici:
                 "level": level,
                 "message": message,
                 "reason": reason,
+                "copy_count": self._kopya_sayisi(),
                 "updated_at": datetime.now().isoformat(timespec="seconds"),
             }
             DeviceStatusStore.update(
@@ -517,12 +525,19 @@ class FisYazdirici:
             + satir("Teşekkür Ederiz — İyi Yolculuklar") + self._ESC_FEED + self._ESC_CUT
         )
 
+    def _fis_icerik_ham_olustur(self, icerik: str) -> bytes:
+        kayit = self._kayit_fisten_olustur(icerik)
+        return self._escpos_ham_olustur(kayit)
+
+    def _kopyali_ham_veri(self, ham_veri: bytes) -> bytes:
+        return ham_veri * self._kopya_sayisi()
+
     def _win32_gonder_async(self, kayit: PlakaKayit, receipt_id: str) -> None:
         def _gonder():
             printer = str(CONFIG.get("YAZICI_ADI", "")).strip() or "(varsayılan)"
             try:
                 printer = self._win32_gonder(kayit)
-                self._print_log_yaz(receipt_id, kayit, "win32", printer, "SUCCESS")
+                self._print_log_yaz(receipt_id, kayit, "win32", printer, "SUCCESS", f"kopya={self._kopya_sayisi()}")
             except FileNotFoundError:
                 yazici_adi = str(CONFIG.get("YAZICI_ADI", "")).strip()
                 reason = "Yazıcı bulunamadı"
@@ -551,6 +566,9 @@ class FisYazdirici:
 
     def _win32_gonder(self, kayit: PlakaKayit) -> str:
         ham_veri = self._escpos_ham_olustur(kayit)
+        return self._win32_ham_gonder(ham_veri)
+
+    def _win32_ham_gonder(self, ham_veri: bytes) -> str:
         yazici_adi = str(CONFIG.get("YAZICI_ADI", "")).strip()
         hedef = yazici_adi if yazici_adi else win32print.GetDefaultPrinter()
         handle = win32print.OpenPrinter(hedef)
@@ -558,14 +576,23 @@ class FisYazdirici:
             win32print.StartDocPrinter(handle, 1, ("KantarFisi", None, "RAW"))
             try:
                 win32print.StartPagePrinter(handle)
-                win32print.WritePrinter(handle, ham_veri)
+                win32print.WritePrinter(handle, self._kopyali_ham_veri(ham_veri))
                 win32print.EndPagePrinter(handle)
             finally:
                 win32print.EndDocPrinter(handle)
         finally:
             win32print.ClosePrinter(handle)
-        log.info("Fiş win32print ile gönderildi → '%s'", hedef)
+        log.info("Fiş win32print ile gönderildi → '%s' (%s kopya)", hedef, self._kopya_sayisi())
         return hedef
+
+    def _escpos_ham_gonder(self, ham_veri: bytes) -> str:
+        vendor = int(CONFIG.get("ESCPOS_USB_VENDOR", 0x04B8))
+        product = int(CONFIG.get("ESCPOS_USB_PRODUCT", 0x0202))
+        printer = f"USB {vendor:04X}:{product:04X}"
+        p = escpos_printer.Usb(vendor, product)
+        p._raw(self._kopyali_ham_veri(ham_veri))
+        log.info("Fiş escpos ile gönderildi → %s (%s kopya)", printer, self._kopya_sayisi())
+        return printer
 
     def _escpos_gonder_async(self, kayit: PlakaKayit, receipt_id: str) -> None:
         ham_veri = self._escpos_ham_olustur(kayit)
@@ -575,10 +602,8 @@ class FisYazdirici:
 
         def _gonder():
             try:
-                p = escpos_printer.Usb(vendor, product)
-                p._raw(ham_veri)
-                self._print_log_yaz(receipt_id, kayit, "escpos", printer, "SUCCESS")
-                log.info("Fiş escpos ile gönderildi → %s", printer)
+                self._escpos_ham_gonder(ham_veri)
+                self._print_log_yaz(receipt_id, kayit, "escpos", printer, "SUCCESS", f"kopya={self._kopya_sayisi()}")
             except Exception as e:
                 self._print_log_yaz(
                     receipt_id,

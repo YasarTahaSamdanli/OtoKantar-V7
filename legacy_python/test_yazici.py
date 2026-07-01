@@ -216,6 +216,24 @@ class FisYazdiriciTest(unittest.TestCase):
         self.assertIn(("OpenPrinter", "Default Receipt Printer"), fake.calls)
         self.assertTrue(fake.written.startswith(FisYazdirici._ESC_INIT))
         self.assertIn(b"34ABC123", fake.written)
+        self.assertEqual(fake.written.count(b"34ABC123"), 2)
+
+    def test_win32_sender_respects_three_receipt_copies(self) -> None:
+        fake = FakeWin32Print()
+        with patch.dict(yazici.CONFIG, {"YAZICI_ADI": "", "FIS_KOPYA_SAYISI": 3}):
+            with patch.object(yazici, "win32print", fake, create=True):
+                printer = FisYazdirici()._win32_gonder(sample_kayit())
+
+        self.assertEqual(printer, "Default Receipt Printer")
+        self.assertEqual(fake.written.count(b"34ABC123"), 3)
+
+    def test_receipt_copy_count_is_clamped_between_one_and_three(self) -> None:
+        with patch.dict(yazici.CONFIG, {"FIS_KOPYA_SAYISI": 99}):
+            self.assertEqual(FisYazdirici()._kopya_sayisi(), 3)
+        with patch.dict(yazici.CONFIG, {"FIS_KOPYA_SAYISI": 0}):
+            self.assertEqual(FisYazdirici()._kopya_sayisi(), 1)
+        with patch.dict(yazici.CONFIG, {"FIS_KOPYA_SAYISI": "bozuk"}):
+            self.assertEqual(FisYazdirici()._kopya_sayisi(), 2)
 
     def test_win32_sender_uses_configured_printer_name(self) -> None:
         fake = FakeWin32Print()
@@ -226,6 +244,76 @@ class FisYazdiriciTest(unittest.TestCase):
         self.assertEqual(printer, "USB Receipt Cutter")
         self.assertNotIn(("GetDefaultPrinter",), fake.calls)
         self.assertIn(("OpenPrinter", "USB Receipt Cutter"), fake.calls)
+
+    def test_manual_reprint_reads_active_archive_and_prints_configured_copies(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            old_cwd = os.getcwd()
+            os.chdir(tmp)
+            try:
+                kayit = sample_kayit()
+                printer = FisYazdirici()
+                content = printer._fis_metin_olustur(kayit)
+                receipt_id = printer._receipt_id(content)
+                printer._arsive_yaz(content)
+                fake = FakeWin32Print()
+
+                with patch.dict(yazici.CONFIG, {"YAZICI_BACKEND": "win32", "YAZICI_ADI": "", "FIS_KOPYA_SAYISI": 3}):
+                    with patch.object(yazici, "_WIN32PRINT_OK", True):
+                        with patch.object(yazici, "win32print", fake, create=True):
+                            ok = printer.tekrar_yazdir(receipt_id)
+
+                self.assertTrue(ok)
+                self.assertEqual(fake.written.count(b"34ABC123"), 3)
+                rows = self.print_log_rows(Path("receipt_log.sqlite"))
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]["receipt_id"], receipt_id)
+                self.assertEqual(rows[0]["status"], "MANUAL_REPRINT_SUCCESS")
+                self.assertIn("kopya=3", rows[0]["reason"])
+                self.assertIsNotNone(rows[0]["printed_at"])
+                status = json.loads(Path("printer_status.json").read_text(encoding="utf-8"))
+                self.assertEqual(status["status"], "MANUAL_REPRINT_SUCCESS")
+                self.assertEqual(status["copy_count"], 3)
+            finally:
+                os.chdir(old_cwd)
+
+    def test_manual_reprint_reads_zipped_archive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            old_cwd = os.getcwd()
+            os.chdir(tmp)
+            try:
+                kayit = sample_kayit()
+                printer = FisYazdirici()
+                content = printer._fis_metin_olustur(kayit)
+                receipt_id = printer._receipt_id(content)
+                zip_dir = Path("fisler_zip")
+                zip_dir.mkdir()
+                with zipfile.ZipFile(zip_dir / "2026-06.zip", "w") as zf:
+                    zf.writestr(f"{receipt_id}.txt", content)
+                fake = FakeWin32Print()
+
+                with patch.dict(yazici.CONFIG, {"YAZICI_BACKEND": "win32", "YAZICI_ADI": ""}):
+                    with patch.object(yazici, "_WIN32PRINT_OK", True):
+                        with patch.object(yazici, "win32print", fake, create=True):
+                            ok = printer.tekrar_yazdir(receipt_id)
+
+                self.assertTrue(ok)
+                self.assertIn(b"34ABC123", fake.written)
+                rows = self.print_log_rows(Path("receipt_log.sqlite"))
+                self.assertEqual(rows[0]["status"], "MANUAL_REPRINT_SUCCESS")
+                self.assertIn("fisler_zip", rows[0]["reason"])
+            finally:
+                os.chdir(old_cwd)
+
+    def test_manual_reprint_missing_receipt_returns_false(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            old_cwd = os.getcwd()
+            os.chdir(tmp)
+            try:
+                ok = FisYazdirici().tekrar_yazdir("missing-receipt")
+                self.assertFalse(ok)
+                self.assertFalse(Path("receipt_log.sqlite").exists())
+            finally:
+                os.chdir(old_cwd)
 
     def test_win32_async_records_failed_print_log_without_raising(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
