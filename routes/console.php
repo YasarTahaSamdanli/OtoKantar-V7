@@ -41,14 +41,14 @@ Artisan::command('otokantar:ensure-admin', function () {
     return 0;
 })->purpose('Create or update the production admin user from environment variables');
 
-Artisan::command('otokantar:reset-live-data {--force : Required confirmation flag} {--with-companies : Also delete company cards}', function (LiveDataResetService $reset) {
+Artisan::command('otokantar:reset-live-data {--force : Required confirmation flag}', function (LiveDataResetService $reset) {
     if (! (bool) $this->option('force')) {
         $this->error('Bu komut canli gecis ve arac verilerini siler. Calistirmak icin --force ekle.');
 
         return 1;
     }
 
-    $result = $reset->reset((bool) $this->option('with-companies'));
+    $result = $reset->reset();
 
     $this->info('Canli test verileri sifirlandi.');
     $this->line('Runtime: '.$result['runtime']);

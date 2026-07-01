@@ -23,10 +23,9 @@ class OperationsController extends Controller
     {
         $data = $request->validate([
             'confirm' => ['required', 'string', 'in:SIFIRLA'],
-            'with_companies' => ['nullable', 'boolean'],
         ]);
 
-        $result = $reset->reset((bool) ($data['with_companies'] ?? false));
+        $result = $reset->reset();
 
         return redirect()
             ->route('admin.operations.index')

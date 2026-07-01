@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\File;
 
 class LiveDataResetService
 {
-    public function reset(bool $withCompanies = false): array
+    public function reset(bool $withCompanies = true): array
     {
         $tables = [
             'vehicle_passes',
@@ -22,7 +22,7 @@ class LiveDataResetService
         ];
 
         if ($withCompanies) {
-            array_unshift($tables, 'companies');
+            $tables[] = 'companies';
         }
 
         DB::transaction(function () use ($tables): void {

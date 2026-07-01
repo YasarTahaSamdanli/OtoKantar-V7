@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Company;
 use App\Models\User;
 use App\Models\VehiclePass;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -57,6 +58,10 @@ class AdminUserManagementTest extends TestCase
             'source' => 'test',
             'legacy_pass_key' => 'reset-test-key',
         ]);
+        Company::create([
+            'name' => 'Reset Test Firma',
+            'type' => 'customer',
+        ]);
 
         $this->actingAs($admin)
             ->post(route('admin.operations.reset-live-data'), ['confirm' => 'SIFIRLA'])
@@ -64,6 +69,7 @@ class AdminUserManagementTest extends TestCase
             ->assertSessionHas('status');
 
         $this->assertDatabaseCount('vehicle_passes', 0);
+        $this->assertDatabaseCount('companies', 0);
     }
 
     public function test_employee_cannot_reset_live_data(): void

@@ -73,7 +73,7 @@
                     <div class="max-w-2xl">
                         <div class="text-sm font-semibold text-rose-100">Canli test verilerini sifirla</div>
                         <div class="mt-2 text-sm leading-6 text-rose-200/75">
-                            Kantar gecisleri, arac kartlari, ingest job/cache kayitlari ve runtime dosyalari temizlenir. Kullanici hesaplari korunur.
+                            Kantar gecisleri, arac kartlari, firma kartlari, ingest job/cache kayitlari ve runtime dosyalari temizlenir. Kullanici hesaplari korunur.
                         </div>
                     </div>
                     <form method="POST" action="{{ route('admin.operations.reset-live-data') }}" class="grid gap-3 sm:grid-cols-[1fr_auto] lg:min-w-[440px]">
