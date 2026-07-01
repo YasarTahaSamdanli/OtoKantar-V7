@@ -37,6 +37,12 @@
 
     <div class="min-h-[calc(100vh-8rem)] py-8">
         <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+            @if (session('status'))
+                <div class="mb-6 rounded-2xl border border-emerald-400/25 bg-emerald-400/10 px-5 py-4 text-sm text-emerald-200">
+                    {{ session('status') }}
+                </div>
+            @endif
+
             <section class="mb-6 grid gap-4 lg:grid-cols-[1fr_2fr]">
                 <div class="rounded-2xl border border-white/10 bg-[#181f2b]/95 p-6 shadow-[0_20px_48px_rgba(0,0,0,.24)]">
                     <div class="text-xs font-semibold uppercase tracking-[.16em] text-slate-500">Overall</div>
@@ -59,6 +65,32 @@
                             <div class="mt-4 break-words text-2xl font-semibold text-slate-100" style="font-family: 'JetBrains Mono', monospace;">{{ $value }}</div>
                         </div>
                     @endforeach
+                </div>
+            </section>
+
+            <section class="mb-6 rounded-2xl border border-rose-400/20 bg-rose-950/20 p-6">
+                <div class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+                    <div class="max-w-2xl">
+                        <div class="text-sm font-semibold text-rose-100">Canli test verilerini sifirla</div>
+                        <div class="mt-2 text-sm leading-6 text-rose-200/75">
+                            Kantar gecisleri, arac kartlari, ingest job/cache kayitlari ve runtime dosyalari temizlenir. Kullanici hesaplari korunur.
+                        </div>
+                    </div>
+                    <form method="POST" action="{{ route('admin.operations.reset-live-data') }}" class="grid gap-3 sm:grid-cols-[1fr_auto] lg:min-w-[440px]">
+                        @csrf
+                        <label class="block">
+                            <span class="mb-2 block text-xs font-semibold uppercase tracking-[.14em] text-rose-200/70">Onay</span>
+                            <input name="confirm" value="{{ old('confirm') }}" placeholder="SIFIRLA"
+                                   class="w-full rounded-xl border-white/10 bg-[#0f151f] px-4 py-2.5 text-sm text-slate-100 placeholder:text-slate-600 focus:border-rose-300 focus:ring-rose-300">
+                            @error('confirm')
+                                <span class="mt-2 block text-xs text-rose-200">{{ $message }}</span>
+                            @enderror
+                        </label>
+                        <button type="submit"
+                                class="self-end rounded-xl border border-rose-300/30 bg-rose-400/15 px-5 py-2.5 text-xs font-semibold uppercase tracking-[.14em] text-rose-100 hover:bg-rose-400/20">
+                            Sifirla
+                        </button>
+                    </form>
                 </div>
             </section>
 

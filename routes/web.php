@@ -64,6 +64,7 @@ Route::middleware('auth')->group(function () {
 Route::middleware(['auth', 'role:admin'])->prefix('admin')->name('admin.')->group(function () {
     Route::resource('users', AdminUserController::class)->only(['index', 'create', 'store']);
     Route::get('operations', AdminOperationsController::class)->name('operations.index');
+    Route::post('operations/reset-live-data', [AdminOperationsController::class, 'resetLiveData'])->name('operations.reset-live-data');
     Route::get('audit-logs', [AdminAuditLogController::class, 'index'])->name('audit-logs.index');
     Route::get('system-health', AdminSystemHealthController::class)->name('system-health');
 });

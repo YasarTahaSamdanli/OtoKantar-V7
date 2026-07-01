@@ -2,8 +2,9 @@
 
 use App\Models\User;
 use App\Models\VehiclePass;
-use App\Services\ProjectBackupService;
 use App\Services\HealthAlertService;
+use App\Services\LiveDataResetService;
+use App\Services\ProjectBackupService;
 use App\Services\QueueOperationsService;
 use App\Services\SystemHealthService;
 use Illuminate\Foundation\Inspiring;
@@ -39,6 +40,22 @@ Artisan::command('otokantar:ensure-admin', function () {
 
     return 0;
 })->purpose('Create or update the production admin user from environment variables');
+
+Artisan::command('otokantar:reset-live-data {--force : Required confirmation flag} {--with-companies : Also delete company cards}', function (LiveDataResetService $reset) {
+    if (! (bool) $this->option('force')) {
+        $this->error('Bu komut canli gecis ve arac verilerini siler. Calistirmak icin --force ekle.');
+
+        return 1;
+    }
+
+    $result = $reset->reset((bool) $this->option('with-companies'));
+
+    $this->info('Canli test verileri sifirlandi.');
+    $this->line('Runtime: '.$result['runtime']);
+    $this->line('Silinen tablolar: '.implode(', ', $result['tables']));
+
+    return 0;
+})->purpose('Delete live vehicle records and runtime files for a clean test run');
 
 Artisan::command('vehicle-passes:latest {--limit=10 : Number of latest records to show}', function () {
     $limit = max(1, min(100, (int) $this->option('limit')));

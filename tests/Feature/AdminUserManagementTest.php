@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\User;
+use App\Models\VehiclePass;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -43,5 +44,34 @@ class AdminUserManagementTest extends TestCase
                 'role' => 'owner',
             ])
             ->assertSessionHasErrors('role');
+    }
+
+    public function test_admin_can_reset_live_data_from_operations_page(): void
+    {
+        $admin = User::factory()->create(['role' => 'admin']);
+        VehiclePass::create([
+            'plate' => '34RESET',
+            'direction' => 'GIRIS',
+            'status' => 'transition',
+            'passed_at' => '2026-06-23 12:00:00',
+            'source' => 'test',
+            'legacy_pass_key' => 'reset-test-key',
+        ]);
+
+        $this->actingAs($admin)
+            ->post(route('admin.operations.reset-live-data'), ['confirm' => 'SIFIRLA'])
+            ->assertRedirect(route('admin.operations.index', absolute: false))
+            ->assertSessionHas('status');
+
+        $this->assertDatabaseCount('vehicle_passes', 0);
+    }
+
+    public function test_employee_cannot_reset_live_data(): void
+    {
+        $employee = User::factory()->create(['role' => 'employee']);
+
+        $this->actingAs($employee)
+            ->post(route('admin.operations.reset-live-data'), ['confirm' => 'SIFIRLA'])
+            ->assertForbidden();
     }
 }

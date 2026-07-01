@@ -3,8 +3,11 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Services\LiveDataResetService;
 use App\Services\QueueOperationsService;
 use App\Services\SystemHealthService;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
 
 class OperationsController extends Controller
 {
@@ -14,5 +17,19 @@ class OperationsController extends Controller
             'health' => $health->report(),
             'queue' => $queue->metrics(),
         ]);
+    }
+
+    public function resetLiveData(Request $request, LiveDataResetService $reset): RedirectResponse
+    {
+        $data = $request->validate([
+            'confirm' => ['required', 'string', 'in:SIFIRLA'],
+            'with_companies' => ['nullable', 'boolean'],
+        ]);
+
+        $result = $reset->reset((bool) ($data['with_companies'] ?? false));
+
+        return redirect()
+            ->route('admin.operations.index')
+            ->with('status', 'Canli test verileri sifirlandi. Silinen tablolar: '.implode(', ', $result['tables']));
     }
 }
